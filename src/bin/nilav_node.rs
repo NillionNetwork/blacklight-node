@@ -242,3 +242,102 @@ async fn verify_htx(htx: &nilav::Htx) -> Result<(), VerificationError> {
         Err(VerificationError::NotInBuilderIndex)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use httpmock::prelude::*;
+
+    fn make_htx(nilcc_url: String, builder_url: String) -> nilav::Htx {
+        nilav::Htx {
+            workload_id: nilav::WorkloadId { current: 1, previous: 0 },
+            nil_cc_operator: nilav::NilCcOperator { id: 1, name: "op".into() },
+            builder: nilav::Builder { id: 1, name: "builder".into() },
+            nil_cc_measurement: nilav::NilCcMeasurement { url: nilcc_url, nilcc_version: "0.0.0".into(), cpu_count: 1, gpus: 0 },
+            builder_measurement: nilav::BuilderMeasurement { url: builder_url },
+        }
+    }
+
+    #[tokio::test]
+    async fn verify_ok_when_measurement_matches_root() {
+        let nilcc = MockServer::start();
+        let builder = MockServer::start();
+        nilcc.mock(|when, then| {
+            when.method(GET).path("/m");
+            then.status(200).json_body(serde_json::json!({"measurement":"deadbeef"}));
+        });
+        builder.mock(|when, then| {
+            when.method(GET).path("/b");
+            then.status(200).json_body(serde_json::json!({"0.2.1":"deadbeef"}));
+        });
+        let htx = make_htx(format!("{}/m", nilcc.base_url()), format!("{}/b", builder.base_url()));
+        assert!(verify_htx(&htx).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn verify_ok_when_measurement_matches_nested() {
+        let nilcc = MockServer::start();
+        let builder = MockServer::start();
+        nilcc.mock(|when, then| {
+            when.method(GET).path("/m");
+            then.status(200).json_body(serde_json::json!({"report":{"measurement":"cafebabe"}}));
+        });
+        builder.mock(|when, then| {
+            when.method(GET).path("/b");
+            then.status(200).json_body(serde_json::json!(["cafebabe","xxxx"]));
+        });
+        let htx = make_htx(format!("{}/m", nilcc.base_url()), format!("{}/b", builder.base_url()));
+        assert!(verify_htx(&htx).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn verify_err_missing_measurement() {
+        let nilcc = MockServer::start();
+        let builder = MockServer::start();
+        nilcc.mock(|when, then| {
+            when.method(GET).path("/m");
+            then.status(200).json_body(serde_json::json!({"foo":"bar"}));
+        });
+        builder.mock(|when, then| {
+            when.method(GET).path("/b");
+            then.status(200).json_body(serde_json::json!({}));
+        });
+        let htx = make_htx(format!("{}/m", nilcc.base_url()), format!("{}/b", builder.base_url()));
+        let err = verify_htx(&htx).await.err().unwrap();
+        assert!(matches!(err, VerificationError::MissingMeasurement));
+    }
+
+    #[tokio::test]
+    async fn verify_err_builder_json() {
+        let nilcc = MockServer::start();
+        let builder = MockServer::start();
+        nilcc.mock(|when, then| {
+            when.method(GET).path("/m");
+            then.status(200).json_body(serde_json::json!({"measurement":"aa"}));
+        });
+        builder.mock(|when, then| {
+            when.method(GET).path("/b");
+            then.status(200).body("not-json");
+        });
+        let htx = make_htx(format!("{}/m", nilcc.base_url()), format!("{}/b", builder.base_url()));
+        let err = verify_htx(&htx).await.err().unwrap();
+        assert!(matches!(err, VerificationError::BuilderJson(_)));
+    }
+
+    #[tokio::test]
+    async fn verify_err_not_in_index() {
+        let nilcc = MockServer::start();
+        let builder = MockServer::start();
+        nilcc.mock(|when, then| {
+            when.method(GET).path("/m");
+            then.status(200).json_body(serde_json::json!({"measurement":"nomatch"}));
+        });
+        builder.mock(|when, then| {
+            when.method(GET).path("/b");
+            then.status(200).json_body(serde_json::json!({"0.2.1":"deadbeef"}));
+        });
+        let htx = make_htx(format!("{}/m", nilcc.base_url()), format!("{}/b", builder.base_url()));
+        let err = verify_htx(&htx).await.err().unwrap();
+        assert!(matches!(err, VerificationError::NotInBuilderIndex));
+    }
+}

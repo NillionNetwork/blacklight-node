@@ -18,6 +18,10 @@ getrandom = "0.3"
 reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
 toml = "0.8"
 
+[dev-dependencies]
+httpmock = "0.7"
+tokio = { version = "1.40", features = ["macros", "rt-multi-thread"] }
+
 [[bin]]
 name = "server"
 path = "src/bin/server.rs"
