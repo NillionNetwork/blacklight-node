@@ -1,0 +1,13 @@
+services:
+  nilav_node:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.node
+    environment:
+      # Override at runtime if needed
+      - WS_URL=${WS_URL:-ws://host.docker.internal:8080}
+      # Optional deterministic seed for signing (same for all replicas unless overridden)
+      # - NODE_SECRET=
+    restart: unless-stopped
+
+

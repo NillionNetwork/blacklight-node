@@ -1,0 +1,16 @@
+services:
+  nilav_server:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.server
+    environment:
+      - PORT=${PORT:-8080}
+      - CONFIG_PATH=${CONFIG_PATH:-/app/config.toml}
+    ports:
+      - "${PORT:-8080}:8080"
+    # Optionally override config (uncomment to use):
+    # volumes:
+    #   - ../config.toml:/app/config.toml:ro
+    restart: unless-stopped
+
+
