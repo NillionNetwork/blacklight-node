@@ -1,21 +1,17 @@
-# nilAV (Nillion Auditor-Verifier) - Rust
+# Nillion Auditor-Verifier (nilAV) <a href="https://github.com/NillionNetwork/nilAV/blob/main/LICENSE" target="_blank"><img src="https://img.shields.io/badge/License-MIT-green.svg" alt="MIT License"/></a>
 
 A Rust simulation of an L2 scheduler and a `nilAV` node client.
 
 - Server: rolls a dice every slot, assigns registered nodes to verify an HTX (count set by config).
 - Node: subscribes, runs a placeholder verification, signs the result (Ed25519) over canonical JSON, submits back.
 
-## Requirements
-
-- Rust (stable)
-
-## Build
+## Build & Run
 
 ```bash
 cargo build
 ```
 
-## Run the simulator server
+### Run the simulator server
 
 ```bash
 cargo run --bin server
@@ -23,14 +19,14 @@ cargo run --bin server
 
 This starts a WebSocket server on `ws://localhost:8080`.
 
-### Docker (server)
+#### Docker (server)
 
 ```bash
 docker compose -f docker/compose.server.yml up --build
 # Server at ws://localhost:8080
 ```
 
-## Run nilAV nodes
+### Run nilAV nodes
 
 Open separate terminals and run nodes with unique IDs:
 
@@ -57,7 +53,7 @@ Signature scope:
 - The node signs a canonical (key-sorted) JSON string of the `transaction` object: `{ htx, valid }`.
 - The server verifies the signature for each `verification_result` using the advertised public key before counting an approval.
 
-### Docker (nodes)
+#### Docker (nodes)
 
 Scale N nodes and connect to a server running on the host (default `WS_URL=ws://host.docker.internal:8080`):
 
