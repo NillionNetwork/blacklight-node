@@ -4,6 +4,7 @@ WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 COPY config.toml ./config.toml
+COPY data ./data
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/app/target \
@@ -14,13 +15,14 @@ WORKDIR /app
 RUN useradd -u 10001 -m appuser
 COPY --from=builder /out/bin/server /usr/local/bin/server
 COPY --from=builder /app/config.toml /app/config.toml
+COPY --from=builder /app/data /app/data
 USER appuser
 
 ENV PORT=8080
 ENV CONFIG_PATH=/app/config.toml
+# Default path for HTXs JSON list (can be overridden via HTXS_PATH)
+ENV HTXS_PATH=/app/data/htxs.json
 
 EXPOSE 8080
 
 ENTRYPOINT ["/usr/local/bin/server"]
-
-

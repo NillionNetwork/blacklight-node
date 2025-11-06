@@ -1,9 +1,9 @@
 [election]
 # Number of nilAV nodes randomly assigned per active HTX
-validators_per_htx = 2
+validators_per_htx = 3
 # Minimum number of positive (valid + signature OK) verifications required
 # to deem an HTX as verified
-approve_threshold = 1
+approve_threshold = 2
 
 # Slot duration in milliseconds (server tick interval)
 slot_ms = 5000

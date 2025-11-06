@@ -20,5 +20,3 @@ USER appuser
 ENV WS_URL=ws://host.docker.internal:8080
 
 ENTRYPOINT ["/usr/local/bin/nilav_node"]
-
-

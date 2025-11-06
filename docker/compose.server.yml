@@ -6,11 +6,11 @@ services:
     environment:
       - PORT=${PORT:-8080}
       - CONFIG_PATH=${CONFIG_PATH:-/app/config.toml}
+      - HTXS_PATH=${HTXS_PATH:-/app/data/htxs.json}
     ports:
       - "${PORT:-8080}:8080"
-    # Optionally override config (uncomment to use):
+    # Optionally override config and HTX list
     # volumes:
     #   - ../config.toml:/app/config.toml:ro
+    #   - ../data/htxs.json:/app/data/htxs.json:ro
     restart: unless-stopped
-
-
