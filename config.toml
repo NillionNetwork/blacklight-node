@@ -1,0 +1,6 @@
+[election]
+validators_per_slot = 3
+approve_threshold = 2
+
+# Slot duration in milliseconds
+slot_ms = 5000
