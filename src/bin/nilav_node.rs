@@ -1,10 +1,11 @@
 use std::env;
 
-use futures_util::{Sink, SinkExt, StreamExt};
+use futures_util::{SinkExt, StreamExt};
 use nilav::{
     stable_stringify, AssignmentMsg, TransactionEnvelope, VerificationPayload,
     VerificationResultMsg,
 };
+use tokio::sync::mpsc;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 use blake3::Hasher as Blake3;
@@ -69,21 +70,50 @@ async fn main() -> anyhow::Result<()> {
     let vk = VerifyingKey::from(&sk);
     println!("[nilAV:{}] pubkey {}", node_id, hex::encode(vk.to_bytes()));
 
-    let (mut ws, _) = connect_async(ws_url.clone()).await?;
+    let (ws, _) = connect_async(ws_url.clone()).await?;
     println!("[nilAV:{}] connected to {}", node_id, ws_url);
-    ws.send(Message::Text(
+
+    // Split WS into writer and reader halves
+    let (mut write, mut read) = ws.split();
+    // Channel for outbound messages to be serialized through single writer
+    let (tx, mut rx) = mpsc::unbounded_channel::<Message>();
+
+    // Writer task
+    tokio::spawn(async move {
+        while let Some(msg) = rx.recv().await {
+            let _ = write.send(msg).await;
+        }
+    });
+
+    // Send registration over the writer channel
+    let _ = tx.send(Message::Text(
         serde_json::json!({"type":"register","nodeId": node_id, "publicKey": hex::encode(vk.to_bytes())})
             .to_string()
             .into(),
-    ))
-    .await?;
+    ));
 
-    while let Some(msg) = ws.next().await {
+    while let Some(msg) = read.next().await {
         let msg = msg?;
         if let Message::Text(txt) = msg {
             if let Ok(assign) = serde_json::from_str::<AssignmentMsg>(&txt) {
                 if assign.node_id == node_id && assign.msg_type == "assignment" {
-                    handle_assignment(&mut ws, &sk, &node_id, assign).await?;
+                    // Spawn a task per assignment to allow concurrent verifications
+                    let tx_clone = tx.clone();
+                    let sk_clone = sk.clone();
+                    let node_id_clone = node_id.clone();
+                    tokio::spawn(async move {
+                        match handle_assignment(sk_clone, node_id_clone.clone(), assign).await {
+                            Ok(msg) => {
+                                let _ = tx_clone.send(msg);
+                            }
+                            Err(e) => {
+                                eprintln!(
+                                    "[nilAV:{}] error handling assignment: {}",
+                                    node_id_clone, e
+                                );
+                            }
+                        }
+                    });
                 }
             }
         }
@@ -92,16 +122,11 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn handle_assignment<S>(
-    ws: &mut S,
-    sk: &SigningKey,
-    node_id: &str,
+async fn handle_assignment(
+    sk: SigningKey,
+    node_id: String,
     assign: AssignmentMsg,
-) -> anyhow::Result<()>
-where
-    S: Sink<Message> + Unpin,
-    <S as Sink<Message>>::Error: std::fmt::Debug + std::error::Error + Send + Sync + 'static,
-{
+) -> anyhow::Result<Message> {
     println!(
         "[nilAV:{}] received assignment for slot {}",
         node_id, assign.slot
@@ -131,8 +156,7 @@ where
         payload,
     };
 
-    ws.send(Message::Text(serde_json::to_string(&result)?.into()))
-        .await?;
+    let message = Message::Text(serde_json::to_string(&result)?.into());
     let verdict = if result.payload.transaction.valid {
         format!("{}Verified{}", GREEN, RESET)
     } else {
@@ -145,7 +169,7 @@ where
         format!("{}Not Verified{} (reason: {})", RED, RESET, why)
     };
     println!("[nilAV:{}] slot {}: {}", node_id, assign.slot, verdict);
-    Ok(())
+    Ok(message)
 }
 
 #[derive(Debug)]
