@@ -15,6 +15,7 @@ ed25519-dalek = { version = "2", features = ["rand_core"] }
 blake3 = "1.5"
 hex = "0.4"
 getrandom = "0.3"
+reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
 toml = "0.8"
 
 [[bin]]

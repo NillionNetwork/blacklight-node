@@ -24,9 +24,10 @@ pub struct Builder {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NilCcMeasurement {
     pub url: String,
-    pub version: String,
-    #[serde(rename = "vCPUs")]
-    pub v_cpus: u64,
+    #[serde(rename = "nilcc_version")]
+    pub nilcc_version: String,
+    #[serde(rename = "cpu_count")]
+    pub cpu_count: u64,
     #[serde(rename = "GPUs")]
     pub gpus: u64,
 }
@@ -69,6 +70,8 @@ pub struct RegisteredMsg {
 pub struct TransactionEnvelope {
     pub htx: Htx,
     pub valid: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -118,7 +121,7 @@ pub fn choose_k<'a, T: Clone>(items: &'a [T], k: usize) -> Vec<T> {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ElectionConfig {
-    pub validators_per_slot: usize,
+    pub validators_per_htx: usize,
     pub approve_threshold: usize,
 }
 
@@ -133,7 +136,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             election: ElectionConfig {
-                validators_per_slot: 3,
+                validators_per_htx: 3,
                 approve_threshold: 2,
             },
             slot_ms: default_slot_ms(),

@@ -9,9 +9,13 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 use blake3::Hasher as Blake3;
 use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
-use rand::{random, Rng};
+use rand::random;
+use reqwest::Client;
 use std::fs;
 use std::path::PathBuf;
+const GREEN: &str = "\x1b[32m";
+const RED: &str = "\x1b[31m";
+const RESET: &str = "\x1b[0m";
 
 fn signing_key_from_env_or_file(node_id: &str) -> SigningKey {
     if let Ok(secret_hex) = env::var("NODE_SECRET") {
@@ -103,12 +107,15 @@ where
         node_id, assign.slot
     );
 
-    // Black-box verification placeholder: exact 20% chance to mark invalid
-    let mut rng = rand::rng();
-    let make_invalid = rng.random_range(0..5) == 0;
+    // Prepare to verify via HTTP
+    let (valid, reason) = match verify_htx(&assign.htx).await {
+        Ok(()) => (true, None),
+        Err(e) => (false, Some(e.message())),
+    };
     let tx = TransactionEnvelope {
         htx: assign.htx,
-        valid: !make_invalid,
+        valid,
+        reason,
     };
     let serialized = stable_stringify(&tx)?;
     let sig = sk.sign(serialized.as_bytes());
@@ -126,9 +133,112 @@ where
 
     ws.send(Message::Text(serde_json::to_string(&result)?.into()))
         .await?;
-    println!(
-        "[nilAV:{}] submitted verification for slot {}",
-        node_id, assign.slot
-    );
+    let verdict = if result.payload.transaction.valid {
+        format!("{}Verified{}", GREEN, RESET)
+    } else {
+        let why = result
+            .payload
+            .transaction
+            .reason
+            .as_deref()
+            .unwrap_or("unknown");
+        format!("{}Not Verified{} (reason: {})", RED, RESET, why)
+    };
+    println!("[nilAV:{}] slot {}: {}", node_id, assign.slot, verdict);
     Ok(())
+}
+
+#[derive(Debug)]
+enum VerificationError {
+    NilccUrl(String),
+    NilccJson(String),
+    MissingMeasurement,
+    BuilderUrl(String),
+    BuilderJson(String),
+    NotInBuilderIndex,
+}
+
+impl VerificationError {
+    fn message(&self) -> String {
+        match self {
+            VerificationError::NilccUrl(e) => format!("invalid nil_cc_measurement URL: {}", e),
+            VerificationError::NilccJson(e) => format!("invalid nil_cc_measurement JSON: {}", e),
+            VerificationError::MissingMeasurement => {
+                "missing `measurement` field (looked at root and report.measurement)".to_string()
+            }
+            VerificationError::BuilderUrl(e) => format!("invalid builder_measurement URL: {}", e),
+            VerificationError::BuilderJson(e) => format!("invalid builder_measurement JSON: {}", e),
+            VerificationError::NotInBuilderIndex => {
+                "measurement not found in builder index".to_string()
+            }
+        }
+    }
+}
+
+async fn verify_htx(htx: &nilav::Htx) -> Result<(), VerificationError> {
+    let client = Client::new();
+    // Fetch nil_cc measurement
+    let meas_url = &htx.nil_cc_measurement.url;
+    let meas_resp = client.get(meas_url).send().await;
+    let meas_json: serde_json::Value = match meas_resp.and_then(|r| r.error_for_status()) {
+        Ok(resp) => match resp.json().await {
+            Ok(v) => v,
+            Err(e) => return Err(VerificationError::NilccJson(e.to_string())),
+        },
+        Err(e) => return Err(VerificationError::NilccUrl(e.to_string())),
+    };
+    let measurement = meas_json
+        .get("measurement")
+        .and_then(|v| v.as_str())
+        .or_else(|| {
+            meas_json
+                .get("report")
+                .and_then(|r| r.get("measurement"))
+                .and_then(|v| v.as_str())
+        });
+    let measurement = match measurement {
+        Some(s) => s.to_string(),
+        None => return Err(VerificationError::MissingMeasurement),
+    };
+
+    // Fetch builder measurement index
+    let builder_resp = client.get(&htx.builder_measurement.url).send().await;
+    let builder_json: serde_json::Value = match builder_resp.and_then(|r| r.error_for_status()) {
+        Ok(resp) => match resp.json().await {
+            Ok(v) => v,
+            Err(e) => return Err(VerificationError::BuilderJson(e.to_string())),
+        },
+        Err(e) => return Err(VerificationError::BuilderUrl(e.to_string())),
+    };
+
+    let mut matches_any = false;
+    match builder_json {
+        serde_json::Value::Object(map) => {
+            for (_k, v) in map {
+                if let Some(val) = v.as_str() {
+                    if val == measurement {
+                        matches_any = true;
+                        break;
+                    }
+                }
+            }
+        }
+        serde_json::Value::Array(arr) => {
+            for v in arr {
+                if let Some(val) = v.as_str() {
+                    if val == measurement {
+                        matches_any = true;
+                        break;
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+
+    if matches_any {
+        Ok(())
+    } else {
+        Err(VerificationError::NotInBuilderIndex)
+    }
 }
