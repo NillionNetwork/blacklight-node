@@ -1,0 +1,84 @@
+name: build-binaries
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ "v*.*.*" ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    name: build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-all-crates: true
+
+      - name: Print rustc host and set TARGET (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          rustc -vV
+          echo "TARGET=$(rustc -vV | grep '^host:' | awk '{print $2}')" >> $GITHUB_ENV
+
+      - name: Print rustc host and set TARGET (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          rustc -vV
+          $line = (rustc -vV | Select-String '^host:')
+          $target = $line.ToString().Split()[1]
+          echo "TARGET=$target" >> $env:GITHUB_ENV
+
+      - name: Build release
+        run: cargo build --release --bins
+
+      - name: Package artifacts (Linux/macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp target/release/server dist/server
+          cp target/release/nilav_node dist/nilav_node
+          tar -C dist -czf nilav-${{ env.TARGET }}.tar.gz server nilav_node
+
+      - name: Upload artifacts (Linux/macOS)
+        if: runner.os != 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: nilav-${{ env.TARGET }}
+          path: nilav-${{ env.TARGET }}.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Package artifacts (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path dist | Out-Null
+          Copy-Item target\release\server.exe dist\server.exe
+          Copy-Item target\release\nilav_node.exe dist\nilav_node.exe
+          Compress-Archive -Path dist\* -DestinationPath nilav-${{ env.TARGET }}.zip
+
+      - name: Upload artifacts (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: nilav-${{ env.TARGET }}
+          path: nilav-${{ env.TARGET }}.zip
+          if-no-files-found: error
+          retention-days: 14
