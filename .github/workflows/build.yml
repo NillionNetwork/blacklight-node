@@ -4,8 +4,6 @@ on:
   push:
     branches: [ main ]
     tags: [ "v*.*.*" ]
-  pull_request:
-    branches: [ main ]
 
 jobs:
   build:
@@ -14,7 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-15-intel, macos-latest, windows-latest]
 
     steps:
       - name: Checkout
@@ -51,17 +49,23 @@ jobs:
         if: runner.os != 'Windows'
         shell: bash
         run: |
+          # Derive arch and OS identifiers
+          ARCH="$(echo "${TARGET}" | cut -d- -f1)"
+          if [ "${RUNNER_OS}" = "Linux" ]; then OS_ID=linux; else OS_ID=macos; fi
+          NAME="nilav-${OS_ID}-${ARCH}"
+          echo "ARTIFACT_NAME=${NAME}" >> "$GITHUB_ENV"
+          echo "ARTIFACT_FILE=${NAME}.tar.gz" >> "$GITHUB_ENV"
           mkdir -p dist
           cp target/release/server dist/server
           cp target/release/nilav_node dist/nilav_node
-          tar -C dist -czf nilav-${{ env.TARGET }}.tar.gz server nilav_node
+          tar -C dist -czf "${NAME}.tar.gz" server nilav_node
 
       - name: Upload artifacts (Linux/macOS)
         if: runner.os != 'Windows'
         uses: actions/upload-artifact@v4
         with:
-          name: nilav-${{ env.TARGET }}
-          path: nilav-${{ env.TARGET }}.tar.gz
+          name: ${{ env.ARTIFACT_NAME }}
+          path: ${{ env.ARTIFACT_FILE }}
           if-no-files-found: error
           retention-days: 14
 
@@ -69,16 +73,46 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          $arch = $env:TARGET.Split('-')[0]
+          $name = "nilav-windows-$arch"
+          "# set artifact vars" | Out-Host
+          "ARTIFACT_NAME=$name" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "ARTIFACT_FILE=$name.zip" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           New-Item -ItemType Directory -Path dist | Out-Null
           Copy-Item target\release\server.exe dist\server.exe
           Copy-Item target\release\nilav_node.exe dist\nilav_node.exe
-          Compress-Archive -Path dist\* -DestinationPath nilav-${{ env.TARGET }}.zip
+          Compress-Archive -Path dist\* -DestinationPath "$name.zip"
 
       - name: Upload artifacts (Windows)
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@v4
         with:
-          name: nilav-${{ env.TARGET }}
-          path: nilav-${{ env.TARGET }}.zip
+          name: ${{ env.ARTIFACT_NAME }}
+          path: ${{ env.ARTIFACT_FILE }}
           if-no-files-found: error
           retention-days: 14
+
+  release:
+    name: publish release
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: nilav-*
+          path: dist
+          merge-multiple: true
+
+      - name: Create GitHub Release and upload assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          files: |
+            dist/**
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
