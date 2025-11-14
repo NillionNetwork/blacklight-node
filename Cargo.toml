@@ -17,15 +17,24 @@ hex = "0.4"
 getrandom = "0.3"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 toml = "0.8"
+ethers = { version = "2.0", features = ["rustls", "ws"] }
+ethers-contract = "2.0"
+clap = { version = "4.5", features = ["derive", "env"] }
+ratatui = "0.29"
+crossterm = "0.29.0"
 
 [dev-dependencies]
 httpmock = "0.7"
 tokio = { version = "1.40", features = ["macros", "rt-multi-thread"] }
 
 [[bin]]
-name = "server"
-path = "src/bin/server.rs"
+name = "nilcc_simulator"
+path = "src/bin/nilcc_simulator.rs"
 
 [[bin]]
 name = "nilav_node"
 path = "src/bin/nilav_node.rs"
+
+[[bin]]
+name = "contract_cli"
+path = "src/bin/contract_cli.rs"
