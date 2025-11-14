@@ -143,6 +143,10 @@ contract NilAVRouter{
         return assignments[htxId];
     }
 
+    function getHTX(bytes32 htxId) external view returns (bytes memory) {
+        return htxs[htxId];
+    }
+
     // ------------------------------------------------------------------------
     // Internal helpers
     // ------------------------------------------------------------------------

@@ -245,6 +245,13 @@ impl NilAVClient {
         Ok(self.contract.get_assignment(htx_id_bytes).call().await?)
     }
 
+    /// Get HTX bytes for an HTX ID
+    pub async fn get_htx(&self, htx_id: H256) -> anyhow::Result<Vec<u8>> {
+        let htx_id_bytes: [u8; 32] = htx_id.into();
+        let bytes = self.contract.get_htx(htx_id_bytes).call().await?;
+        Ok(bytes.to_vec())
+    }
+
     /// Get assignment details using the assignments mapping
     pub async fn get_assignment_direct(
         &self,
@@ -257,6 +264,12 @@ impl NilAVClient {
     // ------------------------------------------------------------------------
     // Event Monitoring
     // ------------------------------------------------------------------------
+
+    /// Get the current block number
+    pub async fn get_block_number(&self) -> anyhow::Result<u64> {
+        let block_number = self.provider.get_block_number().await?;
+        Ok(block_number.as_u64())
+    }
 
     /// Get all HTXSubmitted events
     pub async fn get_htx_submitted_events(&self) -> anyhow::Result<Vec<HtxsubmittedFilter>> {
@@ -275,6 +288,20 @@ impl NilAVClient {
             .contract
             .event::<HtxassignedFilter>()
             .from_block(0)
+            .query()
+            .await?;
+        Ok(events)
+    }
+
+    /// Get HTXAssigned events from a specific block
+    pub async fn get_htx_assigned_events_from(
+        &self,
+        from_block: u64,
+    ) -> anyhow::Result<Vec<HtxassignedFilter>> {
+        let events = self
+            .contract
+            .event::<HtxassignedFilter>()
+            .from_block(from_block)
             .query()
             .await?;
         Ok(events)

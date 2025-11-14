@@ -11,15 +11,16 @@ use nilav::{
 };
 use rand::random;
 use reqwest::Client;
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::time::Duration;
-use tokio::signal;
 use tokio::time::interval;
 
 const GREEN: &str = "\x1b[32m";
 const RED: &str = "\x1b[31m";
 const RESET: &str = "\x1b[0m";
+const STATE_FILE: &str = "nilav_node.env";
 
 /// NilAV Node - Verifies HTXs assigned by the smart contract
 #[derive(Parser)]
@@ -34,7 +35,7 @@ struct Cli {
     #[arg(
         long,
         env = "CONTRACT_ADDRESS",
-        default_value = "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0"
+        default_value = "0x5FbDB2315678afecb367f032d93F642f64180aa3"
     )]
     contract_address: String,
 
@@ -59,7 +60,53 @@ struct Cli {
     poll_interval_ms: u64,
 }
 
-fn signing_key_from_secret_or_file(secret: Option<String>, node_id: &str) -> SigningKey {
+/// Load a value from the state file
+fn load_state_value(key: &str) -> Option<String> {
+    let path = PathBuf::from(STATE_FILE);
+    if !path.exists() {
+        return None;
+    }
+    if let Ok(contents) = fs::read_to_string(&path) {
+        for line in contents.lines() {
+            if let Some(val) = line.strip_prefix(&format!("{}=", key)) {
+                return Some(val.trim().to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Save a value to the state file, preserving other values
+fn save_state_value(key: &str, value: &str) -> Result<()> {
+    let path = PathBuf::from(STATE_FILE);
+    let mut state = HashMap::new();
+    
+    // Load existing state
+    if path.exists() {
+        if let Ok(contents) = fs::read_to_string(&path) {
+            for line in contents.lines() {
+                if let Some((k, v)) = line.split_once('=') {
+                    state.insert(k.to_string(), v.trim().to_string());
+                }
+            }
+        }
+    }
+    
+    // Update the value
+    state.insert(key.to_string(), value.to_string());
+    
+    // Write back to file (sorted by key for consistency)
+    let mut keys: Vec<_> = state.keys().collect();
+    keys.sort();
+    let mut content = String::new();
+    for k in keys {
+        content.push_str(&format!("{}={}\n", k, state[k]));
+    }
+    fs::write(&path, content)?;
+    Ok(())
+}
+
+fn signing_key_from_secret_or_file(secret: Option<String>) -> SigningKey {
     if let Some(secret_hex) = secret {
         if let Ok(decoded) = hex::decode(secret_hex.trim_start_matches("0x")) {
             if decoded.len() == 32 {
@@ -75,27 +122,20 @@ fn signing_key_from_secret_or_file(secret: Option<String>, node_id: &str) -> Sig
             return SigningKey::from_bytes(&seed);
         }
     }
-    // Try nodeid.env in CWD
-    let path = PathBuf::from(format!("{}.env", node_id));
-    if path.exists() {
-        if let Ok(contents) = fs::read_to_string(&path) {
-            for line in contents.lines() {
-                if let Some(val) = line.strip_prefix("NODE_SECRET=") {
-                    if let Ok(decoded) = hex::decode(val.trim().trim_start_matches("0x")) {
-                        if decoded.len() == 32 {
-                            let mut seed = [0u8; 32];
-                            seed.copy_from_slice(&decoded);
-                            return SigningKey::from_bytes(&seed);
-                        }
-                    }
-                }
+    // Try loading from state file
+    if let Some(secret_hex) = load_state_value("NODE_SECRET") {
+        if let Ok(decoded) = hex::decode(secret_hex.trim_start_matches("0x")) {
+            if decoded.len() == 32 {
+                let mut seed = [0u8; 32];
+                seed.copy_from_slice(&decoded);
+                return SigningKey::from_bytes(&seed);
             }
         }
     }
     // Create new seed and persist
     let seed: [u8; 32] = random();
-    let line = format!("NODE_SECRET=0x{}\n", hex::encode(seed));
-    let _ = fs::write(&path, line);
+    let secret_hex = format!("0x{}", hex::encode(seed));
+    let _ = save_state_value("NODE_SECRET", &secret_hex);
     SigningKey::from_bytes(&seed)
 }
 
@@ -103,13 +143,21 @@ fn signing_key_from_secret_or_file(secret: Option<String>, node_id: &str) -> Sig
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    let node_id = cli.node_id.unwrap_or_else(|| {
-        env::var("HOSTNAME")
+    // Load or generate node_id, preserving it in state file
+    let node_id = if let Some(id) = cli.node_id {
+        let _ = save_state_value("NODE_ID", &id);
+        id
+    } else if let Some(id) = load_state_value("NODE_ID") {
+        id
+    } else {
+        let id = env::var("HOSTNAME")
             .ok()
-            .unwrap_or_else(|| format!("node-{}", hex::encode(rand::random::<[u8; 4]>())))
-    });
+            .unwrap_or_else(|| format!("node-{}", hex::encode(rand::random::<[u8; 4]>())));
+        let _ = save_state_value("NODE_ID", &id);
+        id
+    };
 
-    let sk = signing_key_from_secret_or_file(cli.node_secret, &node_id);
+    let sk = signing_key_from_secret_or_file(cli.node_secret);
     let vk = VerifyingKey::from(&sk);
     println!("[nilAV:{}] pubkey {}", node_id, hex::encode(vk.to_bytes()));
 
@@ -143,13 +191,44 @@ async fn main() -> Result<()> {
 
     let mut ticker = interval(Duration::from_millis(cli.poll_interval_ms));
 
+    // Track the last processed block to avoid reprocessing old events
+    // Load from state file if available, otherwise start from current block
+    let mut last_processed_block = if let Some(block_str) = load_state_value("LAST_PROCESSED_BLOCK") {
+        if let Ok(block) = block_str.parse::<u64>() {
+            println!("[nilAV:{}] Resuming from saved block: {}", node_id, block);
+            block
+        } else {
+            match client.get_block_number().await {
+                Ok(block) => {
+                    println!("[nilAV:{}] Monitoring from current block: {}", node_id, block);
+                    block
+                }
+                Err(e) => {
+                    eprintln!("[nilAV:{}] Failed to get current block number: {}", node_id, e);
+                    0
+                }
+            }
+        }
+    } else {
+        match client.get_block_number().await {
+            Ok(block) => {
+                println!("[nilAV:{}] Monitoring from current block: {}", node_id, block);
+                block
+            }
+            Err(e) => {
+                eprintln!("[nilAV:{}] Failed to get current block number: {}", node_id, e);
+                0
+            }
+        }
+    };
+
     println!("[nilAV:{}] Listening for assignments (polling every {}ms)...", node_id, cli.poll_interval_ms);
 
     loop {
         ticker.tick().await;
 
-        // Get HTX assigned events
-        match client.get_htx_assigned_events().await {
+        // Get HTX assigned events from the last processed block
+        match client.get_htx_assigned_events_from(last_processed_block).await {
             Ok(events) => {
                 for event in events {
                     // Only process events assigned to this node
@@ -171,30 +250,66 @@ async fn main() -> Result<()> {
                                 node_id, htx_id
                             );
 
-                            // We need to get the HTX data somehow - this is a limitation
-                            // The contract doesn't store the full HTX data, only its hash
-                            // For now, we'll need to retrieve it from the submitted events
-                            // In production, you might want to store HTX data off-chain
+                            // Retrieve the HTX data from the contract
+                            let htx_bytes = match client.get_htx(htx_id).await {
+                                Ok(bytes) => bytes,
+                                Err(e) => {
+                                    eprintln!(
+                                        "[nilAV:{}] Failed to get HTX data for {:?}: {}",
+                                        node_id, htx_id, e
+                                    );
+                                    continue;
+                                }
+                            };
 
-                            // TODO: This is a workaround - ideally the contract would emit
-                            // the HTX data in the assigned event, or we'd have off-chain storage
-                            println!(
-                                "[nilAV:{}] TODO Warning: Current implementation cannot retrieve full HTX data from contract -> Responding with default verification result",
-                                node_id
-                            );
+                            // Parse the HTX data
+                            let htx: Htx = match serde_json::from_slice(&htx_bytes) {
+                                Ok(h) => h,
+                                Err(e) => {
+                                    eprintln!(
+                                        "[nilAV:{}] Failed to parse HTX data for {:?}: {}",
+                                        node_id, htx_id, e
+                                    );
+                                    // Respond with false if we can't parse the data
+                                    match client.respond_htx(htx_id, false).await {
+                                        Ok(tx_hash) => {
+                                            println!(
+                                                "[nilAV:{}] HTX {:?}: {}Not Verified{} (parse error) | tx: {:?}",
+                                                node_id, htx_id, RED, RESET, tx_hash
+                                            );
+                                        }
+                                        Err(e) => {
+                                            eprintln!(
+                                                "[nilAV:{}] Failed to respond to HTX {:?}: {}",
+                                                node_id, htx_id, e
+                                            );
+                                        }
+                                    }
+                                    continue;
+                                }
+                            };
 
-                            let result = true; // Default to true since we can't verify without data
+                            // Verify the HTX
+                            let verification_result = verify_htx(&htx).await;
+                            let result = verification_result.is_ok();
+
+                            if let Err(ref e) = verification_result {
+                                println!(
+                                    "[nilAV:{}] HTX {:?} verification failed: {}",
+                                    node_id, htx_id, e.message()
+                                );
+                            }
 
                             match client.respond_htx(htx_id, result).await {
                                 Ok(tx_hash) => {
                                     let verdict = if result {
-                                        format!("{}Verified{}", GREEN, RESET)
+                                        format!("{}Verified [VALID]{}", GREEN, RESET)
                                     } else {
-                                        format!("{}Not Verified{} (no HTX data)", RED, RESET)
+                                        format!("{}Verified [INVALID]{}", RED, RESET)
                                     };
                                     println!(
-                                        "[nilAV:{}] HTX {:?}: {} | tx: {:?}",
-                                        node_id, htx_id, verdict, tx_hash
+                                        "[nilAV:{}] {} HTX {:?}: | tx: {:?}",
+                                        node_id, verdict, htx_id, tx_hash
                                     );
                                 }
                                 Err(e) => {
@@ -216,6 +331,18 @@ async fn main() -> Result<()> {
             }
             Err(e) => {
                 eprintln!("[nilAV:{}] Failed to get assigned events: {}", node_id, e);
+            }
+        }
+
+        // Update last processed block to current block to avoid reprocessing
+        match client.get_block_number().await {
+            Ok(current_block) => {
+                last_processed_block = current_block;
+                // Persist the last processed block to state file
+                let _ = save_state_value("LAST_PROCESSED_BLOCK", &current_block.to_string());
+            }
+            Err(e) => {
+                eprintln!("[nilAV:{}] Failed to update block number: {}", node_id, e);
             }
         }
     }
@@ -291,7 +418,6 @@ async fn verify_htx(htx: &Htx) -> Result<(), VerificationError> {
     }
 }
 
-#[allow(dead_code)]
 #[derive(Debug)]
 enum VerificationError {
     NilccUrl(String),
@@ -302,7 +428,6 @@ enum VerificationError {
     NotInBuilderIndex,
 }
 
-#[allow(dead_code)]
 impl VerificationError {
     fn message(&self) -> String {
         match self {
