@@ -1,0 +1,23 @@
+[profile.default]
+src = "."
+out = "out"
+libs = ["lib"]
+solc_version = "0.8.20"
+
+# Optimizer settings
+optimizer = true
+optimizer_runs = 200
+
+# Test settings
+verbosity = 2
+ffi = false
+fs_permissions = []
+
+# Gas reporting
+gas_reports = ["*"]
+
+[fmt]
+line_length = 100
+tab_width = 4
+bracket_spacing = true
+int_types = "long"

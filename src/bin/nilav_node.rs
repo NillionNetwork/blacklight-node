@@ -2,8 +2,8 @@ use std::env;
 
 use futures_util::{SinkExt, StreamExt};
 use nilav::{
-    stable_stringify, AssignmentMsg, TransactionEnvelope, VerificationPayload,
-    VerificationResultMsg,
+    stable_stringify,
+    types::{AssignmentMsg, Htx, TransactionEnvelope, VerificationPayload, VerificationResultMsg},
 };
 use tokio::sync::mpsc;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
@@ -199,7 +199,7 @@ impl VerificationError {
     }
 }
 
-async fn verify_htx(htx: &nilav::Htx) -> Result<(), VerificationError> {
+async fn verify_htx(htx: &Htx) -> Result<(), VerificationError> {
     let client = Client::new();
     // Fetch nil_cc measurement
     let meas_url = &htx.nil_cc_measurement.url;
@@ -271,28 +271,29 @@ async fn verify_htx(htx: &nilav::Htx) -> Result<(), VerificationError> {
 mod tests {
     use super::*;
     use httpmock::prelude::*;
+    use nilav::types::{Builder, BuilderMeasurement, NilCcMeasurement, NilCcOperator, WorkloadId};
 
-    fn make_htx(nilcc_url: String, builder_url: String) -> nilav::Htx {
-        nilav::Htx {
-            workload_id: nilav::WorkloadId {
+    fn make_htx(nilcc_url: String, builder_url: String) -> Htx {
+        Htx {
+            workload_id: WorkloadId {
                 current: 1,
                 previous: 0,
             },
-            nil_cc_operator: nilav::NilCcOperator {
+            nil_cc_operator: NilCcOperator {
                 id: 1,
                 name: "op".into(),
             },
-            builder: nilav::Builder {
+            builder: Builder {
                 id: 1,
                 name: "builder".into(),
             },
-            nil_cc_measurement: nilav::NilCcMeasurement {
+            nil_cc_measurement: NilCcMeasurement {
                 url: nilcc_url,
                 nilcc_version: "0.0.0".into(),
                 cpu_count: 1,
                 gpus: 0,
             },
-            builder_measurement: nilav::BuilderMeasurement { url: builder_url },
+            builder_measurement: BuilderMeasurement { url: builder_url },
         }
     }
 

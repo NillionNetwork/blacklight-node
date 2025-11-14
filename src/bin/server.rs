@@ -12,7 +12,11 @@ use tokio::{net::TcpListener, sync::Mutex, time::interval};
 use tokio_tungstenite::tungstenite::Message;
 
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
-use nilav::{choose_k, load_config_from_path, AssignmentMsg, Config, Htx};
+use nilav::{
+    choose_k, load_config_from_path,
+    types::{AssignmentMsg, Htx, VerificationResultMsg},
+    Config,
+};
 
 type Tx = tokio::sync::mpsc::UnboundedSender<Message>;
 
@@ -171,7 +175,7 @@ async fn main() -> anyhow::Result<()> {
                         } else if v.get("type") == Some(&json!("verification_result")) {
                             // Aggregate approvals per slot
                             if let Ok(res) =
-                                serde_json::from_value::<nilav::VerificationResultMsg>(v.clone())
+                                serde_json::from_value::<VerificationResultMsg>(v.clone())
                             {
                                 let mut states = state_conn.slot_states.lock().await;
                                 if let Some(st) = states.get_mut(&res.slot) {

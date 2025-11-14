@@ -1,0 +1,14 @@
+{
+    "workload_id": { "current": 1001, "previous": 1000 },
+    "nilCC_operator": { "id": 4, "name": "Latitude" },
+    "builder": { "id": 94323, "name": "Nillion" },
+    "nilCC_measurement": {
+      "url": "https://nilgpt.xyz/nilcc/api/v2/report",
+      "nilcc_version": "0.2.1",
+      "cpu_count": 4,
+      "GPUs": 1
+    },
+    "builder_measurement": {
+      "url": "https://raw.githubusercontent.com/NillionNetwork/nilgpt/main/measurement-hash-index.json"
+    }
+}
