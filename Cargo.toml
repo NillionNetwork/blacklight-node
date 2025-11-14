@@ -28,8 +28,8 @@ httpmock = "0.7"
 tokio = { version = "1.40", features = ["macros", "rt-multi-thread"] }
 
 [[bin]]
-name = "server"
-path = "src/bin/server.rs"
+name = "nilcc_simulator"
+path = "src/bin/nilcc_simulator.rs"
 
 [[bin]]
 name = "nilav_node"
