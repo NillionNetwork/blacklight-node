@@ -52,6 +52,7 @@ DEPLOY_OUTPUT=$(forge create NilAVRouter \
     --rpc-url $RPC_URL \
     --private-key $DEFAULT_PRIVATE_KEY \
     --contracts src/smart_contract/solidity \
+    --broadcast \
     2>&1)
 
 CONTRACT_ADDRESS=$(echo "$DEPLOY_OUTPUT" | grep "Deployed to:" | awk '{print $3}')
@@ -140,7 +141,8 @@ echo ""
 echo "To interact with the contract manually:"
 echo ""
 echo "  export RPC_URL=$RPC_URL"
-echo "  export PRIVATE_KEY=$DEFAULT_PRIVATE_KEY"
+# echo "  export PRIVATE_KEY=$DEFAULT_PRIVATE_KEY"
+echo "  export CONTRACT_ADDRESS=$CONTRACT_ADDRESS"
 echo ""
 echo "Then use the CLI commands:"
 echo "  ./target/debug/contract_cli list-nodes"
