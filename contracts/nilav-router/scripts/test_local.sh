@@ -35,7 +35,7 @@ echo ""
 export RPC_URL
 export PRIVATE_KEY
 
-CLI="./target/debug/contract_cli"
+CLI="../../target/debug/contract_cli"
 
 # Build if needed
 if [ ! -f "$CLI" ]; then

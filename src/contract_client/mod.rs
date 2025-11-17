@@ -13,26 +13,26 @@ use std::sync::Arc;
 pub fn decode_error_string(revert_data: &str) -> Option<String> {
     // Remove 0x prefix if present
     let data = revert_data.strip_prefix("0x").unwrap_or(revert_data);
-    
+
     // Error(string) selector is 0x08c379a0
     const ERROR_STRING_SELECTOR: &str = "08c379a0";
-    
+
     if !data.starts_with(ERROR_STRING_SELECTOR) {
         return None;
     }
-    
+
     // Skip selector (8 hex chars = 4 bytes)
     let encoded = &data[8..];
-    
+
     // ABI-encode format for string:
     // - offset (32 bytes = 64 hex chars) - should be 0x20
     // - length (32 bytes = 64 hex chars)
     // - string data (padded to 32-byte boundary)
-    
+
     if encoded.len() < 128 {
         return None; // Need at least offset + length
     }
-    
+
     // Parse offset (should be 0x20 = 32)
     let offset_hex = &encoded[0..64];
     if let Ok(offset) = u64::from_str_radix(offset_hex, 16) {
@@ -42,14 +42,14 @@ pub fn decode_error_string(revert_data: &str) -> Option<String> {
     } else {
         return None;
     }
-    
+
     // Parse length
     let length_hex = &encoded[64..128];
     if let Ok(length) = u64::from_str_radix(length_hex, 16) {
         // Extract string data (skip offset and length, start at byte 64 = char 128)
         let string_data_hex = &encoded[128..];
         let string_bytes = hex::decode(string_data_hex).ok()?;
-        
+
         // Take only the length bytes (ignore padding)
         if length as usize <= string_bytes.len() {
             if let Ok(decoded) = String::from_utf8(string_bytes[..length as usize].to_vec()) {
@@ -57,7 +57,7 @@ pub fn decode_error_string(revert_data: &str) -> Option<String> {
             }
         }
     }
-    
+
     None
 }
 
@@ -205,7 +205,7 @@ impl NilAVClient {
         let tx = call.send().await.map_err(|e| {
             // Try to decode error message from revert data
             let error_msg = e.to_string();
-            
+
             // Try different patterns for finding revert data
             let revert_data = error_msg
                 .split("reverted with data: ")
@@ -225,13 +225,13 @@ impl NilAVClient {
                         Some(&error_msg[start..start + end])
                     })
                 });
-            
+
             if let Some(data) = revert_data {
                 if let Some(decoded) = decode_error_string(data.trim()) {
                     return anyhow::anyhow!("Contract call reverted: {}", decoded);
                 }
             }
-            
+
             e.into()
         })?;
         let receipt = tx.await?;
@@ -345,11 +345,8 @@ impl NilAVClient {
 
 #[cfg(test)]
 mod tests {
-    use crate::types::{
-        Builder, BuilderMeasurement, Htx, NilCcMeasurement, NilCcOperator, WorkloadId,
-    };
-
     use super::*;
+    use crate::types::{Builder, BuilderMeasurement, NilCcMeasurement, NilCcOperator, WorkloadId};
     use std::env;
 
     #[test]
@@ -358,16 +355,16 @@ mod tests {
         let error_data = "0x08c379a0000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000124e696c41563a20756e6b6e6f776e204854580000000000000000000000000000";
         let decoded = decode_error_string(error_data);
         assert_eq!(decoded, Some("NilAV: unknown HTX".to_string()));
-        
+
         // Test without 0x prefix
         let error_data_no_prefix = &error_data[2..];
         let decoded2 = decode_error_string(error_data_no_prefix);
         assert_eq!(decoded2, Some("NilAV: unknown HTX".to_string()));
-        
+
         // Test with invalid selector
         let invalid = "0x12345678000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000124e696c41563a20756e6b6e6f776e204854580000000000000000000000000000";
         assert_eq!(decode_error_string(invalid), None);
-        
+
         // Test with empty string
         let empty_error = "0x08c379a000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000";
         let decoded_empty = decode_error_string(empty_error);

@@ -62,6 +62,8 @@ impl TryInto<Bytes> for &Htx {
     }
 }
 
+// Legacy types (from WebSocket-based architecture, kept for compatibility)
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssignmentMsg {
     #[serde(rename = "type")]

@@ -1,20 +1,17 @@
 use std::env;
+use std::time::Duration;
 
 use anyhow::Result;
-use blake3::Hasher as Blake3;
 use clap::Parser;
-use ed25519_dalek::{SigningKey, VerifyingKey};
 use ethers::core::types::{Address, H256};
 use nilav::{
-    smart_contract::{ContractConfig, NilAVClient},
+    contract_client::{ContractConfig, NilAVClient},
+    crypto::{load_or_generate_signing_key, verifying_key_from_signing},
+    state::StateFile,
     types::Htx,
+    verification::verify_htx,
 };
 use rand::random;
-use reqwest::Client;
-use std::collections::HashMap;
-use std::fs;
-use std::path::PathBuf;
-use std::time::Duration;
 use tokio::time::interval;
 
 const GREEN: &str = "\x1b[32m";
@@ -60,105 +57,32 @@ struct Cli {
     poll_interval_ms: u64,
 }
 
-/// Load a value from the state file
-fn load_state_value(key: &str) -> Option<String> {
-    let path = PathBuf::from(STATE_FILE);
-    if !path.exists() {
-        return None;
-    }
-    if let Ok(contents) = fs::read_to_string(&path) {
-        for line in contents.lines() {
-            if let Some(val) = line.strip_prefix(&format!("{}=", key)) {
-                return Some(val.trim().to_string());
-            }
-        }
-    }
-    None
-}
-
-/// Save a value to the state file, preserving other values
-fn save_state_value(key: &str, value: &str) -> Result<()> {
-    let path = PathBuf::from(STATE_FILE);
-    let mut state = HashMap::new();
-    
-    // Load existing state
-    if path.exists() {
-        if let Ok(contents) = fs::read_to_string(&path) {
-            for line in contents.lines() {
-                if let Some((k, v)) = line.split_once('=') {
-                    state.insert(k.to_string(), v.trim().to_string());
-                }
-            }
-        }
-    }
-    
-    // Update the value
-    state.insert(key.to_string(), value.to_string());
-    
-    // Write back to file (sorted by key for consistency)
-    let mut keys: Vec<_> = state.keys().collect();
-    keys.sort();
-    let mut content = String::new();
-    for k in keys {
-        content.push_str(&format!("{}={}\n", k, state[k]));
-    }
-    fs::write(&path, content)?;
-    Ok(())
-}
-
-fn signing_key_from_secret_or_file(secret: Option<String>) -> SigningKey {
-    if let Some(secret_hex) = secret {
-        if let Ok(decoded) = hex::decode(secret_hex.trim_start_matches("0x")) {
-            if decoded.len() == 32 {
-                let mut seed = [0u8; 32];
-                seed.copy_from_slice(&decoded);
-                return SigningKey::from_bytes(&seed);
-            }
-            // fallback: hash arbitrary input to 32 bytes
-            let mut hasher = Blake3::new();
-            hasher.update(&decoded);
-            let digest = hasher.finalize();
-            let seed: [u8; 32] = digest.as_bytes().clone();
-            return SigningKey::from_bytes(&seed);
-        }
-    }
-    // Try loading from state file
-    if let Some(secret_hex) = load_state_value("NODE_SECRET") {
-        if let Ok(decoded) = hex::decode(secret_hex.trim_start_matches("0x")) {
-            if decoded.len() == 32 {
-                let mut seed = [0u8; 32];
-                seed.copy_from_slice(&decoded);
-                return SigningKey::from_bytes(&seed);
-            }
-        }
-    }
-    // Create new seed and persist
-    let seed: [u8; 32] = random();
-    let secret_hex = format!("0x{}", hex::encode(seed));
-    let _ = save_state_value("NODE_SECRET", &secret_hex);
-    SigningKey::from_bytes(&seed)
-}
-
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    let state_file = StateFile::new(STATE_FILE);
 
     // Load or generate node_id, preserving it in state file
     let node_id = if let Some(id) = cli.node_id {
-        let _ = save_state_value("NODE_ID", &id);
+        let _ = state_file.save_value("NODE_ID", &id);
         id
-    } else if let Some(id) = load_state_value("NODE_ID") {
+    } else if let Some(id) = state_file.load_value("NODE_ID") {
         id
     } else {
         let id = env::var("HOSTNAME")
             .ok()
-            .unwrap_or_else(|| format!("node-{}", hex::encode(rand::random::<[u8; 4]>())));
-        let _ = save_state_value("NODE_ID", &id);
+            .unwrap_or_else(|| format!("node-{}", hex::encode(random::<[u8; 4]>())));
+        let _ = state_file.save_value("NODE_ID", &id);
         id
     };
 
-    let sk = signing_key_from_secret_or_file(cli.node_secret);
-    let vk = VerifyingKey::from(&sk);
+    // Load or generate signing key
+    let secret = cli
+        .node_secret
+        .or_else(|| state_file.load_value("NODE_SECRET"));
+    let (sk, secret_hex) = load_or_generate_signing_key(secret);
+    let _ = state_file.save_value("NODE_SECRET", &secret_hex);
+    let vk = verifying_key_from_signing(&sk);
     println!("[nilAV:{}] pubkey {}", node_id, hex::encode(vk.to_bytes()));
 
     // Setup smart contract client
@@ -166,8 +90,16 @@ async fn main() -> Result<()> {
     let contract_config = ContractConfig::new(cli.rpc_url.clone(), contract_address);
     let client = NilAVClient::new(contract_config, cli.node_private_key).await?;
 
-    println!("[nilAV:{}] Connected to contract at: {}", node_id, client.address());
-    println!("[nilAV:{}] Node wallet address: {}", node_id, client.signer_address());
+    println!(
+        "[nilAV:{}] Connected to contract at: {}",
+        node_id,
+        client.address()
+    );
+    println!(
+        "[nilAV:{}] Node wallet address: {}",
+        node_id,
+        client.signer_address()
+    );
 
     // Register this node with the contract
     let node_address = client.signer_address();
@@ -193,42 +125,61 @@ async fn main() -> Result<()> {
 
     // Track the last processed block to avoid reprocessing old events
     // Load from state file if available, otherwise start from current block
-    let mut last_processed_block = if let Some(block_str) = load_state_value("LAST_PROCESSED_BLOCK") {
-        if let Ok(block) = block_str.parse::<u64>() {
-            println!("[nilAV:{}] Resuming from saved block: {}", node_id, block);
-            block
+    let mut last_processed_block =
+        if let Some(block_str) = state_file.load_value("LAST_PROCESSED_BLOCK") {
+            if let Ok(block) = block_str.parse::<u64>() {
+                println!("[nilAV:{}] Resuming from saved block: {}", node_id, block);
+                block
+            } else {
+                match client.get_block_number().await {
+                    Ok(block) => {
+                        println!(
+                            "[nilAV:{}] Monitoring from current block: {}",
+                            node_id, block
+                        );
+                        block
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "[nilAV:{}] Failed to get current block number: {}",
+                            node_id, e
+                        );
+                        0
+                    }
+                }
+            }
         } else {
             match client.get_block_number().await {
                 Ok(block) => {
-                    println!("[nilAV:{}] Monitoring from current block: {}", node_id, block);
+                    println!(
+                        "[nilAV:{}] Monitoring from current block: {}",
+                        node_id, block
+                    );
                     block
                 }
                 Err(e) => {
-                    eprintln!("[nilAV:{}] Failed to get current block number: {}", node_id, e);
+                    eprintln!(
+                        "[nilAV:{}] Failed to get current block number: {}",
+                        node_id, e
+                    );
                     0
                 }
             }
-        }
-    } else {
-        match client.get_block_number().await {
-            Ok(block) => {
-                println!("[nilAV:{}] Monitoring from current block: {}", node_id, block);
-                block
-            }
-            Err(e) => {
-                eprintln!("[nilAV:{}] Failed to get current block number: {}", node_id, e);
-                0
-            }
-        }
-    };
+        };
 
-    println!("[nilAV:{}] Listening for assignments (polling every {}ms)...", node_id, cli.poll_interval_ms);
+    println!(
+        "[nilAV:{}] Listening for assignments (polling every {}ms)...",
+        node_id, cli.poll_interval_ms
+    );
 
     loop {
         ticker.tick().await;
 
         // Get HTX assigned events from the last processed block
-        match client.get_htx_assigned_events_from(last_processed_block).await {
+        match client
+            .get_htx_assigned_events_from(last_processed_block)
+            .await
+        {
             Ok(events) => {
                 for event in events {
                     // Only process events assigned to this node
@@ -296,7 +247,7 @@ async fn main() -> Result<()> {
                             if let Err(ref e) = verification_result {
                                 println!(
                                     "[nilAV:{}] HTX {:?} verification failed: {}",
-                                    node_id, htx_id, e.message()
+                                    node_id, htx_id, e
                                 );
                             }
 
@@ -339,107 +290,10 @@ async fn main() -> Result<()> {
             Ok(current_block) => {
                 last_processed_block = current_block;
                 // Persist the last processed block to state file
-                let _ = save_state_value("LAST_PROCESSED_BLOCK", &current_block.to_string());
+                let _ = state_file.save_value("LAST_PROCESSED_BLOCK", &current_block.to_string());
             }
             Err(e) => {
                 eprintln!("[nilAV:{}] Failed to update block number: {}", node_id, e);
-            }
-        }
-    }
-}
-
-// Keep verification logic for when we can access HTX data
-#[allow(dead_code)]
-async fn verify_htx(htx: &Htx) -> Result<(), VerificationError> {
-    let client = Client::new();
-    // Fetch nil_cc measurement
-    let meas_url = &htx.nil_cc_measurement.url;
-    let meas_resp = client.get(meas_url).send().await;
-    let meas_json: serde_json::Value = match meas_resp.and_then(|r| r.error_for_status()) {
-        Ok(resp) => match resp.json().await {
-            Ok(v) => v,
-            Err(e) => return Err(VerificationError::NilccJson(e.to_string())),
-        },
-        Err(e) => return Err(VerificationError::NilccUrl(e.to_string())),
-    };
-    let measurement = meas_json
-        .get("measurement")
-        .and_then(|v| v.as_str())
-        .or_else(|| {
-            meas_json
-                .get("report")
-                .and_then(|r| r.get("measurement"))
-                .and_then(|v| v.as_str())
-        });
-    let measurement = match measurement {
-        Some(s) => s.to_string(),
-        None => return Err(VerificationError::MissingMeasurement),
-    };
-
-    // Fetch builder measurement index
-    let builder_resp = client.get(&htx.builder_measurement.url).send().await;
-    let builder_json: serde_json::Value = match builder_resp.and_then(|r| r.error_for_status()) {
-        Ok(resp) => match resp.json().await {
-            Ok(v) => v,
-            Err(e) => return Err(VerificationError::BuilderJson(e.to_string())),
-        },
-        Err(e) => return Err(VerificationError::BuilderUrl(e.to_string())),
-    };
-
-    let mut matches_any = false;
-    match builder_json {
-        serde_json::Value::Object(map) => {
-            for (_k, v) in map {
-                if let Some(val) = v.as_str() {
-                    if val == measurement {
-                        matches_any = true;
-                        break;
-                    }
-                }
-            }
-        }
-        serde_json::Value::Array(arr) => {
-            for v in arr {
-                if let Some(val) = v.as_str() {
-                    if val == measurement {
-                        matches_any = true;
-                        break;
-                    }
-                }
-            }
-        }
-        _ => {}
-    }
-
-    if matches_any {
-        Ok(())
-    } else {
-        Err(VerificationError::NotInBuilderIndex)
-    }
-}
-
-#[derive(Debug)]
-enum VerificationError {
-    NilccUrl(String),
-    NilccJson(String),
-    MissingMeasurement,
-    BuilderUrl(String),
-    BuilderJson(String),
-    NotInBuilderIndex,
-}
-
-impl VerificationError {
-    fn message(&self) -> String {
-        match self {
-            VerificationError::NilccUrl(e) => format!("invalid nil_cc_measurement URL: {}", e),
-            VerificationError::NilccJson(e) => format!("invalid nil_cc_measurement JSON: {}", e),
-            VerificationError::MissingMeasurement => {
-                "missing `measurement` field (looked at root and report.measurement)".to_string()
-            }
-            VerificationError::BuilderUrl(e) => format!("invalid builder_measurement URL: {}", e),
-            VerificationError::BuilderJson(e) => format!("invalid builder_measurement JSON: {}", e),
-            VerificationError::NotInBuilderIndex => {
-                "measurement not found in builder index".to_string()
             }
         }
     }

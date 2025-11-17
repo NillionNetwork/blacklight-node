@@ -4,10 +4,9 @@ use anyhow::Result;
 use clap::Parser;
 use ethers::core::types::Address;
 use nilav::{
-    load_config_from_path,
-    smart_contract::{ContractConfig, NilAVClient},
+    config::load_config_from_path,
+    contract_client::{ContractConfig, NilAVClient},
     types::Htx,
-    Config,
 };
 use tokio::time::interval;
 
@@ -37,7 +36,7 @@ struct Cli {
     private_key: String,
 
     /// Path to config file
-    #[arg(long, env = "CONFIG_PATH", default_value = "config.toml")]
+    #[arg(long, env = "CONFIG_PATH", default_value = "config/config.toml")]
     config_path: String,
 
     /// Path to HTXs JSON file
@@ -50,7 +49,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     // Load config
-    let config: Config = load_config_from_path(&cli.config_path).unwrap_or_default();
+    let config = load_config_from_path(&cli.config_path).unwrap_or_default();
     println!(
         "[server] config: validators_per_htx={}, approve_threshold={}",
         config.election.validators_per_htx, config.election.approve_threshold

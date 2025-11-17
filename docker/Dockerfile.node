@@ -4,7 +4,8 @@ WORKDIR /app
 # Cache deps
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
-COPY config.toml ./config.toml
+COPY config ./config
+COPY out ./out
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/app/target \
