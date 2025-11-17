@@ -51,12 +51,13 @@ echo -e "${BLUE}Step 3: Deploying NilAVRouter contract...${NC}"
 DEPLOY_OUTPUT=$(forge create NilAVRouter \
     --rpc-url $RPC_URL \
     --private-key $DEFAULT_PRIVATE_KEY \
-    --contracts src/smart_contract/solidity \
+    --contracts . \
     --broadcast \
     2>&1)
-
+echo "$DEPLOY_OUTPUT"
 CONTRACT_ADDRESS=$(echo "$DEPLOY_OUTPUT" | grep "Deployed to:" | awk '{print $3}')
 
+echo "$CONTRACT_ADDRESS"
 if [ -z "$CONTRACT_ADDRESS" ]; then
     echo -e "${YELLOW}Failed to extract contract address. Full output:${NC}"
     echo "$DEPLOY_OUTPUT"
@@ -71,7 +72,7 @@ echo "$CONTRACT_ADDRESS" > /tmp/nilav_contract_address.txt
 
 # Build the Rust CLI
 echo -e "${BLUE}Step 4: Building Rust CLI...${NC}"
-cargo build --bin contract_cli --quiet
+cd ../../ && cargo build --bin contract_cli --quiet
 echo -e "${GREEN}✓ CLI built successfully${NC}"
 echo ""
 
@@ -92,25 +93,25 @@ echo -e "${BLUE}Running Test Commands...${NC}"
 echo "==================================================================="
 echo ""
 
-# Test 1: Check node count
-echo -e "${YELLOW}Test 1: Check initial node count${NC}"
-./target/debug/contract_cli node-count
-echo ""
+# # Test 1: Check node count
+# echo -e "${YELLOW}Test 1: Check initial node count${NC}"
+# ../../target/debug/contract_cli node-count
+# echo ""
 
 # # Test 2: Register nodes
 # echo -e "${YELLOW}Test 2: Register two nodes${NC}"
-# ./target/debug/contract_cli register-node 0x70997970C51812dc3A010C7d01b50e0d17dc79C8
-# ./target/debug/contract_cli register-node 0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC
+# ../../target/debug/contract_cli register-node 0x70997970C51812dc3A010C7d01b50e0d17dc79C8
+# ../../target/debug/contract_cli register-node 0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC
 # echo ""
 
 # # Test 3: List nodes
 # echo -e "${YELLOW}Test 3: List all registered nodes${NC}"
-# ./target/debug/contract_cli list-nodes
+# ../../target/debug/contract_cli list-nodes
 # echo ""
 
 # # Test 4: Submit HTX
 # echo -e "${YELLOW}Test 4: Submit an HTX for verification${NC}"
-# SUBMIT_OUTPUT=$(./target/debug/contract_cli submit-htx '{"workload_id":{"current":1,"previous":0}}')
+# SUBMIT_OUTPUT=$(../../target/debug/contract_cli submit-htx '{"workload_id":{"current":1,"previous":0}}')
 # echo "$SUBMIT_OUTPUT"
 # HTX_ID=$(echo "$SUBMIT_OUTPUT" | grep "HTX ID:" | awk '{print $3}')
 # echo ""
@@ -118,20 +119,20 @@ echo ""
 # # Test 5: Get assignment
 # if [ -n "$HTX_ID" ]; then
 #     echo -e "${YELLOW}Test 5: Get assignment details${NC}"
-#     ./target/debug/contract_cli get-assignment $HTX_ID
+#     ../../target/debug/contract_cli get-assignment $HTX_ID
 #     echo ""
 # fi
 
 # # Test 6: Query events
 # echo -e "${YELLOW}Test 6: Query contract events${NC}"
 # echo "HTX Submitted Events:"
-# ./target/debug/contract_cli events-submitted
+# ../../target/debug/contract_cli events-submitted
 # echo ""
 # echo "HTX Assigned Events:"
-# ./target/debug/contract_cli events-assigned
+# ../../target/debug/contract_cli events-assigned
 # echo ""
 # echo "Node Registration Events:"
-# ./target/debug/contract_cli events-nodes
+# ../../target/debug/contract_cli events-nodes
 # echo ""
 
 echo "==================================================================="
@@ -145,9 +146,9 @@ echo "  export RPC_URL=$RPC_URL"
 echo "  export CONTRACT_ADDRESS=$CONTRACT_ADDRESS"
 echo ""
 echo "Then use the CLI commands:"
-echo "  ./target/debug/contract_cli list-nodes"
-echo "  ./target/debug/contract_cli submit-htx '{\"test\":\"data\"}'"
-echo "  ./target/debug/contract_cli events-submitted"
+echo "  ../../target/debug/contract_cli list-nodes"
+echo "  ../../target/debug/contract_cli submit-htx '{\"test\":\"data\"}'"
+echo "  ../../target/debug/contract_cli events-submitted"
 echo ""
 echo "Contract address saved to: /tmp/nilav_contract_address.txt"
 echo ""
