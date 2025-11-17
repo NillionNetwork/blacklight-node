@@ -1,30 +1,30 @@
 use std::env;
-use std::time::Duration;
 
 use anyhow::Result;
 use clap::Parser;
 use ethers::core::types::{Address, H256};
 use nilav::{
-    contract_client::{ContractConfig, NilAVClient},
+    contract_client::{ContractConfig, NilAVWsClient},
     crypto::{load_or_generate_signing_key, verifying_key_from_signing},
     state::StateFile,
     types::Htx,
     verification::verify_htx,
 };
 use rand::random;
-use tokio::time::interval;
 
 const GREEN: &str = "\x1b[32m";
 const RED: &str = "\x1b[31m";
+const CYAN: &str = "\x1b[36m";
+const YELLOW: &str = "\x1b[33m";
 const RESET: &str = "\x1b[0m";
 const STATE_FILE: &str = "nilav_node.env";
 
-/// NilAV Node - Verifies HTXs assigned by the smart contract
+/// NilAV Node - Verifies HTXs assigned by the smart contract using WebSocket streaming
 #[derive(Parser)]
 #[command(name = "nilav_node")]
-#[command(about = "NilAV Node - Verifies HTXs assigned by the smart contract", long_about = None)]
+#[command(about = "NilAV Node - Real-time HTX verification using WebSocket streaming", long_about = None)]
 struct Cli {
-    /// Ethereum RPC endpoint
+    /// Ethereum RPC endpoint (will be converted to WebSocket)
     #[arg(long, env = "RPC_URL", default_value = "http://localhost:8545")]
     rpc_url: String,
 
@@ -51,10 +51,74 @@ struct Cli {
     /// Ed25519 signing secret (hex)
     #[arg(long, env = "NODE_SECRET")]
     node_secret: Option<String>,
+}
 
-    /// Poll interval in milliseconds
-    #[arg(long, env = "POLL_INTERVAL_MS", default_value = "5000")]
-    poll_interval_ms: u64,
+/// Process a single HTX assignment - verifies and submits result
+async fn process_htx_assignment(
+    ws_client: std::sync::Arc<NilAVWsClient>,
+    node_id: &str,
+    htx_id: H256,
+) -> Result<()> {
+    // Retrieve the HTX data from the contract
+    let htx_bytes = ws_client.get_htx(htx_id).await.map_err(|e| {
+        eprintln!(
+            "[nilAV:{}] Failed to get HTX data for {:?}: {}",
+            node_id, htx_id, e
+        );
+        e
+    })?;
+
+    // Parse the HTX data
+    let htx: Htx = match serde_json::from_slice(&htx_bytes) {
+        Ok(h) => h,
+        Err(e) => {
+            eprintln!(
+                "[nilAV:{}] Failed to parse HTX data for {}{:?}{}: {}",
+                node_id, CYAN, htx_id, RESET, e
+            );
+            // Respond with false if we can't parse the data
+            ws_client.respond_htx(htx_id, false).await?;
+            println!(
+                "[nilAV:{}] HTX {}{:?}{}: {}Not Verified{} (parse error) | tx: submitted",
+                node_id, CYAN, htx_id, RESET, RED, RESET
+            );
+            return Ok(());
+        }
+    };
+
+    // Verify the HTX
+    let verification_result = verify_htx(&htx).await;
+    let result = verification_result.is_ok();
+
+    if let Err(ref e) = verification_result {
+        println!(
+            "[nilAV:{}] HTX {}{:?}{} verification failed: {}",
+            node_id, CYAN, htx_id, RESET, e
+        );
+    }
+
+    // Submit the verification result
+    match ws_client.respond_htx(htx_id, result).await {
+        Ok(tx_hash) => {
+            let verdict = if result {
+                format!("{}Verified [VALID]{}", GREEN, RESET)
+            } else {
+                format!("{}Verified [INVALID]{}", RED, RESET)
+            };
+            println!(
+                "[nilAV:{}] {} HTX {}{:?}{}: | tx: {:?}",
+                node_id, verdict, CYAN, htx_id, RESET, tx_hash
+            );
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!(
+                "[nilAV:{}] Failed to respond to HTX {}{:?}{}: {}",
+                node_id, YELLOW, htx_id, RESET, e
+            );
+            Err(e)
+        }
+    }
 }
 
 #[tokio::main]
@@ -85,131 +149,193 @@ async fn main() -> Result<()> {
     let vk = verifying_key_from_signing(&sk);
     println!("[nilAV:{}] pubkey {}", node_id, hex::encode(vk.to_bytes()));
 
-    // Setup smart contract client
+    // Setup contract connection details
     let contract_address = cli.contract_address.parse::<Address>()?;
-    let contract_config = ContractConfig::new(cli.rpc_url.clone(), contract_address);
-    let client = NilAVClient::new(contract_config, cli.node_private_key).await?;
+    let private_key = cli.node_private_key.clone();
 
+    // Start WebSocket event listener with auto-reconnection
     println!(
-        "[nilAV:{}] Connected to contract at: {}",
-        node_id,
-        client.address()
-    );
-    println!(
-        "[nilAV:{}] Node wallet address: {}",
-        node_id,
-        client.signer_address()
+        "[nilAV:{}] Starting real-time WebSocket event listener with auto-reconnection...",
+        node_id
     );
 
-    // Register this node with the contract
-    let node_address = client.signer_address();
-    println!("[nilAV:{}] Registering node with contract...", node_id);
+    // Reconnection loop - will restart the listener if it fails
+    let mut reconnect_delay = std::time::Duration::from_secs(1);
+    let max_reconnect_delay = std::time::Duration::from_secs(60);
+    let mut registered = false;
 
-    // Check if already registered
-    let is_registered = client.is_node(node_address).await?;
-    if is_registered {
-        println!("[nilAV:{}] Node already registered", node_id);
-    } else {
-        match client.register_node(node_address).await {
-            Ok(tx_hash) => {
-                println!("[nilAV:{}] Node registered! tx: {:?}", node_id, tx_hash);
+    loop {
+        println!("[nilAV:{}] Connecting WebSocket listener...", node_id);
+
+        // Create a fresh WebSocket client for this connection attempt
+        let contract_config = ContractConfig::new(cli.rpc_url.clone(), contract_address);
+        let ws_client = match NilAVWsClient::new(contract_config, private_key.clone()).await {
+            Ok(client) => {
+                println!("[nilAV:{}] WebSocket connection established", node_id);
+                println!(
+                    "[nilAV:{}] Connected to contract at: {}",
+                    node_id,
+                    client.address()
+                );
+                reconnect_delay = std::time::Duration::from_secs(1); // Reset delay on success
+                client
             }
             Err(e) => {
-                eprintln!("[nilAV:{}] Failed to register node: {}", node_id, e);
-                return Err(e);
-            }
-        }
-    }
-
-    let mut ticker = interval(Duration::from_millis(cli.poll_interval_ms));
-
-    // Track the last processed block to avoid reprocessing old events
-    // Load from state file if available, otherwise start from current block
-    let mut last_processed_block =
-        if let Some(block_str) = state_file.load_value("LAST_PROCESSED_BLOCK") {
-            if let Ok(block) = block_str.parse::<u64>() {
-                println!("[nilAV:{}] Resuming from saved block: {}", node_id, block);
-                block
-            } else {
-                match client.get_block_number().await {
-                    Ok(block) => {
-                        println!(
-                            "[nilAV:{}] Monitoring from current block: {}",
-                            node_id, block
-                        );
-                        block
-                    }
-                    Err(e) => {
-                        eprintln!(
-                            "[nilAV:{}] Failed to get current block number: {}",
-                            node_id, e
-                        );
-                        0
-                    }
-                }
-            }
-        } else {
-            match client.get_block_number().await {
-                Ok(block) => {
-                    println!(
-                        "[nilAV:{}] Monitoring from current block: {}",
-                        node_id, block
-                    );
-                    block
-                }
-                Err(e) => {
-                    eprintln!(
-                        "[nilAV:{}] Failed to get current block number: {}",
-                        node_id, e
-                    );
-                    0
-                }
+                eprintln!(
+                    "[nilAV:{}] Failed to connect WebSocket: {}. Retrying in {:?}...",
+                    node_id, e, reconnect_delay
+                );
+                tokio::time::sleep(reconnect_delay).await;
+                reconnect_delay = std::cmp::min(reconnect_delay * 2, max_reconnect_delay);
+                continue;
             }
         };
 
-    println!(
-        "[nilAV:{}] Listening for assignments (polling every {}ms)...",
-        node_id, cli.poll_interval_ms
-    );
+        // Register node if not already registered
+        let node_address = ws_client.signer_address();
+        if !registered {
+            println!("[nilAV:{}] Node wallet address: {}", node_id, node_address);
+            println!("[nilAV:{}] Registering node with contract...", node_id);
 
-    loop {
-        ticker.tick().await;
-
-        // Get HTX assigned events from the last processed block
-        match client
-            .get_htx_assigned_events_from(last_processed_block)
-            .await
-        {
-            Ok(events) => {
-                for event in events {
-                    // Only process events assigned to this node
-                    if event.node != node_address {
-                        continue;
+            // Check if already registered
+            match ws_client.is_node(node_address).await {
+                Ok(is_registered) => {
+                    if is_registered {
+                        println!("[nilAV:{}] Node already registered", node_id);
+                        registered = true;
+                    } else {
+                        match ws_client.register_node(node_address).await {
+                            Ok(tx_hash) => {
+                                println!("[nilAV:{}] Node registered! tx: {:?}", node_id, tx_hash);
+                                registered = true;
+                            }
+                            Err(e) => {
+                                eprintln!(
+                                    "[nilAV:{}] Failed to register node: {}. Retrying in {:?}...",
+                                    node_id, e, reconnect_delay
+                                );
+                                tokio::time::sleep(reconnect_delay).await;
+                                reconnect_delay =
+                                    std::cmp::min(reconnect_delay * 2, max_reconnect_delay);
+                                continue;
+                            }
+                        }
                     }
+                }
+                Err(e) => {
+                    eprintln!(
+                        "[nilAV:{}] Failed to check registration: {}. Retrying in {:?}...",
+                        node_id, e, reconnect_delay
+                    );
+                    tokio::time::sleep(reconnect_delay).await;
+                    reconnect_delay = std::cmp::min(reconnect_delay * 2, max_reconnect_delay);
+                    continue;
+                }
+            }
+        }
 
-                    // Get the assignment details to check if already responded
-                    let htx_id = H256::from(event.htx_id);
-                    match client.get_assignment(htx_id).await {
-                        Ok(assignment) => {
-                            if assignment.responded {
+        let ws_client_arc = std::sync::Arc::new(ws_client);
+        let node_id_clone = node_id.clone();
+
+        // IMPORTANT: Process any backlog of assignments that happened before we connected
+        // Query historical HTX assigned events for this node
+        println!(
+            "[nilAV:{}] Checking for pending assignments from before connection...",
+            node_id
+        );
+        match ws_client_arc.get_htx_assigned_events().await {
+            Ok(assigned_events) => {
+                let pending: Vec<_> = assigned_events
+                    .iter()
+                    .filter(|e| e.node == node_address)
+                    .collect();
+
+                if !pending.is_empty() {
+                    println!("[nilAV:{}] Found {} historical assignment(s) for this node, processing backlog...",
+                             node_id, pending.len());
+
+                    for event in pending {
+                        let htx_id = H256::from(event.htx_id);
+
+                        // Check if already responded
+                        match ws_client_arc.get_assignment(htx_id).await {
+                            Ok(assignment) if assignment.responded => {
                                 // Already responded, skip
                                 continue;
                             }
+                            Ok(_) => {
+                                println!(
+                                    "[nilAV:{}] Processing pending assignment for HTX {}{:?}{}",
+                                    node_id, CYAN, htx_id, RESET
+                                );
+                                // Spawn a task to process this assignment concurrently
+                                let ws_client = ws_client_arc.clone();
+                                let node_id_clone = node_id.clone();
+                                tokio::spawn(async move {
+                                    if let Err(e) =
+                                        process_htx_assignment(ws_client, &node_id_clone, htx_id)
+                                            .await
+                                    {
+                                        eprintln!(
+                                            "[nilAV:{}] Failed to process pending HTX {}{:?}{}: {}",
+                                            node_id_clone, CYAN, htx_id, RESET, e
+                                        );
+                                    }
+                                });
+                            }
+                            Err(e) => {
+                                eprintln!("[nilAV:{}] Failed to check assignment status for HTX {}{:?}{}: {}", node_id, CYAN, htx_id, RESET, e);
+                            }
+                        }
+                    }
+                    println!("[nilAV:{}] Backlog processing complete", node_id);
+                } else {
+                    println!("[nilAV:{}] No pending assignments found", node_id);
+                }
+            }
+            Err(e) => {
+                eprintln!(
+                    "[nilAV:{}] Failed to query historical assignments: {}",
+                    node_id, e
+                );
+            }
+        }
+
+        // Start listening for HTX assigned events for this specific node
+        let ws_client_for_callback = ws_client_arc.clone();
+        let listen_result = ws_client_arc.listen_htx_assigned_for_node(
+            node_address,
+            move |event| {
+                let ws_client = ws_client_for_callback.clone();
+                let node_id = node_id_clone.clone();
+
+                async move {
+                    let htx_id = H256::from(event.htx_id);
+
+                    // Spawn a task to process this HTX concurrently (non-blocking)
+                    tokio::spawn(async move {
+                        // Check if already responded
+                        match ws_client.get_assignment(htx_id).await {
+                        Ok(assignment) => {
+                            if assignment.responded {
+                                // Already responded, skip
+                                return;
+                            }
 
                             println!(
-                                "[nilAV:{}] Processing assignment for HTX {:?}",
-                                node_id, htx_id
+                                "[nilAV:{}] Processing real-time assignment for HTX {}{:?}{}",
+                                node_id, CYAN, htx_id, RESET
                             );
 
                             // Retrieve the HTX data from the contract
-                            let htx_bytes = match client.get_htx(htx_id).await {
+                            let htx_bytes = match ws_client.get_htx(htx_id).await {
                                 Ok(bytes) => bytes,
                                 Err(e) => {
                                     eprintln!(
-                                        "[nilAV:{}] Failed to get HTX data for {:?}: {}",
-                                        node_id, htx_id, e
+                                        "[nilAV:{}] Failed to get HTX data for {}{:?}{}: {}",
+                                        node_id, CYAN, htx_id, RESET, e
                                     );
-                                    continue;
+                                    return;
                                 }
                             };
 
@@ -218,25 +344,25 @@ async fn main() -> Result<()> {
                                 Ok(h) => h,
                                 Err(e) => {
                                     eprintln!(
-                                        "[nilAV:{}] Failed to parse HTX data for {:?}: {}",
-                                        node_id, htx_id, e
+                                        "[nilAV:{}] Failed to parse HTX data for {}{:?}{}: {}",
+                                        node_id, CYAN, htx_id, RESET, e
                                     );
                                     // Respond with false if we can't parse the data
-                                    match client.respond_htx(htx_id, false).await {
+                                    match ws_client.respond_htx(htx_id, false).await {
                                         Ok(tx_hash) => {
                                             println!(
-                                                "[nilAV:{}] HTX {:?}: {}Not Verified{} (parse error) | tx: {:?}",
-                                                node_id, htx_id, RED, RESET, tx_hash
+                                                "[nilAV:{}] HTX {}{:?}{}: {}Not Verified{} (parse error) | tx: {:?}",
+                                                node_id, CYAN, htx_id, RESET, RED, RESET, tx_hash
                                             );
                                         }
                                         Err(e) => {
                                             eprintln!(
-                                                "[nilAV:{}] Failed to respond to HTX {:?}: {}",
-                                                node_id, htx_id, e
+                                                "[nilAV:{}] Failed to respond to HTX {}{:?}{}: {}",
+                                                node_id, CYAN, htx_id, RESET, e
                                             );
                                         }
                                     }
-                                    continue;
+                                    return;
                                 }
                             };
 
@@ -246,12 +372,13 @@ async fn main() -> Result<()> {
 
                             if let Err(ref e) = verification_result {
                                 println!(
-                                    "[nilAV:{}] HTX {:?} verification failed: {}",
-                                    node_id, htx_id, e
+                                    "[nilAV:{}] HTX {}{:?}{} verification failed: {}",
+                                    node_id, CYAN, htx_id, RESET, e
                                 );
                             }
 
-                            match client.respond_htx(htx_id, result).await {
+                            // Submit the verification result
+                            match ws_client.respond_htx(htx_id, result).await {
                                 Ok(tx_hash) => {
                                     let verdict = if result {
                                         format!("{}Verified [VALID]{}", GREEN, RESET)
@@ -259,42 +386,52 @@ async fn main() -> Result<()> {
                                         format!("{}Verified [INVALID]{}", RED, RESET)
                                     };
                                     println!(
-                                        "[nilAV:{}] {} HTX {:?}: | tx: {:?}",
-                                        node_id, verdict, htx_id, tx_hash
+                                        "[nilAV:{}] {} HTX {}{:?}{}: | tx: {:?}",
+                                        node_id, verdict, CYAN, htx_id, RESET, tx_hash
                                     );
+
+                                    // Note: WebSocket mode doesn't need to save block state
                                 }
                                 Err(e) => {
                                     eprintln!(
-                                        "[nilAV:{}] Failed to respond to HTX {:?}: {}",
-                                        node_id, htx_id, e
+                                        "[nilAV:{}] Failed to respond to HTX {}{:?}{}: {}",
+                                        node_id, CYAN, htx_id, RESET, e
                                     );
                                 }
                             }
                         }
                         Err(e) => {
                             eprintln!(
-                                "[nilAV:{}] Failed to get assignment for HTX {:?}: {}",
-                                node_id, htx_id, e
+                                "[nilAV:{}] Failed to get assignment for HTX {}{:?}{}: {}",
+                                node_id, CYAN, htx_id, RESET, e
                             );
                         }
                     }
+                    });
+
+                    // Return immediately to allow processing next event
+                    Ok(())
                 }
             }
+        ).await;
+
+        // If we reach here, the listener has exited (connection dropped or error)
+        match listen_result {
+            Ok(_) => {
+                eprintln!(
+                    "[nilAV:{}] WebSocket listener exited normally. Reconnecting in {:?}...",
+                    node_id, reconnect_delay
+                );
+            }
             Err(e) => {
-                eprintln!("[nilAV:{}] Failed to get assigned events: {}", node_id, e);
+                eprintln!(
+                    "[nilAV:{}] WebSocket listener error: {}. Reconnecting in {:?}...",
+                    node_id, e, reconnect_delay
+                );
             }
         }
 
-        // Update last processed block to current block to avoid reprocessing
-        match client.get_block_number().await {
-            Ok(current_block) => {
-                last_processed_block = current_block;
-                // Persist the last processed block to state file
-                let _ = state_file.save_value("LAST_PROCESSED_BLOCK", &current_block.to_string());
-            }
-            Err(e) => {
-                eprintln!("[nilAV:{}] Failed to update block number: {}", node_id, e);
-            }
-        }
+        tokio::time::sleep(reconnect_delay).await;
+        reconnect_delay = std::cmp::min(reconnect_delay * 2, max_reconnect_delay);
     }
 }

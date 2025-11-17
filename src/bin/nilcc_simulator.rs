@@ -5,10 +5,13 @@ use clap::Parser;
 use ethers::core::types::Address;
 use nilav::{
     config::load_config_from_path,
-    contract_client::{ContractConfig, NilAVClient},
+    contract_client::{ContractConfig, NilAVWsClient},
     types::Htx,
 };
 use tokio::time::interval;
+
+const CYAN: &str = "\x1b[36m";
+const RESET: &str = "\x1b[0m";
 
 /// NilAV Server - Submits HTXs to the smart contract for verification
 #[derive(Parser)]
@@ -58,7 +61,7 @@ async fn main() -> Result<()> {
     // Setup smart contract client
     let contract_address = cli.contract_address.parse::<Address>()?;
     let contract_config = ContractConfig::new(cli.rpc_url.clone(), contract_address);
-    let client = NilAVClient::new(contract_config, cli.private_key).await?;
+    let client = NilAVWsClient::new(contract_config, cli.private_key).await?;
 
     println!("[server] Connected to contract at: {}", client.address());
     println!("[server] Using signer address: {}", client.signer_address());
@@ -107,7 +110,7 @@ async fn main() -> Result<()> {
             Ok((tx_hash, htx_id)) => {
                 println!("[server] slot {}: HTX submitted successfully", slot);
                 println!("  Transaction hash: {:?}", tx_hash);
-                println!("  HTX ID: {:?}", htx_id);
+                println!("  HTX ID: {}{:?}{}", CYAN, htx_id, RESET);
             }
             Err(e) => {
                 eprintln!("[server] slot {}: failed to submit HTX: {}", slot, e);
