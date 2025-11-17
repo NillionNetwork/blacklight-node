@@ -9,9 +9,8 @@ use nilav::{
     types::Htx,
 };
 use tokio::time::interval;
-
-const CYAN: &str = "\x1b[36m";
-const RESET: &str = "\x1b[0m";
+use tracing::{error, info, warn};
+use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 /// NilAV Server - Submits HTXs to the smart contract for verification
 #[derive(Parser)]
@@ -49,13 +48,20 @@ struct Cli {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Initialize tracing
+    tracing_subscriber::registry()
+        .with(fmt::layer().with_ansi(true))
+        .with(EnvFilter::from_default_env().add_directive(tracing::Level::INFO.into()))
+        .init();
+
     let cli = Cli::parse();
 
     // Load config
     let config = load_config_from_path(&cli.config_path).unwrap_or_default();
-    println!(
-        "[server] config: validators_per_htx={}, approve_threshold={}",
-        config.election.validators_per_htx, config.election.approve_threshold
+    info!(
+        validators_per_htx = config.election.validators_per_htx,
+        approve_threshold = config.election.approve_threshold,
+        "Loaded configuration"
     );
 
     // Setup smart contract client
@@ -63,17 +69,20 @@ async fn main() -> Result<()> {
     let contract_config = ContractConfig::new(cli.rpc_url.clone(), contract_address);
     let client = NilAVWsClient::new(contract_config, cli.private_key).await?;
 
-    println!("[server] Connected to contract at: {}", client.address());
-    println!("[server] Using signer address: {}", client.signer_address());
+    info!(
+        contract_address = %client.address(),
+        signer_address = %client.signer_address(),
+        "Connected to smart contract"
+    );
 
     // Load HTXs from file
     let htxs_str = std::fs::read_to_string(&cli.htxs_path).unwrap_or_else(|_| "[]".to_string());
     let htxs: Vec<Htx> = serde_json::from_str(&htxs_str).unwrap_or_else(|_| Vec::new());
 
     if htxs.is_empty() {
-        println!("[server] Warning: No HTXs loaded from {}", cli.htxs_path);
+        warn!(htxs_path = %cli.htxs_path, "No HTXs loaded from file");
     } else {
-        println!("[server] Loaded {} HTXs from {}", htxs.len(), cli.htxs_path);
+        info!(count = htxs.len(), htxs_path = %cli.htxs_path, "Loaded HTXs from file");
     }
 
     // Slot ticker - submits HTXs to the contract
@@ -86,7 +95,7 @@ async fn main() -> Result<()> {
 
         // Pick HTX round-robin from file
         if htxs.is_empty() {
-            println!("[server] slot {}: no HTXs to submit", slot);
+            warn!(slot = slot, "No HTXs to submit");
             continue;
         }
 
@@ -96,24 +105,32 @@ async fn main() -> Result<()> {
         // Check how many nodes are registered
         let node_count = client.node_count().await?;
         if node_count.is_zero() {
-            println!("[server] slot {}: no nodes registered, skipping", slot);
+            warn!(slot = slot, "No nodes registered, skipping HTX submission");
             continue;
         }
 
-        println!(
-            "[server] slot {}: submitting HTX to contract ({} nodes registered)",
-            slot, node_count
+        info!(
+            slot = slot,
+            node_count = %node_count,
+            "Submitting HTX to contract"
         );
 
         // Submit HTX to contract - the contract will handle assignment
         match client.submit_htx(htx).await {
             Ok((tx_hash, htx_id)) => {
-                println!("[server] slot {}: HTX submitted successfully", slot);
-                println!("  Transaction hash: {:?}", tx_hash);
-                println!("  HTX ID: {}{:?}{}", CYAN, htx_id, RESET);
+                info!(
+                    slot = slot,
+                    tx_hash = ?tx_hash,
+                    htx_id = ?htx_id,
+                    "HTX submitted successfully"
+                );
             }
             Err(e) => {
-                eprintln!("[server] slot {}: failed to submit HTX: {}", slot, e);
+                error!(
+                    slot = slot,
+                    error = %e,
+                    "Failed to submit HTX"
+                );
             }
         }
     }
