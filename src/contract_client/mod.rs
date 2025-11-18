@@ -2,7 +2,7 @@ use crate::types::Htx;
 use ethers::{
     contract::abigen,
     core::types::{Address, H256, U256},
-    middleware::SignerMiddleware,
+    middleware::{NonceManagerMiddleware, SignerMiddleware},
     providers::{Middleware, Provider, StreamExt, Ws},
     signers::{LocalWallet, Signer},
 };
@@ -68,7 +68,7 @@ abigen!(
     event_derives(serde::Deserialize, serde::Serialize)
 );
 
-pub type SignedWsProvider = SignerMiddleware<Provider<Ws>, LocalWallet>;
+pub type SignedWsProvider = NonceManagerMiddleware<SignerMiddleware<Provider<Ws>, LocalWallet>>;
 
 /// Configuration for connecting to the NilAVRouter contract
 pub struct ContractConfig {
@@ -119,7 +119,11 @@ impl NilAVWsClient {
             .parse::<LocalWallet>()
             .expect("Invalid private key")
             .with_chain_id(chain_id.as_u64());
-        let provider = Arc::new(SignerMiddleware::new(provider, wallet));
+
+        // Wrap with SignerMiddleware first, then NonceManagerMiddleware to handle concurrent txs
+        let wallet_address = wallet.address();
+        let signer_middleware = SignerMiddleware::new(provider, wallet);
+        let provider = Arc::new(NonceManagerMiddleware::new(signer_middleware, wallet_address));
         let contract = NilAVRouter::new(config.contract_address, provider.clone());
 
         Ok(Self { contract, provider })
@@ -142,7 +146,7 @@ impl NilAVWsClient {
 
     /// Get the signer address
     pub fn signer_address(&self) -> Address {
-        self.provider.signer().address()
+        self.provider.inner().signer().address()
     }
 
     // ------------------------------------------------------------------------
