@@ -123,7 +123,10 @@ impl NilAVWsClient {
         // Wrap with SignerMiddleware first, then NonceManagerMiddleware to handle concurrent txs
         let wallet_address = wallet.address();
         let signer_middleware = SignerMiddleware::new(provider, wallet);
-        let provider = Arc::new(NonceManagerMiddleware::new(signer_middleware, wallet_address));
+        let provider = Arc::new(NonceManagerMiddleware::new(
+            signer_middleware,
+            wallet_address,
+        ));
         let contract = NilAVRouter::new(config.contract_address, provider.clone());
 
         Ok(Self { contract, provider })
