@@ -1,9 +1,11 @@
 # Nillion Auditor-Verifier (nilAV) <a href="https://github.com/NillionNetwork/nilAV/blob/main/LICENSE" target="_blank"><img src="https://img.shields.io/badge/License-MIT-green.svg" alt="MIT License"/></a>
 
-A Rust simulation of an L2 scheduler and a `nilAV` node client.
+A Rust simulation of an L2 scheduler and a `nilAV` node client with **real-time WebSocket event streaming**.
 
 - Server: rolls a dice every slot, assigns registered nodes to verify an HTX (count set by config).
-- Node: subscribes, runs a placeholder verification, signs the result (Ed25519) over canonical JSON, submits back.
+- Node: subscribes via WebSocket, runs a placeholder verification, signs the result (Ed25519) over canonical JSON, submits back.
+
+> **🚀 WebSocket-Only Architecture**: This implementation uses WebSocket streaming for real-time event processing, eliminating polling delays and providing sub-100ms event latency.
 
 ## Build & Run
 

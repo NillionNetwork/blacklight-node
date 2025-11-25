@@ -1,0 +1,21 @@
+# Dockerfile for contract deployment using Foundry
+FROM ghcr.io/foundry-rs/foundry:latest AS foundry
+
+WORKDIR /app
+
+USER root
+# Install curl for health checks
+RUN apt-get update -y && apt-get install -y curl
+
+# Copy contract files
+COPY contracts ./contracts
+
+# Copy scripts
+COPY contracts/nilav-router/scripts/deploy-contract.sh /usr/local/bin/deploy-contract.sh
+COPY docker/start-anvil.sh /usr/local/bin/start-anvil.sh
+
+RUN chmod +x /app/contracts/nilav-router/scripts/* && \
+    chown foundry:foundry /app/contracts/nilav-router/scripts/*
+    
+RUN chmod +x /usr/local/bin/start-anvil.sh && \
+    chown foundry:foundry /usr/local/bin/start-anvil.sh
