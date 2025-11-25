@@ -2,7 +2,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use ethers::core::types::{Address, H256};
 use nilav::{
-    contract_client::{ContractConfig, NilAVClient},
+    contract_client::{ContractConfig, NilAVWsClient},
     types::Htx,
 };
 use std::fs;
@@ -99,7 +99,7 @@ async fn main() -> Result<()> {
 
     let contract_address = cli.contract_address.parse::<Address>()?;
     let config = ContractConfig::new(cli.rpc_url, contract_address);
-    let client = NilAVClient::new(config, cli.private_key).await?;
+    let client = NilAVWsClient::new(config, cli.private_key).await?;
 
     println!("Connected to contract at: {}", client.address());
     println!("Using signer address: {}", client.signer_address());

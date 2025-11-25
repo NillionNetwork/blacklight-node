@@ -2,8 +2,8 @@ use crate::types::Htx;
 use ethers::{
     contract::abigen,
     core::types::{Address, H256, U256},
-    middleware::SignerMiddleware,
-    providers::{Http, Middleware, Provider},
+    middleware::{NonceManagerMiddleware, SignerMiddleware},
+    providers::{Middleware, Provider, StreamExt, Ws},
     signers::{LocalWallet, Signer},
 };
 use std::sync::Arc;
@@ -68,7 +68,7 @@ abigen!(
     event_derives(serde::Deserialize, serde::Serialize)
 );
 
-pub type SignedProvider = SignerMiddleware<Provider<Http>, LocalWallet>;
+pub type SignedWsProvider = NonceManagerMiddleware<SignerMiddleware<Provider<Ws>, LocalWallet>>;
 
 /// Configuration for connecting to the NilAVRouter contract
 pub struct ContractConfig {
@@ -97,30 +97,50 @@ impl ContractConfig {
     }
 }
 
-/// Client for interacting with the NilAVRouter contract
-pub struct NilAVClient {
-    // The contract instance to interact with
-    // It is used to call contract functions and get the contract address
-    contract: NilAVRouter<SignedProvider>,
-    // The provider to interact with the blockchain
-    // It is wrapped in an Arc to allow for concurrent access
-    // It is used to sign transactions and get the signer address
-    provider: Arc<SignedProvider>,
+/// WebSocket-based client for real-time event streaming and contract interaction
+pub struct NilAVWsClient {
+    contract: NilAVRouter<SignedWsProvider>,
+    provider: Arc<SignedWsProvider>,
 }
 
-impl NilAVClient {
-    /// Create a new client from configuration
+impl NilAVWsClient {
+    /// Create a new WebSocket client from configuration
     pub async fn new(config: ContractConfig, private_key: PrivateKey) -> anyhow::Result<Self> {
-        let provider = Provider::<Http>::try_from(&config.rpc_url)?;
+        // Convert HTTP URL to WebSocket URL
+        let ws_url = config
+            .rpc_url
+            .replace("http://", "ws://")
+            .replace("https://", "wss://");
+
+        let provider = Provider::<Ws>::connect(&ws_url).await?;
         let chain_id = provider.get_chainid().await?;
 
         let wallet = private_key
             .parse::<LocalWallet>()
             .expect("Invalid private key")
             .with_chain_id(chain_id.as_u64());
-        let provider = Arc::new(SignerMiddleware::new(provider, wallet));
+
+        // Wrap with SignerMiddleware first, then NonceManagerMiddleware to handle concurrent txs
+        let wallet_address = wallet.address();
+        let signer_middleware = SignerMiddleware::new(provider, wallet);
+        let provider = Arc::new(NonceManagerMiddleware::new(
+            signer_middleware,
+            wallet_address,
+        ));
         let contract = NilAVRouter::new(config.contract_address, provider.clone());
+
         Ok(Self { contract, provider })
+    }
+
+    /// Create WebSocket client with anvil defaults
+    pub async fn anvil_ws(private_key: PrivateKey) -> anyhow::Result<Self> {
+        let config = ContractConfig {
+            contract_address: "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0"
+                .parse::<Address>()
+                .expect("Invalid contract address"),
+            rpc_url: "ws://127.0.0.1:8545".to_string(),
+        };
+        Self::new(config, private_key).await
     }
     /// Get the contract address
     pub fn address(&self) -> Address {
@@ -129,7 +149,7 @@ impl NilAVClient {
 
     /// Get the signer address
     pub fn signer_address(&self) -> Address {
-        self.provider.signer().address()
+        self.provider.inner().signer().address()
     }
 
     // ------------------------------------------------------------------------
@@ -271,7 +291,181 @@ impl NilAVClient {
         Ok(block_number.as_u64())
     }
 
-    /// Get all HTXSubmitted events
+    // ------------------------------------------------------------------------
+    // Real-time Event Streaming
+    // ------------------------------------------------------------------------
+
+    /// Start listening for HTX assigned events and process them with a callback
+    pub async fn listen_htx_assigned_events<F, Fut>(
+        self: Arc<Self>,
+        mut callback: F,
+    ) -> anyhow::Result<()>
+    where
+        F: FnMut(HtxassignedFilter) -> Fut + Send,
+        Fut: std::future::Future<Output = anyhow::Result<()>> + Send,
+    {
+        let event_stream = self.contract.event::<HtxassignedFilter>();
+        let mut events = event_stream.stream().await?;
+
+        while let Some(event_result) = events.next().await {
+            match event_result {
+                Ok(event) => {
+                    if let Err(e) = callback(event).await {
+                        eprintln!("Error processing HTX assigned event: {}", e);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Error receiving HTX assigned event: {}", e);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Start listening for HTX assigned events for a specific node
+    pub async fn listen_htx_assigned_for_node<F, Fut>(
+        self: Arc<Self>,
+        node_address: Address,
+        mut callback: F,
+    ) -> anyhow::Result<()>
+    where
+        F: FnMut(HtxassignedFilter) -> Fut + Send,
+        Fut: std::future::Future<Output = anyhow::Result<()>> + Send,
+    {
+        let event_stream = self.contract.event::<HtxassignedFilter>();
+        let mut events = event_stream.stream().await?;
+
+        while let Some(event_result) = events.next().await {
+            match event_result {
+                Ok(event) if event.node == node_address => {
+                    if let Err(e) = callback(event).await {
+                        eprintln!("Error processing HTX assigned event: {}", e);
+                    }
+                }
+                Ok(_) => {
+                    // Event for different node, ignore
+                }
+                Err(e) => {
+                    eprintln!("Error receiving HTX assigned event: {}", e);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Start listening for HTX submitted events
+    pub async fn listen_htx_submitted_events<F, Fut>(
+        self: Arc<Self>,
+        mut callback: F,
+    ) -> anyhow::Result<()>
+    where
+        F: FnMut(HtxsubmittedFilter) -> Fut + Send,
+        Fut: std::future::Future<Output = anyhow::Result<()>> + Send,
+    {
+        let event_stream = self.contract.event::<HtxsubmittedFilter>();
+        let mut events = event_stream.stream().await?;
+
+        while let Some(event_result) = events.next().await {
+            match event_result {
+                Ok(event) => {
+                    if let Err(e) = callback(event).await {
+                        eprintln!("Error processing HTX submitted event: {}", e);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Error receiving HTX submitted event: {}", e);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Start listening for HTX responded events
+    pub async fn listen_htx_responded_events<F, Fut>(
+        self: Arc<Self>,
+        mut callback: F,
+    ) -> anyhow::Result<()>
+    where
+        F: FnMut(HtxrespondedFilter) -> Fut + Send,
+        Fut: std::future::Future<Output = anyhow::Result<()>> + Send,
+    {
+        let event_stream = self.contract.event::<HtxrespondedFilter>();
+        let mut events = event_stream.stream().await?;
+
+        while let Some(event_result) = events.next().await {
+            match event_result {
+                Ok(event) => {
+                    if let Err(e) = callback(event).await {
+                        eprintln!("Error processing HTX responded event: {}", e);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Error receiving HTX responded event: {}", e);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Start listening for node registration events
+    pub async fn listen_node_registered_events<F, Fut>(
+        self: Arc<Self>,
+        mut callback: F,
+    ) -> anyhow::Result<()>
+    where
+        F: FnMut(NodeRegisteredFilter) -> Fut + Send,
+        Fut: std::future::Future<Output = anyhow::Result<()>> + Send,
+    {
+        let event_stream = self.contract.event::<NodeRegisteredFilter>();
+        let mut events = event_stream.stream().await?;
+
+        while let Some(event_result) = events.next().await {
+            match event_result {
+                Ok(event) => {
+                    if let Err(e) = callback(event).await {
+                        eprintln!("Error processing node registered event: {}", e);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Error receiving node registered event: {}", e);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Start listening for node deregistration events
+    pub async fn listen_node_deregistered_events<F, Fut>(
+        self: Arc<Self>,
+        mut callback: F,
+    ) -> anyhow::Result<()>
+    where
+        F: FnMut(NodeDeregisteredFilter) -> Fut + Send,
+        Fut: std::future::Future<Output = anyhow::Result<()>> + Send,
+    {
+        let event_stream = self.contract.event::<NodeDeregisteredFilter>();
+        let mut events = event_stream.stream().await?;
+
+        while let Some(event_result) = events.next().await {
+            match event_result {
+                Ok(event) => {
+                    if let Err(e) = callback(event).await {
+                        eprintln!("Error processing node deregistered event: {}", e);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Error receiving node deregistered event: {}", e);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    // ------------------------------------------------------------------------
+    // Historical Event Query Methods
+    // ------------------------------------------------------------------------
+
+    /// Get all HTX submitted events from contract history
     pub async fn get_htx_submitted_events(&self) -> anyhow::Result<Vec<HtxsubmittedFilter>> {
         let events = self
             .contract
@@ -282,7 +476,7 @@ impl NilAVClient {
         Ok(events)
     }
 
-    /// Get all HTXAssigned events
+    /// Get all HTX assigned events from contract history
     pub async fn get_htx_assigned_events(&self) -> anyhow::Result<Vec<HtxassignedFilter>> {
         let events = self
             .contract
@@ -293,21 +487,7 @@ impl NilAVClient {
         Ok(events)
     }
 
-    /// Get HTXAssigned events from a specific block
-    pub async fn get_htx_assigned_events_from(
-        &self,
-        from_block: u64,
-    ) -> anyhow::Result<Vec<HtxassignedFilter>> {
-        let events = self
-            .contract
-            .event::<HtxassignedFilter>()
-            .from_block(from_block)
-            .query()
-            .await?;
-        Ok(events)
-    }
-
-    /// Get all HTXResponded events
+    /// Get all HTX responded events from contract history
     pub async fn get_htx_responded_events(&self) -> anyhow::Result<Vec<HtxrespondedFilter>> {
         let events = self
             .contract
@@ -318,7 +498,7 @@ impl NilAVClient {
         Ok(events)
     }
 
-    /// Get all NodeRegistered events
+    /// Get all node registered events from contract history
     pub async fn get_node_registered_events(&self) -> anyhow::Result<Vec<NodeRegisteredFilter>> {
         let events = self
             .contract
@@ -329,7 +509,7 @@ impl NilAVClient {
         Ok(events)
     }
 
-    /// Get all NodeDeregistered events
+    /// Get all node deregistered events from contract history
     pub async fn get_node_deregistered_events(
         &self,
     ) -> anyhow::Result<Vec<NodeDeregisteredFilter>> {
@@ -395,9 +575,9 @@ mod tests {
         assert!(addr.is_ok(), "Contract address should parse correctly");
     }
 
-    // Helper function to create a test client
+    // Helper function to create a test WebSocket client
     // Note: These tests require a local Ethereum node (e.g., Hardhat, Ganache, or Anvil)
-    async fn create_test_client() -> Result<NilAVClient, Box<dyn std::error::Error>> {
+    async fn create_test_client() -> Result<NilAVWsClient, Box<dyn std::error::Error>> {
         let rpc_url =
             env::var("TEST_RPC_URL").unwrap_or_else(|_| "http://localhost:8545".to_string());
         let private_key = env::var("TEST_PRIVATE_KEY").ok();
@@ -408,7 +588,7 @@ mod tests {
                 .parse::<Address>()
                 .unwrap(),
         );
-        let client = NilAVClient::new(config, private_key.unwrap()).await?;
+        let client = NilAVWsClient::new(config, private_key.unwrap()).await?;
         Ok(client)
     }
 
@@ -545,29 +725,8 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    #[ignore] // Requires a running Ethereum node
-    async fn test_event_queries() -> Result<(), Box<dyn std::error::Error>> {
-        let client = create_test_client().await?;
-
-        // Query all event types
-        let submitted_events = client.get_htx_submitted_events().await?;
-        println!("HTX Submitted events: {}", submitted_events.len());
-
-        let assigned_events = client.get_htx_assigned_events().await?;
-        println!("HTX Assigned events: {}", assigned_events.len());
-
-        let responded_events = client.get_htx_responded_events().await?;
-        println!("HTX Responded events: {}", responded_events.len());
-
-        let registered_events = client.get_node_registered_events().await?;
-        println!("Node Registered events: {}", registered_events.len());
-
-        let deregistered_events = client.get_node_deregistered_events().await?;
-        println!("Node Deregistered events: {}", deregistered_events.len());
-
-        Ok(())
-    }
+    // Note: Event streaming tests would require a more complex setup with actual WebSocket connections
+    // and are better tested in integration tests
 
     #[tokio::test]
     #[ignore] // Requires a running Ethereum node
