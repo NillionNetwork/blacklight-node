@@ -1,0 +1,3 @@
+[submodule "contracts/nilav-router/lib/forge-std"]
+	path = contracts/nilav-router/lib/forge-std
+	url = https://github.com/foundry-rs/forge-std

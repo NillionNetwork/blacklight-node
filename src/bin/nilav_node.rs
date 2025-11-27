@@ -1,403 +1,329 @@
-use std::env;
-
-use futures_util::{SinkExt, StreamExt};
+use anyhow::Result;
+use clap::Parser;
+use ethers::core::types::H256;
 use nilav::{
-    stable_stringify, AssignmentMsg, TransactionEnvelope, VerificationPayload,
-    VerificationResultMsg,
+    config::{NodeCliArgs, NodeConfig},
+    contract_client::{ContractConfig, NilAVWsClient},
+    types::Htx,
+    verification::verify_htx,
 };
-use tokio::sync::mpsc;
-use tokio_tungstenite::{connect_async, tungstenite::Message};
+use tracing::{debug, error, info, warn};
+use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
-use blake3::Hasher as Blake3;
-use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
-use rand::random;
-use reqwest::Client;
-use std::fs;
-use std::path::PathBuf;
-const GREEN: &str = "\x1b[32m";
-const RED: &str = "\x1b[31m";
-const RESET: &str = "\x1b[0m";
+/// Process a single HTX assignment - verifies and submits result
+async fn process_htx_assignment(
+    ws_client: std::sync::Arc<NilAVWsClient>,
+    htx_id: H256,
+) -> Result<()> {
+    // Retrieve the HTX data from the contract
+    let htx_bytes = ws_client.get_htx(htx_id).await.map_err(|e| {
+        error!(
+            htx_id = ?htx_id,
+            error = %e,
+            "Failed to get HTX data"
+        );
+        e
+    })?;
 
-fn signing_key_from_env_or_file(node_id: &str) -> SigningKey {
-    if let Ok(secret_hex) = env::var("NODE_SECRET") {
-        if let Ok(decoded) = hex::decode(secret_hex.trim_start_matches("0x")) {
-            if decoded.len() == 32 {
-                let mut seed = [0u8; 32];
-                seed.copy_from_slice(&decoded);
-                return SigningKey::from_bytes(&seed);
-            }
-            // fallback: hash arbitrary input to 32 bytes
-            let mut hasher = Blake3::new();
-            hasher.update(&decoded);
-            let digest = hasher.finalize();
-            let seed: [u8; 32] = digest.as_bytes().clone();
-            return SigningKey::from_bytes(&seed);
+    // Parse the HTX data
+    let htx: Htx = match serde_json::from_slice(&htx_bytes) {
+        Ok(h) => h,
+        Err(e) => {
+            error!(
+                htx_id = ?htx_id,
+                error = %e,
+                "Failed to parse HTX data"
+            );
+            // Respond with false if we can't parse the data
+            ws_client.respond_htx(htx_id, false).await?;
+            warn!(
+                htx_id = ?htx_id,
+                "HTX not verified (parse error) | tx: submitted"
+            );
+            return Ok(());
+        }
+    };
+
+    // Verify the HTX
+    let verification_result = verify_htx(&htx).await;
+    let result = verification_result.is_ok();
+
+    if let Err(ref e) = verification_result {
+        warn!(
+            htx_id = ?htx_id,
+            error = %e,
+            "HTX verification failed"
+        );
+    }
+
+    // Submit the verification result
+    match ws_client.respond_htx(htx_id, result).await {
+        Ok(tx_hash) => {
+            let verdict = if result { "VALID" } else { "INVALID" };
+            info!(
+                htx_id = ?htx_id,
+                tx_hash = ?tx_hash,
+                verdict = %verdict,
+                "HTX verified"
+            );
+            Ok(())
+        }
+        Err(e) => {
+            error!(
+                htx_id = ?htx_id,
+                error = %e,
+                "Failed to respond to HTX"
+            );
+            Err(e)
         }
     }
-    // Try nodeid.env in CWD
-    let path = PathBuf::from(format!("{}.env", node_id));
-    if path.exists() {
-        if let Ok(contents) = fs::read_to_string(&path) {
-            for line in contents.lines() {
-                if let Some(val) = line.strip_prefix("NODE_SECRET=") {
-                    if let Ok(decoded) = hex::decode(val.trim().trim_start_matches("0x")) {
-                        if decoded.len() == 32 {
-                            let mut seed = [0u8; 32];
-                            seed.copy_from_slice(&decoded);
-                            return SigningKey::from_bytes(&seed);
-                        }
-                    }
-                }
-            }
-        }
-    }
-    // Create new seed and persist
-    let seed: [u8; 32] = random();
-    let line = format!("NODE_SECRET=0x{}\n", hex::encode(seed));
-    let _ = fs::write(&path, line);
-    SigningKey::from_bytes(&seed)
 }
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    let ws_url = env::var("WS_URL").unwrap_or_else(|_| "ws://localhost:8080".to_string());
-    let node_id = env::var("NODE_ID")
-        .ok()
-        .or_else(|| env::var("HOSTNAME").ok())
-        .unwrap_or_else(|| format!("node-{}", hex::encode(rand::random::<[u8; 4]>())));
+async fn main() -> Result<()> {
+    // Initialize tracing
+    tracing_subscriber::registry()
+        .with(fmt::layer().with_ansi(true))
+        .with(EnvFilter::from_default_env().add_directive(tracing::Level::INFO.into()))
+        .init();
 
-    let sk = signing_key_from_env_or_file(&node_id);
-    let vk = VerifyingKey::from(&sk);
-    println!("[nilAV:{}] pubkey {}", node_id, hex::encode(vk.to_bytes()));
+    // Load configuration
+    let cli_args = NodeCliArgs::parse();
+    let config = NodeConfig::load(cli_args)?;
 
-    let (ws, _) = connect_async(ws_url.clone()).await?;
-    println!("[nilAV:{}] connected to {}", node_id, ws_url);
+    info!("Node initialized");
 
-    // Split WS into writer and reader halves
-    let (mut write, mut read) = ws.split();
-    // Channel for outbound messages to be serialized through single writer
-    let (tx, mut rx) = mpsc::unbounded_channel::<Message>();
+    // Start WebSocket event listener with auto-reconnection
+    info!("Starting real-time WebSocket event listener with auto-reconnection");
 
-    // Writer task
-    tokio::spawn(async move {
-        while let Some(msg) = rx.recv().await {
-            let _ = write.send(msg).await;
-        }
-    });
+    // Reconnection loop - will restart the listener if it fails
+    let mut reconnect_delay = std::time::Duration::from_secs(1);
+    let max_reconnect_delay = std::time::Duration::from_secs(60);
+    let mut registered = false;
 
-    // Send registration over the writer channel
-    let _ = tx.send(Message::Text(
-        serde_json::json!({"type":"register","nodeId": node_id, "publicKey": hex::encode(vk.to_bytes())})
-            .to_string()
-            .into(),
-    ));
+    loop {
+        info!("Connecting WebSocket listener");
 
-    while let Some(msg) = read.next().await {
-        let msg = msg?;
-        if let Message::Text(txt) = msg {
-            if let Ok(assign) = serde_json::from_str::<AssignmentMsg>(&txt) {
-                if assign.node_id == node_id && assign.msg_type == "assignment" {
-                    // Spawn a task per assignment to allow concurrent verifications
-                    let tx_clone = tx.clone();
-                    let sk_clone = sk.clone();
-                    let node_id_clone = node_id.clone();
-                    tokio::spawn(async move {
-                        match handle_assignment(sk_clone, node_id_clone.clone(), assign).await {
-                            Ok(msg) => {
-                                let _ = tx_clone.send(msg);
+        // Create a fresh WebSocket client for this connection attempt
+        let contract_config = ContractConfig::new(config.rpc_url.clone(), config.contract_address);
+        let ws_client = match NilAVWsClient::new(contract_config, config.private_key.clone()).await
+        {
+            Ok(client) => {
+                let balance = client.get_balance().await?;
+                info!(balance = ?balance, "WebSocket connection established");
+                reconnect_delay = std::time::Duration::from_secs(1); // Reset delay on success
+                client
+            }
+            Err(e) => {
+                error!(
+                    error = %e,
+                    reconnect_delay = ?reconnect_delay,
+                    "Failed to connect WebSocket. Retrying..."
+                );
+                tokio::time::sleep(reconnect_delay).await;
+                reconnect_delay = std::cmp::min(reconnect_delay * 2, max_reconnect_delay);
+                continue;
+            }
+        };
+
+        // Register node if not already registered
+        let node_address = ws_client.signer_address();
+        if !registered {
+            info!(node_address = %node_address, "Registering node with contract");
+
+            // Check if already registered
+            match ws_client.is_node(node_address).await {
+                Ok(is_registered) => {
+                    if is_registered {
+                        info!("Node already registered");
+                        registered = true;
+                    } else {
+                        match ws_client.register_node(node_address).await {
+                            Ok(tx_hash) => {
+                                info!(tx_hash = ?tx_hash, "Node registered successfully");
+                                registered = true;
                             }
                             Err(e) => {
-                                eprintln!(
-                                    "[nilAV:{}] error handling assignment: {}",
-                                    node_id_clone, e
+                                error!(
+                                    error = %e,
+                                    reconnect_delay = ?reconnect_delay,
+                                    "Failed to register node. Retrying..."
+                                );
+                                tokio::time::sleep(reconnect_delay).await;
+                                reconnect_delay =
+                                    std::cmp::min(reconnect_delay * 2, max_reconnect_delay);
+                                continue;
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    error!(
+                        error = %e,
+                        reconnect_delay = ?reconnect_delay,
+                        "Failed to check registration. Retrying..."
+                    );
+                    tokio::time::sleep(reconnect_delay).await;
+                    reconnect_delay = std::cmp::min(reconnect_delay * 2, max_reconnect_delay);
+                    continue;
+                }
+            }
+        }
+
+        let ws_client_arc = std::sync::Arc::new(ws_client);
+
+        // Start a background keepalive task to prevent connection timeouts
+        // This task periodically queries the blockchain to keep the WebSocket connection alive
+        let ws_client_keepalive = ws_client_arc.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
+            loop {
+                interval.tick().await;
+                match ws_client_keepalive.get_block_number().await {
+                    Ok(block) => {
+                        debug!(block_number = %block, "Keepalive ping successful");
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "Keepalive ping failed - connection may be dead");
+                        break; // Exit keepalive task if connection is dead
+                    }
+                }
+            }
+        });
+
+        // IMPORTANT: Process any backlog of assignments that happened before we connected
+        // Query historical HTX assigned events for this node
+        info!("Checking for pending assignments from before connection");
+        match ws_client_arc.get_htx_assigned_events().await {
+            Ok(assigned_events) => {
+                let pending: Vec<_> = assigned_events
+                    .iter()
+                    .filter(|e| e.node == node_address)
+                    .collect();
+
+                if !pending.is_empty() {
+                    info!(
+                        count = pending.len(),
+                        "Found historical assignments, processing backlog"
+                    );
+
+                    for event in pending {
+                        let htx_id = H256::from(event.htx_id);
+
+                        // Check if already responded
+                        match ws_client_arc.get_assignment(htx_id).await {
+                            Ok(assignment) if assignment.responded => {
+                                // Already responded, skip
+                                debug!(htx_id = ?htx_id, "Already responded HTX, skipping");
+                                continue;
+                            }
+                            Ok(_) => {
+                                info!(
+                                    htx_id = ?htx_id,
+                                    "Processing pending HTX"
+                                );
+                                // Spawn a task to process this assignment concurrently
+                                let ws_client = ws_client_arc.clone();
+                                tokio::spawn(async move {
+                                    if let Err(e) = process_htx_assignment(ws_client, htx_id).await
+                                    {
+                                        error!(
+                                            htx_id = ?htx_id,
+                                            error = %e,
+                                            "Failed to process pending HTX"
+                                        );
+                                    }
+                                });
+                            }
+                            Err(e) => {
+                                error!(
+                                    htx_id = ?htx_id,
+                                    error = %e,
+                                    "Failed to check assignment status"
+                                );
+                            }
+                        }
+                    }
+                    info!("Backlog processing complete");
+                } else {
+                    info!("No pending assignments found");
+                }
+            }
+            Err(e) => {
+                error!(
+                    error = %e,
+                    "Failed to query historical assignments"
+                );
+            }
+        }
+
+        // Start listening for HTX assigned events for this specific node
+        let ws_client_for_callback = ws_client_arc.clone();
+        let listen_result = ws_client_arc
+            .listen_htx_assigned_for_node(node_address, move |event| {
+                let ws_client = ws_client_for_callback.clone();
+
+                async move {
+                    let htx_id = H256::from(event.htx_id);
+
+                    // Spawn a task to process this HTX concurrently (non-blocking)
+                    tokio::spawn(async move {
+                        // Check if already responded
+                        match ws_client.get_assignment(htx_id).await {
+                            Ok(assignment) => {
+                                if assignment.responded {
+                                    // Already responded, skip
+                                    return;
+                                }
+
+                                info!(
+                                    htx_id = ?htx_id,
+                                    "Processing HTX"
+                                );
+
+                                // Use the same function as backlog processing
+                                if let Err(e) = process_htx_assignment(ws_client, htx_id).await {
+                                    error!(
+                                        htx_id = ?htx_id,
+                                        error = %e,
+                                        "Failed to process real-time HTX"
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                error!(
+                                    htx_id = ?htx_id,
+                                    error = %e,
+                                    "Failed to get assignment for HTX"
                                 );
                             }
                         }
                     });
+
+                    // Return immediately to allow processing next event
+                    Ok(())
                 }
+            })
+            .await;
+
+        // If we reach here, the listener has exited (connection dropped or error)
+        match listen_result {
+            Ok(_) => {
+                warn!(
+                    reconnect_delay = ?reconnect_delay,
+                    "WebSocket listener exited normally. Reconnecting..."
+                );
+            }
+            Err(e) => {
+                error!(
+                    error = %e,
+                    reconnect_delay = ?reconnect_delay,
+                    "WebSocket listener error. Reconnecting..."
+                );
             }
         }
-    }
 
-    Ok(())
-}
-
-async fn handle_assignment(
-    sk: SigningKey,
-    node_id: String,
-    assign: AssignmentMsg,
-) -> anyhow::Result<Message> {
-    println!(
-        "[nilAV:{}] received assignment for slot {}",
-        node_id, assign.slot
-    );
-
-    // Prepare to verify via HTTP
-    let (valid, reason) = match verify_htx(&assign.htx).await {
-        Ok(()) => (true, None),
-        Err(e) => (false, Some(e.message())),
-    };
-    let tx = TransactionEnvelope {
-        htx: assign.htx,
-        valid,
-        reason,
-    };
-    let serialized = stable_stringify(&tx)?;
-    let sig = sk.sign(serialized.as_bytes());
-
-    let payload = VerificationPayload {
-        transaction: tx,
-        signature: hex::encode(sig.to_bytes()),
-    };
-    let result = VerificationResultMsg {
-        msg_type: "verification_result".into(),
-        node_id: node_id.to_string(),
-        slot: assign.slot,
-        payload,
-    };
-
-    let message = Message::Text(serde_json::to_string(&result)?.into());
-    let verdict = if result.payload.transaction.valid {
-        format!("{}Verified{}", GREEN, RESET)
-    } else {
-        let why = result
-            .payload
-            .transaction
-            .reason
-            .as_deref()
-            .unwrap_or("unknown");
-        format!("{}Not Verified{} (reason: {})", RED, RESET, why)
-    };
-    println!("[nilAV:{}] slot {}: {}", node_id, assign.slot, verdict);
-    Ok(message)
-}
-
-#[derive(Debug)]
-enum VerificationError {
-    NilccUrl(String),
-    NilccJson(String),
-    MissingMeasurement,
-    BuilderUrl(String),
-    BuilderJson(String),
-    NotInBuilderIndex,
-}
-
-impl VerificationError {
-    fn message(&self) -> String {
-        match self {
-            VerificationError::NilccUrl(e) => format!("invalid nil_cc_measurement URL: {}", e),
-            VerificationError::NilccJson(e) => format!("invalid nil_cc_measurement JSON: {}", e),
-            VerificationError::MissingMeasurement => {
-                "missing `measurement` field (looked at root and report.measurement)".to_string()
-            }
-            VerificationError::BuilderUrl(e) => format!("invalid builder_measurement URL: {}", e),
-            VerificationError::BuilderJson(e) => format!("invalid builder_measurement JSON: {}", e),
-            VerificationError::NotInBuilderIndex => {
-                "measurement not found in builder index".to_string()
-            }
-        }
-    }
-}
-
-async fn verify_htx(htx: &nilav::Htx) -> Result<(), VerificationError> {
-    let client = Client::new();
-    // Fetch nil_cc measurement
-    let meas_url = &htx.nil_cc_measurement.url;
-    let meas_resp = client.get(meas_url).send().await;
-    let meas_json: serde_json::Value = match meas_resp.and_then(|r| r.error_for_status()) {
-        Ok(resp) => match resp.json().await {
-            Ok(v) => v,
-            Err(e) => return Err(VerificationError::NilccJson(e.to_string())),
-        },
-        Err(e) => return Err(VerificationError::NilccUrl(e.to_string())),
-    };
-    let measurement = meas_json
-        .get("measurement")
-        .and_then(|v| v.as_str())
-        .or_else(|| {
-            meas_json
-                .get("report")
-                .and_then(|r| r.get("measurement"))
-                .and_then(|v| v.as_str())
-        });
-    let measurement = match measurement {
-        Some(s) => s.to_string(),
-        None => return Err(VerificationError::MissingMeasurement),
-    };
-
-    // Fetch builder measurement index
-    let builder_resp = client.get(&htx.builder_measurement.url).send().await;
-    let builder_json: serde_json::Value = match builder_resp.and_then(|r| r.error_for_status()) {
-        Ok(resp) => match resp.json().await {
-            Ok(v) => v,
-            Err(e) => return Err(VerificationError::BuilderJson(e.to_string())),
-        },
-        Err(e) => return Err(VerificationError::BuilderUrl(e.to_string())),
-    };
-
-    let mut matches_any = false;
-    match builder_json {
-        serde_json::Value::Object(map) => {
-            for (_k, v) in map {
-                if let Some(val) = v.as_str() {
-                    if val == measurement {
-                        matches_any = true;
-                        break;
-                    }
-                }
-            }
-        }
-        serde_json::Value::Array(arr) => {
-            for v in arr {
-                if let Some(val) = v.as_str() {
-                    if val == measurement {
-                        matches_any = true;
-                        break;
-                    }
-                }
-            }
-        }
-        _ => {}
-    }
-
-    if matches_any {
-        Ok(())
-    } else {
-        Err(VerificationError::NotInBuilderIndex)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use httpmock::prelude::*;
-
-    fn make_htx(nilcc_url: String, builder_url: String) -> nilav::Htx {
-        nilav::Htx {
-            workload_id: nilav::WorkloadId {
-                current: 1,
-                previous: 0,
-            },
-            nil_cc_operator: nilav::NilCcOperator {
-                id: 1,
-                name: "op".into(),
-            },
-            builder: nilav::Builder {
-                id: 1,
-                name: "builder".into(),
-            },
-            nil_cc_measurement: nilav::NilCcMeasurement {
-                url: nilcc_url,
-                nilcc_version: "0.0.0".into(),
-                cpu_count: 1,
-                gpus: 0,
-            },
-            builder_measurement: nilav::BuilderMeasurement { url: builder_url },
-        }
-    }
-
-    #[tokio::test]
-    async fn verify_ok_when_measurement_matches_root() {
-        let nilcc = MockServer::start();
-        let builder = MockServer::start();
-        nilcc.mock(|when, then| {
-            when.method(GET).path("/m");
-            then.status(200)
-                .json_body(serde_json::json!({"measurement":"deadbeef"}));
-        });
-        builder.mock(|when, then| {
-            when.method(GET).path("/b");
-            then.status(200)
-                .json_body(serde_json::json!({"0.2.1":"deadbeef"}));
-        });
-        let htx = make_htx(
-            format!("{}/m", nilcc.base_url()),
-            format!("{}/b", builder.base_url()),
-        );
-        assert!(verify_htx(&htx).await.is_ok());
-    }
-
-    #[tokio::test]
-    async fn verify_ok_when_measurement_matches_nested() {
-        let nilcc = MockServer::start();
-        let builder = MockServer::start();
-        nilcc.mock(|when, then| {
-            when.method(GET).path("/m");
-            then.status(200)
-                .json_body(serde_json::json!({"report":{"measurement":"cafebabe"}}));
-        });
-        builder.mock(|when, then| {
-            when.method(GET).path("/b");
-            then.status(200)
-                .json_body(serde_json::json!(["cafebabe", "xxxx"]));
-        });
-        let htx = make_htx(
-            format!("{}/m", nilcc.base_url()),
-            format!("{}/b", builder.base_url()),
-        );
-        assert!(verify_htx(&htx).await.is_ok());
-    }
-
-    #[tokio::test]
-    async fn verify_err_missing_measurement() {
-        let nilcc = MockServer::start();
-        let builder = MockServer::start();
-        nilcc.mock(|when, then| {
-            when.method(GET).path("/m");
-            then.status(200).json_body(serde_json::json!({"foo":"bar"}));
-        });
-        builder.mock(|when, then| {
-            when.method(GET).path("/b");
-            then.status(200).json_body(serde_json::json!({}));
-        });
-        let htx = make_htx(
-            format!("{}/m", nilcc.base_url()),
-            format!("{}/b", builder.base_url()),
-        );
-        let err = verify_htx(&htx).await.err().unwrap();
-        assert!(matches!(err, VerificationError::MissingMeasurement));
-    }
-
-    #[tokio::test]
-    async fn verify_err_builder_json() {
-        let nilcc = MockServer::start();
-        let builder = MockServer::start();
-        nilcc.mock(|when, then| {
-            when.method(GET).path("/m");
-            then.status(200)
-                .json_body(serde_json::json!({"measurement":"aa"}));
-        });
-        builder.mock(|when, then| {
-            when.method(GET).path("/b");
-            then.status(200).body("not-json");
-        });
-        let htx = make_htx(
-            format!("{}/m", nilcc.base_url()),
-            format!("{}/b", builder.base_url()),
-        );
-        let err = verify_htx(&htx).await.err().unwrap();
-        assert!(matches!(err, VerificationError::BuilderJson(_)));
-    }
-
-    #[tokio::test]
-    async fn verify_err_not_in_index() {
-        let nilcc = MockServer::start();
-        let builder = MockServer::start();
-        nilcc.mock(|when, then| {
-            when.method(GET).path("/m");
-            then.status(200)
-                .json_body(serde_json::json!({"measurement":"nomatch"}));
-        });
-        builder.mock(|when, then| {
-            when.method(GET).path("/b");
-            then.status(200)
-                .json_body(serde_json::json!({"0.2.1":"deadbeef"}));
-        });
-        let htx = make_htx(
-            format!("{}/m", nilcc.base_url()),
-            format!("{}/b", builder.base_url()),
-        );
-        let err = verify_htx(&htx).await.err().unwrap();
-        assert!(matches!(err, VerificationError::NotInBuilderIndex));
+        tokio::time::sleep(reconnect_delay).await;
+        reconnect_delay = std::cmp::min(reconnect_delay * 2, max_reconnect_delay);
     }
 }
