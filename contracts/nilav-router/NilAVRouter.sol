@@ -24,7 +24,6 @@ contract NilAVRouter{
 
     // htxId => assignment
     mapping(bytes32 => Assignment) public assignments;
-    mapping(bytes32 => bytes) public htxs;
 
     // ------------------------------------------------------------------------
     // Events
@@ -103,8 +102,6 @@ contract NilAVRouter{
         // Derive an ID from the HTX contents + sender + block info.
         htxId = keccak256(abi.encode(rawHTXHash, msg.sender, block.number));
 
-        htxs[htxId] = rawHTX;
-        
         Assignment storage existing = assignments[htxId];
         require(existing.node == address(0), "NilAV: HTX already exists");
 
@@ -141,10 +138,6 @@ contract NilAVRouter{
 
     function getAssignment(bytes32 htxId) external view returns (Assignment memory) {
         return assignments[htxId];
-    }
-
-    function getHTX(bytes32 htxId) external view returns (bytes memory) {
-        return htxs[htxId];
     }
 
     // ------------------------------------------------------------------------

@@ -6,6 +6,7 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ethers::core::types::Address;
+use nilav::config::{MonitorCliArgs, MonitorConfig};
 use nilav::contract_client::{ContractConfig, NilAVWsClient};
 use ratatui::{
     backend::CrosstermBackend,
@@ -48,35 +49,6 @@ struct HTXTransaction {
     assigned_node: Option<String>,
     responded: Option<bool>,
     timestamp: SystemTime,
-}
-
-/// NilAV Contract Monitor - Interactive TUI for monitoring the NilAV smart contract
-#[derive(Parser)]
-#[command(name = "monitor")]
-#[command(about = "NilAV Contract Monitor - Interactive TUI", long_about = None)]
-struct Cli {
-    /// Ethereum RPC endpoint
-    #[arg(long, env = "RPC_URL", default_value = "http://localhost:8545")]
-    rpc_url: String,
-
-    /// NilAV contract address
-    #[arg(
-        long,
-        env = "CONTRACT_ADDRESS",
-        default_value = "0x5FbDB2315678afecb367f032d93F642f64180aa3"
-    )]
-    contract_address: String,
-
-    /// Private key for signing transactions
-    #[arg(
-        long,
-        env = "PRIVATE_KEY",
-        default_value = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
-    )]
-    private_key: String,
-
-    #[arg(long, default_value = "false")]
-    all_htxs: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -141,22 +113,29 @@ struct MonitorState {
     htx_assigned_state: ListState,
     htx_responded_state: ListState,
     htx_tracking_state: TableState,
+    rpc_url: String,
+    contract_address: Address,
+    public_key: String,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let cli = Cli::parse();
+    let cli_args = MonitorCliArgs::parse();
+    let config = MonitorConfig::load(cli_args)?;
 
-    let contract_address = cli.contract_address.parse::<Address>()?;
-    let contract_config = ContractConfig::new(cli.rpc_url, contract_address);
-    let client = NilAVWsClient::new(contract_config, cli.private_key).await?;
+    // Store values before they're moved
+    let rpc_url = config.rpc_url.clone();
+    let contract_address = config.contract_address;
+
+    let contract_config = ContractConfig::new(config.rpc_url, config.contract_address);
+    let client = NilAVWsClient::new(contract_config, config.private_key).await?;
 
     // Initial data fetch for node count and list
     let node_count = client.node_count().await?.as_usize();
     let nodes = client.get_nodes().await?;
 
     // Fetch historical events to populate initial state
-    let htx_submitted = if cli.all_htxs {
+    let htx_submitted = if config.all_htxs {
         match client.get_htx_submitted_events().await {
             Ok(events) => events
                 .iter()
@@ -179,7 +158,7 @@ async fn main() -> Result<()> {
         Vec::new()
     };
 
-    let htx_assigned = if cli.all_htxs {
+    let htx_assigned = if config.all_htxs {
         match client.get_htx_assigned_events().await {
             Ok(events) => events
                 .iter()
@@ -202,7 +181,7 @@ async fn main() -> Result<()> {
         Vec::new()
     };
 
-    let htx_responded = if cli.all_htxs {
+    let htx_responded = if config.all_htxs {
         match client.get_htx_responded_events().await {
             Ok(events) => events
                 .iter()
@@ -232,7 +211,7 @@ async fn main() -> Result<()> {
     let mut htx_tracking: HashMap<String, HTXTransaction> = HashMap::new();
 
     // Add submitted events
-    if cli.all_htxs {
+    if config.all_htxs {
         if let Ok(events) = client.get_htx_submitted_events().await {
             for e in events {
                 let htx_id = bytes_to_hex(&e.htx_id);
@@ -306,6 +285,9 @@ async fn main() -> Result<()> {
         htx_assigned_state: ListState::default(),
         htx_responded_state: ListState::default(),
         htx_tracking_state: TableState::default(),
+        rpc_url,
+        contract_address,
+        public_key: format!("{:?}", client.signer_address()),
     };
 
     run_monitor(client, initial_state).await
@@ -766,17 +748,42 @@ fn render_overview(f: &mut Frame, area: Rect, state: &MonitorState) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
+            Constraint::Length(6), // Connection info
             Constraint::Length(7), // Stats
             Constraint::Min(0),    // Details
         ])
         .split(area);
 
+    // Connection Info
+    let info_text = vec![
+        Line::from(vec![
+            Span::styled("RPC URL: ", Style::default().fg(Color::Cyan)),
+            Span::styled(state.rpc_url.clone(), Style::default().fg(Color::White)),
+        ]),
+        Line::from(vec![
+            Span::styled("Contract: ", Style::default().fg(Color::Cyan)),
+            Span::styled(
+                format!("{:?}", state.contract_address),
+                Style::default().fg(Color::White),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("Signer: ", Style::default().fg(Color::Cyan)),
+            Span::styled(state.public_key.clone(), Style::default().fg(Color::White)),
+        ]),
+    ];
+
+    let info = Paragraph::new(info_text).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title("Connection Info")
+            .title_style(Style::default().fg(Color::Cyan)),
+    );
+
+    f.render_widget(info, chunks[0]);
+
     // Stats
     let stats_text = vec![
-        Line::from(vec![
-            Span::styled("Contract Address: ", Style::default().fg(Color::Cyan)),
-            Span::raw("Connected"),
-        ]),
         Line::from(vec![
             Span::styled("Total Nodes: ", Style::default().fg(Color::Cyan)),
             Span::styled(
@@ -816,7 +823,7 @@ fn render_overview(f: &mut Frame, area: Rect, state: &MonitorState) {
             .title_style(Style::default().fg(Color::Green)),
     );
 
-    f.render_widget(stats, chunks[0]);
+    f.render_widget(stats, chunks[1]);
 
     // Recent activity
     let mut activity_lines = vec![];
@@ -860,7 +867,7 @@ fn render_overview(f: &mut Frame, area: Rect, state: &MonitorState) {
         )
         .wrap(Wrap { trim: true });
 
-    f.render_widget(activity, chunks[1]);
+    f.render_widget(activity, chunks[2]);
 }
 
 fn render_nodes(f: &mut Frame, area: Rect, state: &MonitorState) {

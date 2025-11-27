@@ -14,8 +14,8 @@ pub enum VerificationError {
 impl VerificationError {
     pub fn message(&self) -> String {
         match self {
-            VerificationError::NilccUrl(e) => format!("invalid nil_cc_measurement URL: {}", e),
-            VerificationError::NilccJson(e) => format!("invalid nil_cc_measurement JSON: {}", e),
+            VerificationError::NilccUrl(e) => format!("invalid nilcc_measurement URL: {}", e),
+            VerificationError::NilccJson(e) => format!("invalid nilcc_measurement JSON: {}", e),
             VerificationError::MissingMeasurement => {
                 "missing `measurement` field (looked at root and report.measurement)".to_string()
             }
@@ -41,17 +41,21 @@ impl std::error::Error for VerificationError {}
 /// Verify an HTX by checking if the nilCC measurement exists in the builder index.
 ///
 /// Steps:
-/// 1. Fetch the nilCC measurement from the HTX's nil_cc_measurement.url
+/// 1. Fetch the nilCC measurement from the HTX's nilcc_measurement.url
 /// 2. Extract the measurement value (looks at root.measurement or report.measurement)
 /// 3. Fetch the builder measurement index from the HTX's builder_measurement.url
 /// 4. Check if the measurement exists in the builder index (as object values or array elements)
 ///
 /// Returns Ok(()) if verification succeeds, Err(VerificationError) otherwise.
 pub async fn verify_htx(htx: &Htx) -> Result<(), VerificationError> {
-    let client = Client::new();
+    let client = Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .build()
+        .expect("Failed to build HTTP client");
 
-    // Fetch nil_cc measurement
-    let meas_url = &htx.nil_cc_measurement.url;
+    // Fetch nilcc measurement
+    let meas_url = &htx.nilcc_measurement.url;
     let meas_resp = client.get(meas_url).send().await;
     let meas_json: serde_json::Value = match meas_resp.and_then(|r| r.error_for_status()) {
         Ok(resp) => match resp.json().await {
@@ -126,7 +130,7 @@ mod tests {
     #[test]
     fn test_verification_error_messages() {
         let err = VerificationError::NilccUrl("connection failed".to_string());
-        assert!(err.message().contains("invalid nil_cc_measurement URL"));
+        assert!(err.message().contains("invalid nilcc_measurement URL"));
 
         let err = VerificationError::MissingMeasurement;
         assert!(err.message().contains("missing `measurement` field"));

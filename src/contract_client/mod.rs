@@ -8,6 +8,10 @@ use ethers::{
 };
 use std::sync::Arc;
 
+/// Default number of blocks to look back when querying historical events
+/// This prevents inefficient queries from block 0 on long-running blockchains
+const DEFAULT_LOOKBACK_BLOCKS: u64 = 50;
+
 /// Decode a Solidity Error(string) revert message from hex data
 /// Returns the decoded error message if it's a standard Error(string), otherwise None
 pub fn decode_error_string(revert_data: &str) -> Option<String> {
@@ -112,7 +116,8 @@ impl NilAVWsClient {
             .replace("http://", "ws://")
             .replace("https://", "wss://");
 
-        let provider = Provider::<Ws>::connect(&ws_url).await?;
+        // Connect with keepalive enabled (10 second interval)
+        let provider = Provider::<Ws>::connect_with_reconnects(&ws_url, usize::MAX).await?;
         let chain_id = provider.get_chainid().await?;
 
         let wallet = private_key
@@ -150,6 +155,12 @@ impl NilAVWsClient {
     /// Get the signer address
     pub fn signer_address(&self) -> Address {
         self.provider.inner().signer().address()
+    }
+
+    /// Get the balance of the wallet
+    pub async fn get_balance(&self) -> anyhow::Result<U256> {
+        let address = self.signer_address();
+        Ok(self.provider.get_balance(address, None).await?)
     }
 
     // ------------------------------------------------------------------------
@@ -265,11 +276,68 @@ impl NilAVWsClient {
         Ok(self.contract.get_assignment(htx_id_bytes).call().await?)
     }
 
-    /// Get HTX bytes for an HTX ID
+    /// Get HTX bytes from the original submission transaction call data
+    /// Default lookback: 1000 blocks. Use get_htx_with_lookback for custom lookback.
     pub async fn get_htx(&self, htx_id: H256) -> anyhow::Result<Vec<u8>> {
-        let htx_id_bytes: [u8; 32] = htx_id.into();
-        let bytes = self.contract.get_htx(htx_id_bytes).call().await?;
-        Ok(bytes.to_vec())
+        self.get_htx_with_lookback(htx_id, DEFAULT_LOOKBACK_BLOCKS)
+            .await
+    }
+
+    /// Get HTX bytes with custom block lookback limit
+    /// Set lookback to u64::MAX to search entire history
+    pub async fn get_htx_with_lookback(
+        &self,
+        htx_id: H256,
+        lookback_blocks: u64,
+    ) -> anyhow::Result<Vec<u8>> {
+        let from_block = if lookback_blocks == u64::MAX {
+            0
+        } else {
+            self.get_from_block(lookback_blocks).await?
+        };
+
+        // Find the transaction that submitted this HTX by querying the HTXSubmitted event
+        let event_stream = self
+            .contract
+            .event::<HtxsubmittedFilter>()
+            .topic1(htx_id) // Filter by htxId
+            .from_block(from_block);
+
+        let events = event_stream.query_with_meta().await?;
+
+        let (_event, meta) = events
+            .first()
+            .ok_or_else(|| anyhow::anyhow!("No HTXSubmitted event found for htxId"))?;
+
+        // Get the transaction hash from the event metadata
+        let tx_hash = meta.transaction_hash;
+
+        // Fetch the transaction
+        let tx = self
+            .provider
+            .get_transaction(tx_hash)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Transaction not found"))?;
+
+        // Decode the call data to extract the rawHTX parameter
+        // The call data format is: 4-byte function selector + ABI-encoded parameters
+        let input = tx.input;
+
+        // Skip the function selector (first 4 bytes)
+        if input.len() <= 4 {
+            return Err(anyhow::anyhow!("Invalid call data"));
+        }
+
+        // Decode the bytes parameter (offset, length, data)
+        use ethers::abi::{decode, ParamType};
+        let decoded = decode(&[ParamType::Bytes], &input[4..])?;
+
+        let htx_bytes = decoded[0]
+            .clone()
+            .into_bytes()
+            .ok_or_else(|| anyhow::anyhow!("Failed to decode HTX bytes"))?;
+
+        Ok(htx_bytes)
     }
 
     /// Get assignment details using the assignments mapping
@@ -291,6 +359,13 @@ impl NilAVWsClient {
         Ok(block_number.as_u64())
     }
 
+    /// Get the starting block for event queries based on lookback limit
+    /// Returns max(0, current_block - lookback_blocks)
+    async fn get_from_block(&self, lookback_blocks: u64) -> anyhow::Result<u64> {
+        let current_block = self.get_block_number().await?;
+        Ok(current_block.saturating_sub(lookback_blocks))
+    }
+
     // ------------------------------------------------------------------------
     // Real-time Event Streaming
     // ------------------------------------------------------------------------
@@ -305,7 +380,8 @@ impl NilAVWsClient {
         Fut: std::future::Future<Output = anyhow::Result<()>> + Send,
     {
         let event_stream = self.contract.event::<HtxassignedFilter>();
-        let mut events = event_stream.stream().await?;
+
+        let mut events = event_stream.subscribe().await?;
 
         while let Some(event_result) = events.next().await {
             match event_result {
@@ -333,7 +409,8 @@ impl NilAVWsClient {
         Fut: std::future::Future<Output = anyhow::Result<()>> + Send,
     {
         let event_stream = self.contract.event::<HtxassignedFilter>();
-        let mut events = event_stream.stream().await?;
+
+        let mut events = event_stream.subscribe().await?;
 
         while let Some(event_result) = events.next().await {
             match event_result {
@@ -363,7 +440,7 @@ impl NilAVWsClient {
         Fut: std::future::Future<Output = anyhow::Result<()>> + Send,
     {
         let event_stream = self.contract.event::<HtxsubmittedFilter>();
-        let mut events = event_stream.stream().await?;
+        let mut events = event_stream.subscribe().await?;
 
         while let Some(event_result) = events.next().await {
             match event_result {
@@ -390,7 +467,8 @@ impl NilAVWsClient {
         Fut: std::future::Future<Output = anyhow::Result<()>> + Send,
     {
         let event_stream = self.contract.event::<HtxrespondedFilter>();
-        let mut events = event_stream.stream().await?;
+
+        let mut events = event_stream.subscribe().await?;
 
         while let Some(event_result) = events.next().await {
             match event_result {
@@ -417,7 +495,8 @@ impl NilAVWsClient {
         Fut: std::future::Future<Output = anyhow::Result<()>> + Send,
     {
         let event_stream = self.contract.event::<NodeRegisteredFilter>();
-        let mut events = event_stream.stream().await?;
+
+        let mut events = event_stream.subscribe().await?;
 
         while let Some(event_result) = events.next().await {
             match event_result {
@@ -444,7 +523,8 @@ impl NilAVWsClient {
         Fut: std::future::Future<Output = anyhow::Result<()>> + Send,
     {
         let event_stream = self.contract.event::<NodeDeregisteredFilter>();
-        let mut events = event_stream.stream().await?;
+
+        let mut events = event_stream.subscribe().await?;
 
         while let Some(event_result) = events.next().await {
             match event_result {
@@ -465,58 +545,143 @@ impl NilAVWsClient {
     // Historical Event Query Methods
     // ------------------------------------------------------------------------
 
-    /// Get all HTX submitted events from contract history
+    /// Get HTX submitted events from recent history (default: last 1000 blocks)
+    /// Use get_htx_submitted_events_with_lookback for custom lookback
     pub async fn get_htx_submitted_events(&self) -> anyhow::Result<Vec<HtxsubmittedFilter>> {
+        self.get_htx_submitted_events_with_lookback(DEFAULT_LOOKBACK_BLOCKS)
+            .await
+    }
+
+    /// Get HTX submitted events with custom block lookback limit
+    /// Set lookback to u64::MAX to search entire history
+    pub async fn get_htx_submitted_events_with_lookback(
+        &self,
+        lookback_blocks: u64,
+    ) -> anyhow::Result<Vec<HtxsubmittedFilter>> {
+        let from_block = if lookback_blocks == u64::MAX {
+            0
+        } else {
+            self.get_from_block(lookback_blocks).await?
+        };
+
         let events = self
             .contract
             .event::<HtxsubmittedFilter>()
-            .from_block(0)
+            .from_block(from_block)
             .query()
             .await?;
         Ok(events)
     }
 
-    /// Get all HTX assigned events from contract history
+    /// Get HTX assigned events from recent history (default: last 1000 blocks)
+    /// Use get_htx_assigned_events_with_lookback for custom lookback
     pub async fn get_htx_assigned_events(&self) -> anyhow::Result<Vec<HtxassignedFilter>> {
+        self.get_htx_assigned_events_with_lookback(DEFAULT_LOOKBACK_BLOCKS)
+            .await
+    }
+
+    /// Get HTX assigned events with custom block lookback limit
+    /// Set lookback to u64::MAX to search entire history
+    pub async fn get_htx_assigned_events_with_lookback(
+        &self,
+        lookback_blocks: u64,
+    ) -> anyhow::Result<Vec<HtxassignedFilter>> {
+        let from_block = if lookback_blocks == u64::MAX {
+            0
+        } else {
+            self.get_from_block(lookback_blocks).await?
+        };
+
         let events = self
             .contract
             .event::<HtxassignedFilter>()
-            .from_block(0)
+            .from_block(from_block)
             .query()
             .await?;
         Ok(events)
     }
 
-    /// Get all HTX responded events from contract history
+    /// Get HTX responded events from recent history (default: last 1000 blocks)
+    /// Use get_htx_responded_events_with_lookback for custom lookback
     pub async fn get_htx_responded_events(&self) -> anyhow::Result<Vec<HtxrespondedFilter>> {
+        self.get_htx_responded_events_with_lookback(DEFAULT_LOOKBACK_BLOCKS)
+            .await
+    }
+
+    /// Get HTX responded events with custom block lookback limit
+    /// Set lookback to u64::MAX to search entire history
+    pub async fn get_htx_responded_events_with_lookback(
+        &self,
+        lookback_blocks: u64,
+    ) -> anyhow::Result<Vec<HtxrespondedFilter>> {
+        let from_block = if lookback_blocks == u64::MAX {
+            0
+        } else {
+            self.get_from_block(lookback_blocks).await?
+        };
+
         let events = self
             .contract
             .event::<HtxrespondedFilter>()
-            .from_block(0)
+            .from_block(from_block)
             .query()
             .await?;
         Ok(events)
     }
 
-    /// Get all node registered events from contract history
+    /// Get node registered events from recent history (default: last 1000 blocks)
+    /// Use get_node_registered_events_with_lookback for custom lookback
     pub async fn get_node_registered_events(&self) -> anyhow::Result<Vec<NodeRegisteredFilter>> {
+        self.get_node_registered_events_with_lookback(DEFAULT_LOOKBACK_BLOCKS)
+            .await
+    }
+
+    /// Get node registered events with custom block lookback limit
+    /// Set lookback to u64::MAX to search entire history
+    pub async fn get_node_registered_events_with_lookback(
+        &self,
+        lookback_blocks: u64,
+    ) -> anyhow::Result<Vec<NodeRegisteredFilter>> {
+        let from_block = if lookback_blocks == u64::MAX {
+            0
+        } else {
+            self.get_from_block(lookback_blocks).await?
+        };
+
         let events = self
             .contract
             .event::<NodeRegisteredFilter>()
-            .from_block(0)
+            .from_block(from_block)
             .query()
             .await?;
         Ok(events)
     }
 
-    /// Get all node deregistered events from contract history
+    /// Get node deregistered events from recent history (default: last 1000 blocks)
+    /// Use get_node_deregistered_events_with_lookback for custom lookback
     pub async fn get_node_deregistered_events(
         &self,
     ) -> anyhow::Result<Vec<NodeDeregisteredFilter>> {
+        self.get_node_deregistered_events_with_lookback(DEFAULT_LOOKBACK_BLOCKS)
+            .await
+    }
+
+    /// Get node deregistered events with custom block lookback limit
+    /// Set lookback to u64::MAX to search entire history
+    pub async fn get_node_deregistered_events_with_lookback(
+        &self,
+        lookback_blocks: u64,
+    ) -> anyhow::Result<Vec<NodeDeregisteredFilter>> {
+        let from_block = if lookback_blocks == u64::MAX {
+            0
+        } else {
+            self.get_from_block(lookback_blocks).await?
+        };
+
         let events = self
             .contract
             .event::<NodeDeregisteredFilter>()
-            .from_block(0)
+            .from_block(from_block)
             .query()
             .await?;
         Ok(events)
@@ -685,7 +850,7 @@ mod tests {
                 current: 1,
                 previous: 0,
             },
-            nil_cc_operator: NilCcOperator {
+            nilcc_operator: NilCcOperator {
                 id: 1,
                 name: "test".into(),
             },
@@ -693,7 +858,7 @@ mod tests {
                 id: 1,
                 name: "test".into(),
             },
-            nil_cc_measurement: NilCcMeasurement {
+            nilcc_measurement: NilCcMeasurement {
                 url: "https://test.com".into(),
                 nilcc_version: "0.0.0".into(),
                 cpu_count: 1,
