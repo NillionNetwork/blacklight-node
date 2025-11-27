@@ -3,6 +3,7 @@ use clap::Parser;
 use ethers::core::types::Address;
 
 use crate::state::StateFile;
+use tracing::info;
 
 const STATE_FILE: &str = "nilav_node.env";
 
@@ -60,6 +61,10 @@ impl NodeConfig {
         // Parse contract address
         let contract_address = contract_address_str.parse::<Address>()?;
 
+        info!(
+            "Loaded NodeConfig: rpc_url={}, contract_address={}",
+            rpc_url, contract_address
+        );
         Ok(NodeConfig {
             rpc_url,
             contract_address,

@@ -172,6 +172,25 @@ async fn main() -> Result<()> {
 
         let ws_client_arc = std::sync::Arc::new(ws_client);
 
+        // Start a background keepalive task to prevent connection timeouts
+        // This task periodically queries the blockchain to keep the WebSocket connection alive
+        let ws_client_keepalive = ws_client_arc.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
+            loop {
+                interval.tick().await;
+                match ws_client_keepalive.get_block_number().await {
+                    Ok(block) => {
+                        debug!(block_number = %block, "Keepalive ping successful");
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "Keepalive ping failed - connection may be dead");
+                        break; // Exit keepalive task if connection is dead
+                    }
+                }
+            }
+        });
+
         // IMPORTANT: Process any backlog of assignments that happened before we connected
         // Query historical HTX assigned events for this node
         info!("Checking for pending assignments from before connection");
@@ -195,12 +214,13 @@ async fn main() -> Result<()> {
                         match ws_client_arc.get_assignment(htx_id).await {
                             Ok(assignment) if assignment.responded => {
                                 // Already responded, skip
+                                debug!(htx_id = ?htx_id, "Already responded HTX, skipping");
                                 continue;
                             }
                             Ok(_) => {
-                                debug!(
+                                info!(
                                     htx_id = ?htx_id,
-                                    "Processing pending assignment"
+                                    "Processing pending HTX"
                                 );
                                 // Spawn a task to process this assignment concurrently
                                 let ws_client = ws_client_arc.clone();
@@ -256,86 +276,18 @@ async fn main() -> Result<()> {
                                     return;
                                 }
 
-                                debug!(
+                                info!(
                                     htx_id = ?htx_id,
-                                    "Processing real-time assignment"
+                                    "Processing HTX"
                                 );
 
-                                // Retrieve the HTX data from the contract
-                                let htx_bytes = match ws_client.get_htx(htx_id).await {
-                                    Ok(bytes) => bytes,
-                                    Err(e) => {
-                                        error!(
-                                            htx_id = ?htx_id,
-                                            error = %e,
-                                            "Failed to get HTX data"
-                                        );
-                                        return;
-                                    }
-                                };
-
-                                // Parse the HTX data
-                                let htx: Htx = match serde_json::from_slice(&htx_bytes) {
-                                    Ok(h) => h,
-                                    Err(e) => {
-                                        error!(
-                                            htx_id = ?htx_id,
-                                            error = %e,
-                                            "Failed to parse HTX data"
-                                        );
-                                        // Respond with false if we can't parse the data
-                                        match ws_client.respond_htx(htx_id, false).await {
-                                            Ok(tx_hash) => {
-                                                warn!(
-                                                    htx_id = ?htx_id,
-                                                    tx_hash = ?tx_hash,
-                                                    "HTX not verified (parse error) | tx: submitted"
-                                                );
-                                            }
-                                            Err(e) => {
-                                                error!(
-                                                    htx_id = ?htx_id,
-                                                    error = %e,
-                                                    "Failed to respond to HTX"
-                                                );
-                                            }
-                                        }
-                                        return;
-                                    }
-                                };
-
-                                // Verify the HTX
-                                let verification_result = verify_htx(&htx).await;
-                                let result = verification_result.is_ok();
-
-                                if let Err(ref e) = verification_result {
-                                    warn!(
+                                // Use the same function as backlog processing
+                                if let Err(e) = process_htx_assignment(ws_client, htx_id).await {
+                                    error!(
                                         htx_id = ?htx_id,
                                         error = %e,
-                                        "HTX verification failed"
+                                        "Failed to process real-time HTX"
                                     );
-                                }
-
-                                // Submit the verification result
-                                match ws_client.respond_htx(htx_id, result).await {
-                                    Ok(tx_hash) => {
-                                        let verdict = if result { "VALID" } else { "INVALID" };
-                                        info!(
-                                            htx_id = ?htx_id,
-                                            tx_hash = ?tx_hash,
-                                            verdict = %verdict,
-                                            "HTX verified"
-                                        );
-
-                                        // Note: WebSocket mode doesn't need to save block state
-                                    }
-                                    Err(e) => {
-                                        error!(
-                                            htx_id = ?htx_id,
-                                            error = %e,
-                                            "Failed to respond to HTX"
-                                        );
-                                    }
                                 }
                             }
                             Err(e) => {

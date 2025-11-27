@@ -5,16 +5,12 @@ use ethers::core::types::Address;
 use crate::state::StateFile;
 use tracing::info;
 
-const STATE_FILE: &str = "nilcc_simulator.env";
+const STATE_FILE: &str = "nilav_monitor.env";
 
-fn default_slot_ms() -> u64 {
-    5000
-}
-
-/// CLI arguments for the NilCC simulator
+/// CLI arguments for the NilAV monitor
 #[derive(Parser, Debug)]
-#[command(name = "nilcc_simulator")]
-#[command(about = "NilAV Server - Submits HTXs to the smart contract", long_about = None)]
+#[command(name = "monitor")]
+#[command(about = "NilAV Contract Monitor - Interactive TUI", long_about = None)]
 pub struct CliArgs {
     /// Ethereum RPC endpoint
     #[arg(long, env = "RPC_URL")]
@@ -24,30 +20,25 @@ pub struct CliArgs {
     #[arg(long, env = "CONTRACT_ADDRESS")]
     pub contract_address: Option<String>,
 
-    /// Private key for signing transactions
+    /// Private key for contract interactions
     #[arg(long, env = "PRIVATE_KEY")]
     pub private_key: Option<String>,
 
-    /// Path to config file
-    #[arg(long, env = "CONFIG_PATH")]
-    pub config_path: Option<String>,
-
-    /// Path to HTXs JSON file
-    #[arg(long, env = "HTXS_PATH")]
-    pub htxs_path: Option<String>,
+    /// Load all historical HTX events
+    #[arg(long, env = "ALL_HTXS")]
+    pub all_htxs: Option<bool>,
 }
 
-/// Simulator configuration with all required values resolved
+/// Monitor configuration with all required values resolved
 #[derive(Debug, Clone)]
-pub struct SimulatorConfig {
+pub struct MonitorConfig {
     pub rpc_url: String,
     pub contract_address: Address,
     pub private_key: String,
-    pub htxs_path: String,
-    pub slot_ms: u64,
+    pub all_htxs: bool,
 }
 
-impl SimulatorConfig {
+impl MonitorConfig {
     /// Load configuration with priority: CLI/env -> state file -> defaults
     pub fn load(cli_args: CliArgs) -> Result<Self> {
         let state_file = StateFile::new(STATE_FILE);
@@ -64,33 +55,36 @@ impl SimulatorConfig {
             .or_else(|| state_file.load_value("CONTRACT_ADDRESS"))
             .unwrap_or_else(|| "0x5FbDB2315678afecb367f032d93F642f64180aa3".to_string());
 
-        // Load private key with priority (different default than node)
+        // Load private key with priority (monitor uses first Hardhat account)
         let private_key = cli_args
             .private_key
             .or_else(|| state_file.load_value("PRIVATE_KEY"))
             .unwrap_or_else(|| {
-                "0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a".to_string()
+                "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string()
             });
 
-        // Load HTXs path with priority
-        let htxs_path = cli_args
-            .htxs_path
-            .or_else(|| state_file.load_value("HTXS_PATH"))
-            .unwrap_or_else(|| "data/htxs.json".to_string());
+        // Load all_htxs flag with priority
+        let all_htxs = cli_args
+            .all_htxs
+            .or_else(|| {
+                state_file
+                    .load_value("ALL_HTXS")
+                    .and_then(|s| s.parse::<bool>().ok())
+            })
+            .unwrap_or(false);
 
         // Parse contract address
         let contract_address = contract_address_str.parse::<Address>()?;
 
         info!(
-            "Loaded SimulatorConfig: rpc_url={}, contract_address={}, htxs_path={}",
-            rpc_url, contract_address, htxs_path
+            "Loaded MonitorConfig: rpc_url={}, contract_address={}, all_htxs={}",
+            rpc_url, contract_address, all_htxs
         );
-        Ok(SimulatorConfig {
+        Ok(MonitorConfig {
             rpc_url,
             contract_address,
             private_key,
-            htxs_path,
-            slot_ms: default_slot_ms(),
+            all_htxs,
         })
     }
 }

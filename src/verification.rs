@@ -48,7 +48,11 @@ impl std::error::Error for VerificationError {}
 ///
 /// Returns Ok(()) if verification succeeds, Err(VerificationError) otherwise.
 pub async fn verify_htx(htx: &Htx) -> Result<(), VerificationError> {
-    let client = Client::new();
+    let client = Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .build()
+        .expect("Failed to build HTTP client");
 
     // Fetch nilcc measurement
     let meas_url = &htx.nilcc_measurement.url;
