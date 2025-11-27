@@ -152,6 +152,12 @@ impl NilAVWsClient {
         self.provider.inner().signer().address()
     }
 
+    /// Get the balance of the wallet
+    pub async fn get_balance(&self) -> anyhow::Result<U256> {
+        let address = self.signer_address();
+        Ok(self.provider.get_balance(address, None).await?)
+    }
+
     // ------------------------------------------------------------------------
     // Node Management Functions
     // ------------------------------------------------------------------------
@@ -265,11 +271,50 @@ impl NilAVWsClient {
         Ok(self.contract.get_assignment(htx_id_bytes).call().await?)
     }
 
-    /// Get HTX bytes for an HTX ID
+    /// Get HTX bytes from the original submission transaction call data
     pub async fn get_htx(&self, htx_id: H256) -> anyhow::Result<Vec<u8>> {
-        let htx_id_bytes: [u8; 32] = htx_id.into();
-        let bytes = self.contract.get_htx(htx_id_bytes).call().await?;
-        Ok(bytes.to_vec())
+        // Find the transaction that submitted this HTX by querying the HTXSubmitted event
+        let event_stream = self
+            .contract
+            .event::<HtxsubmittedFilter>()
+            .topic1(htx_id) // Filter by htxId
+            .from_block(0);
+
+        let events = event_stream.query_with_meta().await?;
+
+        let (_event, meta) = events
+            .first()
+            .ok_or_else(|| anyhow::anyhow!("No HTXSubmitted event found for htxId"))?;
+
+        // Get the transaction hash from the event metadata
+        let tx_hash = meta.transaction_hash;
+
+        // Fetch the transaction
+        let tx = self
+            .provider
+            .get_transaction(tx_hash)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Transaction not found"))?;
+
+        // Decode the call data to extract the rawHTX parameter
+        // The call data format is: 4-byte function selector + ABI-encoded parameters
+        let input = tx.input;
+
+        // Skip the function selector (first 4 bytes)
+        if input.len() <= 4 {
+            return Err(anyhow::anyhow!("Invalid call data"));
+        }
+
+        // Decode the bytes parameter (offset, length, data)
+        use ethers::abi::{decode, ParamType};
+        let decoded = decode(&[ParamType::Bytes], &input[4..])?;
+
+        let htx_bytes = decoded[0]
+            .clone()
+            .into_bytes()
+            .ok_or_else(|| anyhow::anyhow!("Failed to decode HTX bytes"))?;
+
+        Ok(htx_bytes)
     }
 
     /// Get assignment details using the assignments mapping
@@ -685,7 +730,7 @@ mod tests {
                 current: 1,
                 previous: 0,
             },
-            nil_cc_operator: NilCcOperator {
+            nilcc_operator: NilCcOperator {
                 id: 1,
                 name: "test".into(),
             },
@@ -693,7 +738,7 @@ mod tests {
                 id: 1,
                 name: "test".into(),
             },
-            nil_cc_measurement: NilCcMeasurement {
+            nilcc_measurement: NilCcMeasurement {
                 url: "https://test.com".into(),
                 nilcc_version: "0.0.0".into(),
                 cpu_count: 1,

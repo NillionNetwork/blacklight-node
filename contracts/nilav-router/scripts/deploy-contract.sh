@@ -27,7 +27,6 @@ fi
 
 # Deploy the contract
 echo "Deploying NilAVRouter contract..."
-cd /app/contracts/nilav-router
 
 DEPLOY_OUTPUT=$(forge create NilAVRouter \
     --rpc-url ${RPC_URL} \

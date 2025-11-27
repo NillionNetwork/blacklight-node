@@ -15,7 +15,7 @@ COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 COPY config ./config
 COPY data ./data
-COPY out ./out
+COPY ./contracts/nilav-router/ ./contracts/nilav-router/
 
 # Build all binaries with caching
 RUN --mount=type=cache,target=/usr/local/cargo/registry \

@@ -3,7 +3,7 @@ pub mod types;
 
 // Utilities
 pub mod config;
-pub mod crypto;
+
 pub mod json;
 pub mod state;
 
@@ -15,5 +15,4 @@ pub mod verification;
 pub mod tui;
 
 // Re-exports for convenience
-pub use config::{load_config_from_path, Config, ElectionConfig};
 pub use types::Htx;

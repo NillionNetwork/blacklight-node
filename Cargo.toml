@@ -36,8 +36,6 @@ serde_json = "1.0"
 toml = "0.9"
 
 # Cryptography
-ed25519-dalek = { version = "2", features = ["rand_core"] }
-blake3 = "1.5"
 hex = "0.4"
 getrandom = "0.3"
 

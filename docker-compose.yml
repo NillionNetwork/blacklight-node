@@ -74,8 +74,7 @@ services:
     environment:
       - RPC_URL=http://anvil:8545
       - CONTRACT_ADDRESS_FILE=/shared/contract_address.txt
-      - NODE_PRIVATE_KEY=0xdbda1821b80551c9d65939329250298aa3472ba22feea921c0cf5d620ea67b97
-      - NODE_ID=node-1
+      - PRIVATE_KEY=0xdbda1821b80551c9d65939329250298aa3472ba22feea921c0cf5d620ea67b97
       - RUST_LOG=info
     networks:
       - nilav-network
@@ -94,7 +93,7 @@ services:
     environment:
       - RPC_URL=http://anvil:8545
       - CONTRACT_ADDRESS_FILE=/shared/contract_address.txt
-      - NODE_PRIVATE_KEY=0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6
+      - PRIVATE_KEY=0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6
       - NODE_ID=node-2
       - RUST_LOG=info
     networks:
@@ -114,7 +113,7 @@ services:
     environment:
       - RPC_URL=http://anvil:8545
       - CONTRACT_ADDRESS_FILE=/shared/contract_address.txt
-      - NODE_PRIVATE_KEY=0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a
+      - PRIVATE_KEY=0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a
       - NODE_ID=node-3
       - RUST_LOG=info
     networks:
@@ -134,7 +133,7 @@ services:
     environment:
       - RPC_URL=http://anvil:8545
       - CONTRACT_ADDRESS_FILE=/shared/contract_address.txt
-      - NODE_PRIVATE_KEY=0x8b3a350cf5c34c9194ca85829a2df0ec3153be0318b5e2d3348e872092edffba
+      - PRIVATE_KEY=0x8b3a350cf5c34c9194ca85829a2df0ec3153be0318b5e2d3348e872092edffba
       - NODE_ID=node-4
       - RUST_LOG=info
     networks:
@@ -154,7 +153,7 @@ services:
     environment:
       - RPC_URL=http://anvil:8545
       - CONTRACT_ADDRESS_FILE=/shared/contract_address.txt
-      - NODE_PRIVATE_KEY=0x92db14e403b83dfe3df233f83dfa3a0d7096f21ca9b0d6d6b8d88b2b4ec1564e
+      - PRIVATE_KEY=0x92db14e403b83dfe3df233f83dfa3a0d7096f21ca9b0d6d6b8d88b2b4ec1564e
       - NODE_ID=node-5
       - RUST_LOG=info
     networks:

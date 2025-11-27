@@ -1,65 +1,23 @@
-use std::env;
-
 use anyhow::Result;
 use clap::Parser;
-use ethers::core::types::{Address, H256};
+use ethers::core::types::H256;
 use nilav::{
+    config::{NodeCliArgs, NodeConfig},
     contract_client::{ContractConfig, NilAVWsClient},
-    crypto::{load_or_generate_signing_key, verifying_key_from_signing},
-    state::StateFile,
     types::Htx,
     verification::verify_htx,
 };
-use rand::random;
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
-
-const STATE_FILE: &str = "nilav_node.env";
-
-/// NilAV Node - Verifies HTXs assigned by the smart contract using WebSocket streaming
-#[derive(Parser)]
-#[command(name = "nilav_node")]
-#[command(about = "NilAV Node - Real-time HTX verification using WebSocket streaming", long_about = None)]
-struct Cli {
-    /// Ethereum RPC endpoint (will be converted to WebSocket)
-    #[arg(long, env = "RPC_URL", default_value = "http://localhost:8545")]
-    rpc_url: String,
-
-    /// NilAV contract address
-    #[arg(
-        long,
-        env = "CONTRACT_ADDRESS",
-        default_value = "0x5FbDB2315678afecb367f032d93F642f64180aa3"
-    )]
-    contract_address: String,
-
-    /// Private key for contract interactions
-    #[arg(
-        long,
-        env = "NODE_PRIVATE_KEY",
-        default_value = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
-    )]
-    node_private_key: String,
-
-    /// Node ID for logging
-    #[arg(long, env = "NODE_ID")]
-    node_id: Option<String>,
-
-    /// Ed25519 signing secret (hex)
-    #[arg(long, env = "NODE_SECRET")]
-    node_secret: Option<String>,
-}
 
 /// Process a single HTX assignment - verifies and submits result
 async fn process_htx_assignment(
     ws_client: std::sync::Arc<NilAVWsClient>,
-    node_id: &str,
     htx_id: H256,
 ) -> Result<()> {
     // Retrieve the HTX data from the contract
     let htx_bytes = ws_client.get_htx(htx_id).await.map_err(|e| {
         error!(
-            node_id = %node_id,
             htx_id = ?htx_id,
             error = %e,
             "Failed to get HTX data"
@@ -72,7 +30,6 @@ async fn process_htx_assignment(
         Ok(h) => h,
         Err(e) => {
             error!(
-                node_id = %node_id,
                 htx_id = ?htx_id,
                 error = %e,
                 "Failed to parse HTX data"
@@ -80,7 +37,6 @@ async fn process_htx_assignment(
             // Respond with false if we can't parse the data
             ws_client.respond_htx(htx_id, false).await?;
             warn!(
-                node_id = %node_id,
                 htx_id = ?htx_id,
                 "HTX not verified (parse error) | tx: submitted"
             );
@@ -94,7 +50,6 @@ async fn process_htx_assignment(
 
     if let Err(ref e) = verification_result {
         warn!(
-            node_id = %node_id,
             htx_id = ?htx_id,
             error = %e,
             "HTX verification failed"
@@ -106,7 +61,6 @@ async fn process_htx_assignment(
         Ok(tx_hash) => {
             let verdict = if result { "VALID" } else { "INVALID" };
             info!(
-                node_id = %node_id,
                 htx_id = ?htx_id,
                 tx_hash = ?tx_hash,
                 verdict = %verdict,
@@ -116,7 +70,6 @@ async fn process_htx_assignment(
         }
         Err(e) => {
             error!(
-                node_id = %node_id,
                 htx_id = ?htx_id,
                 error = %e,
                 "Failed to respond to HTX"
@@ -134,38 +87,14 @@ async fn main() -> Result<()> {
         .with(EnvFilter::from_default_env().add_directive(tracing::Level::INFO.into()))
         .init();
 
-    let cli = Cli::parse();
-    let state_file = StateFile::new(STATE_FILE);
+    // Load configuration
+    let cli_args = NodeCliArgs::parse();
+    let config = NodeConfig::load(cli_args)?;
 
-    // Load or generate node_id, preserving it in state file
-    let node_id = if let Some(id) = cli.node_id {
-        let _ = state_file.save_value("NODE_ID", &id);
-        id
-    } else if let Some(id) = state_file.load_value("NODE_ID") {
-        id
-    } else {
-        let id = env::var("HOSTNAME")
-            .ok()
-            .unwrap_or_else(|| format!("node-{}", hex::encode(random::<[u8; 4]>())));
-        let _ = state_file.save_value("NODE_ID", &id);
-        id
-    };
-
-    // Load or generate signing key
-    let secret = cli
-        .node_secret
-        .or_else(|| state_file.load_value("NODE_SECRET"));
-    let (sk, secret_hex) = load_or_generate_signing_key(secret);
-    let _ = state_file.save_value("NODE_SECRET", &secret_hex);
-    let vk = verifying_key_from_signing(&sk);
-    info!(node_id = %node_id, pubkey = %hex::encode(vk.to_bytes()), "Node initialized");
-
-    // Setup contract connection details
-    let contract_address = cli.contract_address.parse::<Address>()?;
-    let private_key = cli.node_private_key.clone();
+    info!("Node initialized");
 
     // Start WebSocket event listener with auto-reconnection
-    info!(node_id = %node_id, "Starting real-time WebSocket event listener with auto-reconnection");
+    info!("Starting real-time WebSocket event listener with auto-reconnection");
 
     // Reconnection loop - will restart the listener if it fails
     let mut reconnect_delay = std::time::Duration::from_secs(1);
@@ -173,23 +102,20 @@ async fn main() -> Result<()> {
     let mut registered = false;
 
     loop {
-        info!(node_id = %node_id, "Connecting WebSocket listener");
+        info!("Connecting WebSocket listener");
 
         // Create a fresh WebSocket client for this connection attempt
-        let contract_config = ContractConfig::new(cli.rpc_url.clone(), contract_address);
-        let ws_client = match NilAVWsClient::new(contract_config, private_key.clone()).await {
+        let contract_config = ContractConfig::new(config.rpc_url.clone(), config.contract_address);
+        let ws_client = match NilAVWsClient::new(contract_config, config.private_key.clone()).await
+        {
             Ok(client) => {
-                info!(
-                    node_id = %node_id,
-                    contract_address = %client.address(),
-                    "WebSocket connection established"
-                );
+                let balance = client.get_balance().await?;
+                info!(balance = ?balance, "WebSocket connection established");
                 reconnect_delay = std::time::Duration::from_secs(1); // Reset delay on success
                 client
             }
             Err(e) => {
                 error!(
-                    node_id = %node_id,
                     error = %e,
                     reconnect_delay = ?reconnect_delay,
                     "Failed to connect WebSocket. Retrying..."
@@ -203,23 +129,22 @@ async fn main() -> Result<()> {
         // Register node if not already registered
         let node_address = ws_client.signer_address();
         if !registered {
-            info!(node_id = %node_id, node_address = %node_address, "Registering node with contract");
+            info!(node_address = %node_address, "Registering node with contract");
 
             // Check if already registered
             match ws_client.is_node(node_address).await {
                 Ok(is_registered) => {
                     if is_registered {
-                        info!(node_id = %node_id, "Node already registered");
+                        info!("Node already registered");
                         registered = true;
                     } else {
                         match ws_client.register_node(node_address).await {
                             Ok(tx_hash) => {
-                                info!(node_id = %node_id, tx_hash = ?tx_hash, "Node registered successfully");
+                                info!(tx_hash = ?tx_hash, "Node registered successfully");
                                 registered = true;
                             }
                             Err(e) => {
                                 error!(
-                                    node_id = %node_id,
                                     error = %e,
                                     reconnect_delay = ?reconnect_delay,
                                     "Failed to register node. Retrying..."
@@ -234,7 +159,6 @@ async fn main() -> Result<()> {
                 }
                 Err(e) => {
                     error!(
-                        node_id = %node_id,
                         error = %e,
                         reconnect_delay = ?reconnect_delay,
                         "Failed to check registration. Retrying..."
@@ -247,11 +171,10 @@ async fn main() -> Result<()> {
         }
 
         let ws_client_arc = std::sync::Arc::new(ws_client);
-        let node_id_clone = node_id.clone();
 
         // IMPORTANT: Process any backlog of assignments that happened before we connected
         // Query historical HTX assigned events for this node
-        info!(node_id = %node_id, "Checking for pending assignments from before connection");
+        info!("Checking for pending assignments from before connection");
         match ws_client_arc.get_htx_assigned_events().await {
             Ok(assigned_events) => {
                 let pending: Vec<_> = assigned_events
@@ -261,7 +184,6 @@ async fn main() -> Result<()> {
 
                 if !pending.is_empty() {
                     info!(
-                        node_id = %node_id,
                         count = pending.len(),
                         "Found historical assignments, processing backlog"
                     );
@@ -277,20 +199,15 @@ async fn main() -> Result<()> {
                             }
                             Ok(_) => {
                                 debug!(
-                                    node_id = %node_id,
                                     htx_id = ?htx_id,
                                     "Processing pending assignment"
                                 );
                                 // Spawn a task to process this assignment concurrently
                                 let ws_client = ws_client_arc.clone();
-                                let node_id_clone = node_id.clone();
                                 tokio::spawn(async move {
-                                    if let Err(e) =
-                                        process_htx_assignment(ws_client, &node_id_clone, htx_id)
-                                            .await
+                                    if let Err(e) = process_htx_assignment(ws_client, htx_id).await
                                     {
                                         error!(
-                                            node_id = %node_id_clone,
                                             htx_id = ?htx_id,
                                             error = %e,
                                             "Failed to process pending HTX"
@@ -300,7 +217,6 @@ async fn main() -> Result<()> {
                             }
                             Err(e) => {
                                 error!(
-                                    node_id = %node_id,
                                     htx_id = ?htx_id,
                                     error = %e,
                                     "Failed to check assignment status"
@@ -308,14 +224,13 @@ async fn main() -> Result<()> {
                             }
                         }
                     }
-                    info!(node_id = %node_id, "Backlog processing complete");
+                    info!("Backlog processing complete");
                 } else {
-                    info!(node_id = %node_id, "No pending assignments found");
+                    info!("No pending assignments found");
                 }
             }
             Err(e) => {
                 error!(
-                    node_id = %node_id,
                     error = %e,
                     "Failed to query historical assignments"
                 );
@@ -327,7 +242,6 @@ async fn main() -> Result<()> {
         let listen_result = ws_client_arc
             .listen_htx_assigned_for_node(node_address, move |event| {
                 let ws_client = ws_client_for_callback.clone();
-                let node_id = node_id_clone.clone();
 
                 async move {
                     let htx_id = H256::from(event.htx_id);
@@ -343,7 +257,6 @@ async fn main() -> Result<()> {
                                 }
 
                                 debug!(
-                                    node_id = %node_id,
                                     htx_id = ?htx_id,
                                     "Processing real-time assignment"
                                 );
@@ -353,7 +266,6 @@ async fn main() -> Result<()> {
                                     Ok(bytes) => bytes,
                                     Err(e) => {
                                         error!(
-                                            node_id = %node_id,
                                             htx_id = ?htx_id,
                                             error = %e,
                                             "Failed to get HTX data"
@@ -367,7 +279,6 @@ async fn main() -> Result<()> {
                                     Ok(h) => h,
                                     Err(e) => {
                                         error!(
-                                            node_id = %node_id,
                                             htx_id = ?htx_id,
                                             error = %e,
                                             "Failed to parse HTX data"
@@ -376,7 +287,6 @@ async fn main() -> Result<()> {
                                         match ws_client.respond_htx(htx_id, false).await {
                                             Ok(tx_hash) => {
                                                 warn!(
-                                                    node_id = %node_id,
                                                     htx_id = ?htx_id,
                                                     tx_hash = ?tx_hash,
                                                     "HTX not verified (parse error) | tx: submitted"
@@ -384,7 +294,6 @@ async fn main() -> Result<()> {
                                             }
                                             Err(e) => {
                                                 error!(
-                                                    node_id = %node_id,
                                                     htx_id = ?htx_id,
                                                     error = %e,
                                                     "Failed to respond to HTX"
@@ -401,7 +310,6 @@ async fn main() -> Result<()> {
 
                                 if let Err(ref e) = verification_result {
                                     warn!(
-                                        node_id = %node_id,
                                         htx_id = ?htx_id,
                                         error = %e,
                                         "HTX verification failed"
@@ -413,7 +321,6 @@ async fn main() -> Result<()> {
                                     Ok(tx_hash) => {
                                         let verdict = if result { "VALID" } else { "INVALID" };
                                         info!(
-                                            node_id = %node_id,
                                             htx_id = ?htx_id,
                                             tx_hash = ?tx_hash,
                                             verdict = %verdict,
@@ -424,7 +331,6 @@ async fn main() -> Result<()> {
                                     }
                                     Err(e) => {
                                         error!(
-                                            node_id = %node_id,
                                             htx_id = ?htx_id,
                                             error = %e,
                                             "Failed to respond to HTX"
@@ -434,7 +340,6 @@ async fn main() -> Result<()> {
                             }
                             Err(e) => {
                                 error!(
-                                    node_id = %node_id,
                                     htx_id = ?htx_id,
                                     error = %e,
                                     "Failed to get assignment for HTX"
@@ -453,14 +358,12 @@ async fn main() -> Result<()> {
         match listen_result {
             Ok(_) => {
                 warn!(
-                    node_id = %node_id,
                     reconnect_delay = ?reconnect_delay,
                     "WebSocket listener exited normally. Reconnecting..."
                 );
             }
             Err(e) => {
                 error!(
-                    node_id = %node_id,
                     error = %e,
                     reconnect_delay = ?reconnect_delay,
                     "WebSocket listener error. Reconnecting..."

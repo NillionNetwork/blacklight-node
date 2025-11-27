@@ -39,10 +39,10 @@ pub struct BuilderMeasurement {
 pub struct Htx {
     pub workload_id: WorkloadId,
     #[serde(rename = "nilCC_operator")]
-    pub nil_cc_operator: NilCcOperator,
+    pub nilcc_operator: NilCcOperator,
     pub builder: Builder,
     #[serde(rename = "nilCC_measurement")]
-    pub nil_cc_measurement: NilCcMeasurement,
+    pub nilcc_measurement: NilCcMeasurement,
     pub builder_measurement: BuilderMeasurement,
 }
 
