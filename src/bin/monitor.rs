@@ -18,6 +18,7 @@ use ratatui::{
 };
 use std::collections::HashMap;
 use std::io;
+use tracing::error;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
@@ -150,7 +151,7 @@ async fn main() -> Result<()> {
                 })
                 .collect(),
             Err(e) => {
-                eprintln!("Failed to fetch historical HTX submitted events: {}", e);
+                error!("Failed to fetch historical HTX submitted events: {}", e);
                 Vec::new()
             }
         }
@@ -173,7 +174,7 @@ async fn main() -> Result<()> {
                 })
                 .collect(),
             Err(e) => {
-                eprintln!("Failed to fetch historical HTX assigned events: {}", e);
+                error!("Failed to fetch historical HTX assigned events: {}", e);
                 Vec::new()
             }
         }
@@ -197,7 +198,7 @@ async fn main() -> Result<()> {
                 })
                 .collect(),
             Err(e) => {
-                eprintln!("Failed to fetch historical HTX responded events: {}", e);
+                error!("Failed to fetch historical HTX responded events: {}", e);
                 Vec::new()
             }
         }

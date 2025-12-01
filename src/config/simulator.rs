@@ -2,14 +2,12 @@ use anyhow::Result;
 use clap::Parser;
 use ethers::core::types::Address;
 
+use crate::config::consts::{
+    DEFAULT_CONTRACT_ADDRESS, DEFAULT_HTXS_PATH, DEFAULT_RPC_URL, DEFAULT_SLOT_MS,
+    STATE_FILE_SIMULATOR,
+};
 use crate::state::StateFile;
 use tracing::info;
-
-const STATE_FILE: &str = "nilcc_simulator.env";
-
-fn default_slot_ms() -> u64 {
-    5000
-}
 
 /// CLI arguments for the NilCC simulator
 #[derive(Parser, Debug)]
@@ -50,19 +48,19 @@ pub struct SimulatorConfig {
 impl SimulatorConfig {
     /// Load configuration with priority: CLI/env -> state file -> defaults
     pub fn load(cli_args: CliArgs) -> Result<Self> {
-        let state_file = StateFile::new(STATE_FILE);
+        let state_file = StateFile::new(STATE_FILE_SIMULATOR);
 
         // Load RPC URL with priority
         let rpc_url = cli_args
             .rpc_url
             .or_else(|| state_file.load_value("RPC_URL"))
-            .unwrap_or_else(|| "http://localhost:8545".to_string());
+            .unwrap_or_else(|| DEFAULT_RPC_URL.to_string());
 
         // Load contract address with priority
         let contract_address_str = cli_args
             .contract_address
             .or_else(|| state_file.load_value("CONTRACT_ADDRESS"))
-            .unwrap_or_else(|| "0x5FbDB2315678afecb367f032d93F642f64180aa3".to_string());
+            .unwrap_or_else(|| DEFAULT_CONTRACT_ADDRESS.to_string());
 
         // Load private key with priority (different default than node)
         let private_key = cli_args
@@ -76,7 +74,7 @@ impl SimulatorConfig {
         let htxs_path = cli_args
             .htxs_path
             .or_else(|| state_file.load_value("HTXS_PATH"))
-            .unwrap_or_else(|| "data/htxs.json".to_string());
+            .unwrap_or_else(|| DEFAULT_HTXS_PATH.to_string());
 
         // Parse contract address
         let contract_address = contract_address_str.parse::<Address>()?;
@@ -90,7 +88,7 @@ impl SimulatorConfig {
             contract_address,
             private_key,
             htxs_path,
-            slot_ms: default_slot_ms(),
+            slot_ms: DEFAULT_SLOT_MS,
         })
     }
 }

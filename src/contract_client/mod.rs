@@ -1,3 +1,4 @@
+use crate::config::consts::{DEFAULT_LOOKBACK_BLOCKS, ERROR_STRING_SELECTOR};
 use crate::types::Htx;
 use ethers::{
     contract::abigen,
@@ -7,19 +8,13 @@ use ethers::{
     signers::{LocalWallet, Signer},
 };
 use std::sync::Arc;
-
-/// Default number of blocks to look back when querying historical events
-/// This prevents inefficient queries from block 0 on long-running blockchains
-const DEFAULT_LOOKBACK_BLOCKS: u64 = 50;
+use tracing::error;
 
 /// Decode a Solidity Error(string) revert message from hex data
 /// Returns the decoded error message if it's a standard Error(string), otherwise None
 pub fn decode_error_string(revert_data: &str) -> Option<String> {
     // Remove 0x prefix if present
     let data = revert_data.strip_prefix("0x").unwrap_or(revert_data);
-
-    // Error(string) selector is 0x08c379a0
-    const ERROR_STRING_SELECTOR: &str = "08c379a0";
 
     if !data.starts_with(ERROR_STRING_SELECTOR) {
         return None;
@@ -387,11 +382,11 @@ impl NilAVWsClient {
             match event_result {
                 Ok(event) => {
                     if let Err(e) = callback(event).await {
-                        eprintln!("Error processing HTX assigned event: {}", e);
+                        error!("Error processing HTX assigned event: {}", e);
                     }
                 }
                 Err(e) => {
-                    eprintln!("Error receiving HTX assigned event: {}", e);
+                    error!("Error receiving HTX assigned event: {}", e);
                 }
             }
         }
@@ -416,14 +411,14 @@ impl NilAVWsClient {
             match event_result {
                 Ok(event) if event.node == node_address => {
                     if let Err(e) = callback(event).await {
-                        eprintln!("Error processing HTX assigned event: {}", e);
+                        error!("Error processing HTX assigned event: {}", e);
                     }
                 }
                 Ok(_) => {
                     // Event for different node, ignore
                 }
                 Err(e) => {
-                    eprintln!("Error receiving HTX assigned event: {}", e);
+                    error!("Error receiving HTX assigned event: {}", e);
                 }
             }
         }
@@ -446,11 +441,11 @@ impl NilAVWsClient {
             match event_result {
                 Ok(event) => {
                     if let Err(e) = callback(event).await {
-                        eprintln!("Error processing HTX submitted event: {}", e);
+                        error!("Error processing HTX submitted event: {}", e);
                     }
                 }
                 Err(e) => {
-                    eprintln!("Error receiving HTX submitted event: {}", e);
+                    error!("Error receiving HTX submitted event: {}", e);
                 }
             }
         }
@@ -474,11 +469,11 @@ impl NilAVWsClient {
             match event_result {
                 Ok(event) => {
                     if let Err(e) = callback(event).await {
-                        eprintln!("Error processing HTX responded event: {}", e);
+                        error!("Error processing HTX responded event: {}", e);
                     }
                 }
                 Err(e) => {
-                    eprintln!("Error receiving HTX responded event: {}", e);
+                    error!("Error receiving HTX responded event: {}", e);
                 }
             }
         }
@@ -502,11 +497,11 @@ impl NilAVWsClient {
             match event_result {
                 Ok(event) => {
                     if let Err(e) = callback(event).await {
-                        eprintln!("Error processing node registered event: {}", e);
+                        error!("Error processing node registered event: {}", e);
                     }
                 }
                 Err(e) => {
-                    eprintln!("Error receiving node registered event: {}", e);
+                    error!("Error receiving node registered event: {}", e);
                 }
             }
         }
@@ -530,11 +525,11 @@ impl NilAVWsClient {
             match event_result {
                 Ok(event) => {
                     if let Err(e) = callback(event).await {
-                        eprintln!("Error processing node deregistered event: {}", e);
+                        error!("Error processing node deregistered event: {}", e);
                     }
                 }
                 Err(e) => {
-                    eprintln!("Error receiving node deregistered event: {}", e);
+                    error!("Error receiving node deregistered event: {}", e);
                 }
             }
         }

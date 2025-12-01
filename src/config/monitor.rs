@@ -2,10 +2,9 @@ use anyhow::Result;
 use clap::Parser;
 use ethers::core::types::Address;
 
+use crate::config::consts::{DEFAULT_CONTRACT_ADDRESS, DEFAULT_RPC_URL, STATE_FILE_MONITOR};
 use crate::state::StateFile;
 use tracing::info;
-
-const STATE_FILE: &str = "nilav_monitor.env";
 
 /// CLI arguments for the NilAV monitor
 #[derive(Parser, Debug)]
@@ -41,19 +40,19 @@ pub struct MonitorConfig {
 impl MonitorConfig {
     /// Load configuration with priority: CLI/env -> state file -> defaults
     pub fn load(cli_args: CliArgs) -> Result<Self> {
-        let state_file = StateFile::new(STATE_FILE);
+        let state_file = StateFile::new(STATE_FILE_MONITOR);
 
         // Load RPC URL with priority
         let rpc_url = cli_args
             .rpc_url
             .or_else(|| state_file.load_value("RPC_URL"))
-            .unwrap_or_else(|| "http://localhost:8545".to_string());
+            .unwrap_or_else(|| DEFAULT_RPC_URL.to_string());
 
         // Load contract address with priority
         let contract_address_str = cli_args
             .contract_address
             .or_else(|| state_file.load_value("CONTRACT_ADDRESS"))
-            .unwrap_or_else(|| "0x5FbDB2315678afecb367f032d93F642f64180aa3".to_string());
+            .unwrap_or_else(|| DEFAULT_CONTRACT_ADDRESS.to_string());
 
         // Load private key with priority (monitor uses first Hardhat account)
         let private_key = cli_args

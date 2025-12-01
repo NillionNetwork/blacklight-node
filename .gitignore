@@ -45,3 +45,5 @@ cache/
 coverage/
 *.profraw
 *.profdata
+
+.claude/

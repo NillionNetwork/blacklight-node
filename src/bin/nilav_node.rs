@@ -3,6 +3,7 @@ use clap::Parser;
 use ethers::core::types::H256;
 use nilav::{
     config::{NodeCliArgs, NodeConfig},
+    config::consts::{INITIAL_RECONNECT_DELAY_SECS, MAX_RECONNECT_DELAY_SECS},
     contract_client::{ContractConfig, NilAVWsClient},
     types::Htx,
     verification::verify_htx,
@@ -89,7 +90,7 @@ async fn main() -> Result<()> {
 
     // Load configuration
     let cli_args = NodeCliArgs::parse();
-    let config = NodeConfig::load(cli_args)?;
+    let config = NodeConfig::load(cli_args).await?;
 
     info!("Node initialized");
 
@@ -97,8 +98,8 @@ async fn main() -> Result<()> {
     info!("Starting real-time WebSocket event listener with auto-reconnection");
 
     // Reconnection loop - will restart the listener if it fails
-    let mut reconnect_delay = std::time::Duration::from_secs(1);
-    let max_reconnect_delay = std::time::Duration::from_secs(60);
+    let mut reconnect_delay = std::time::Duration::from_secs(INITIAL_RECONNECT_DELAY_SECS);
+    let max_reconnect_delay = std::time::Duration::from_secs(MAX_RECONNECT_DELAY_SECS);
     let mut registered = false;
 
     loop {
@@ -111,7 +112,7 @@ async fn main() -> Result<()> {
             Ok(client) => {
                 let balance = client.get_balance().await?;
                 info!(balance = ?balance, "WebSocket connection established");
-                reconnect_delay = std::time::Duration::from_secs(1); // Reset delay on success
+                reconnect_delay = std::time::Duration::from_secs(INITIAL_RECONNECT_DELAY_SECS); // Reset delay on success
                 client
             }
             Err(e) => {
@@ -172,24 +173,6 @@ async fn main() -> Result<()> {
 
         let ws_client_arc = std::sync::Arc::new(ws_client);
 
-        // Start a background keepalive task to prevent connection timeouts
-        // This task periodically queries the blockchain to keep the WebSocket connection alive
-        let ws_client_keepalive = ws_client_arc.clone();
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
-            loop {
-                interval.tick().await;
-                match ws_client_keepalive.get_block_number().await {
-                    Ok(block) => {
-                        debug!(block_number = %block, "Keepalive ping successful");
-                    }
-                    Err(e) => {
-                        warn!(error = %e, "Keepalive ping failed - connection may be dead");
-                        break; // Exit keepalive task if connection is dead
-                    }
-                }
-            }
-        });
 
         // IMPORTANT: Process any backlog of assignments that happened before we connected
         // Query historical HTX assigned events for this node
