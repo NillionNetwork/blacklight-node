@@ -50,7 +50,6 @@ pub const INITIAL_RECONNECT_DELAY_SECS: u64 = 1; // 1 second for debug
 /// Maximum reconnection delay in seconds
 pub const MAX_RECONNECT_DELAY_SECS: u64 = 60; // 60 seconds for release
 
-
 // =============================================================================
 // Contract Client Settings
 // =============================================================================

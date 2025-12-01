@@ -1,6 +1,6 @@
 # Nillion Auditor-Verifier (nilAV) <a href="https://github.com/NillionNetwork/nilAV/blob/main/LICENSE" target="_blank"><img src="https://img.shields.io/badge/License-MIT-green.svg" alt="MIT License"/></a>
 
-A Rust-based HTX (Hash Transaction) verification system with real-time WebSocket event streaming for sub-100ms latency.
+A Rust-based HTX (Hash Transaction) verification system with real-time WebSocket event streaming with low latency.
 
 > **🚀 WebSocket-Only Architecture**: Eliminates polling delays with event-driven processing for instant HTX assignment and verification.
 
@@ -55,7 +55,32 @@ Follow these steps to run your own nilAV verification node on the network.
 
 ### Wallet Setup
 
-#### 1. Add the nilAV Network to Your Wallet
+### 1. Run Your Node
+
+Start your verification node:
+
+```bash
+cargo run --release --bin nilav_node
+```
+
+It will produce a `nilav_node.env` file with the secret credentials. Make sure to keep it private and back it up.
+
+It will show something like: 
+
+```bash
+╔══════════════════════════════════════════════════════════════════════╗
+║                  ✅  Account Created Successfully ✅                 ║
+╠═════════════════════════╦════════════════════════════════════════════╣
+║                 Address ║ 0x1234567890abcdef1234567890abcdef12345678 ║
+╠═════════════════════════╬════════════════════════════════════════════╣
+║                 RPC URL ║ http://localhost:8545                      ║
+╠═════════════════════════╩════════════════════════════════════════════╣
+║                ❗ Please fund this address with ETH ❗               ║
+╠══════════════════════════════════════════════════════════════════════╣
+║            Please fund this address with ETH to continue.            ║
+╚══════════════════════════════════════════════════════════════════════╝
+```
+#### 2. Add the nilAV Network to Your Wallet
 
 Add the nilAV network to MetaMask or your preferred Ethereum wallet:
 
@@ -63,11 +88,10 @@ Add the nilAV network to MetaMask or your preferred Ethereum wallet:
 |-------|-------|
 | **Network Name** | nilAV Network |
 | **RPC URL** | `https://rpc-nilav-shzvox09l5.t.conduit.xyz` |
-| **Chain ID** | *[Contact team for Chain ID]* |
-| **Currency Symbol** | ETH |
-| **Block Explorer** | *[If available]* |
+| **Chain ID** | 78651 |
+| **Currency Symbol** | ETH (Sepolia) |
 
-#### 2. Get ETH Funds
+#### 3. Get ETH Funds and send them to that address
 
 **⚠️ IMPORTANT:** Your node wallet **MUST have ETH funds** on the nilAV network to pay for gas fees when:
 - Registering your node with the contract
@@ -78,33 +102,7 @@ Add the nilAV network to MetaMask or your preferred Ethereum wallet:
 
 **Recommended minimum:** Start with at least 0.1 ETH to cover registration and initial verifications.
 
-#### 3. Export Your Private Key
-
-From your wallet (e.g., MetaMask):
-1. Select the account you want to use
-2. Click the three dots → Account details → Export Private Key
-3. Copy the private key (starts with `0x`)
-
-**⚠️ Security Warning:** Never share your private key or commit it to version control!
-
-### Configuration
-
-Create a `nilav_node.env` file in the project root:
-
-```env
-# Ethereum RPC endpoint (HTTP will be automatically converted to WebSocket)
-RPC_URL=https://rpc-nilav-shzvox09l5.t.conduit.xyz
-
-# NilAV smart contract address
-CONTRACT_ADDRESS=0x4f071c297EF53565A86c634C9AAf5faCa89f6209
-
-# Your private key (with 0x prefix)
-PRIVATE_KEY=0xYourPrivateKeyHere
-```
-
-**Replace `0xYourPrivateKeyHere`** with the private key you exported from your wallet.
-
-### Run Your Node
+### 4. Run Your Node
 
 Start your verification node:
 
@@ -141,28 +139,6 @@ For detailed logging:
 ```bash
 RUST_LOG=debug cargo run --release --bin nilav_node
 ```
-
-### Troubleshooting
-
-**"Failed to register node"**
-- Check your account has sufficient ETH for gas
-- Verify the contract address is correct
-- Ensure your account isn't already registered from another instance
-
-**"WebSocket connection failed"**
-- Verify RPC URL is accessible: `curl https://rpc-nilav-shzvox09l5.t.conduit.xyz`
-- Check firewall allows outbound connections
-- Try the RPC URL in your browser
-
-**"Insufficient funds for gas"**
-- Your account needs more ETH
-- Check balance: `cargo run --bin contract_cli -- list-nodes`
-- Request more funds from the faucet
-
-**"HTX verification failed"**
-- This is normal if the HTX data is invalid
-- Node will submit `false` result and continue
-- Check logs for specific verification errors
 
 ---
 

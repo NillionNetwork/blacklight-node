@@ -18,9 +18,9 @@ use ratatui::{
 };
 use std::collections::HashMap;
 use std::io;
-use tracing::error;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
+use tracing::error;
 
 /// Convert a byte array to a 0x-prefixed hex string
 fn bytes_to_hex(bytes: &[u8]) -> String {

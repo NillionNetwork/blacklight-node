@@ -1,7 +1,7 @@
+pub mod consts;
 pub mod monitor;
 pub mod node;
 pub mod simulator;
-pub mod consts;
 
 // Re-export for convenience
 pub use consts::*;

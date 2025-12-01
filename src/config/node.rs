@@ -7,8 +7,8 @@ use ethers::signers::Signer;
 use crate::config::consts::{DEFAULT_CONTRACT_ADDRESS, DEFAULT_RPC_URL, STATE_FILE_NODE};
 use crate::state::StateFile;
 use crate::wallet::{
-    check_balance, display_insufficient_funds_banner, display_wallet_loaded_banner,
-    generate_wallet, load_wallet,
+    check_balance, display_account_created_banner, display_insufficient_funds_banner,
+    display_wallet_loaded_banner, generate_wallet, load_wallet,
 };
 use tracing::info;
 
@@ -38,6 +38,33 @@ pub struct NodeConfig {
     pub private_key: String,
 }
 
+enum WalletState {
+    Created(Address),
+    NeedsFunding(Address),
+    Ready { address: Address, balance: U256 },
+}
+
+impl WalletState {
+    fn ensure_ready(self, rpc_url: &str) -> Result<()> {
+        match self {
+            WalletState::Created(address) => {
+                display_account_created_banner(address, rpc_url);
+                anyhow::bail!(
+                    "Account created successfully. Please fund the address with ETH to continue."
+                );
+            }
+            WalletState::NeedsFunding(address) => {
+                display_insufficient_funds_banner(address, rpc_url);
+                anyhow::bail!("Insufficient funds. Please load ETH to the address and try again.");
+            }
+            WalletState::Ready { address, balance } => {
+                display_wallet_loaded_banner(address, balance, rpc_url);
+                Ok(())
+            }
+        }
+    }
+}
+
 impl NodeConfig {
     /// Load configuration with priority: CLI/env -> state file -> defaults
     /// Generates a new wallet if none exists and checks balance before proceeding
@@ -55,6 +82,8 @@ impl NodeConfig {
             .contract_address
             .or_else(|| state_file.load_value("CONTRACT_ADDRESS"))
             .unwrap_or_else(|| DEFAULT_CONTRACT_ADDRESS.to_string());
+
+        let mut wallet_was_created = false;
 
         // Load or generate private key
         let private_key = match cli_args
@@ -79,6 +108,7 @@ impl NodeConfig {
 
                 info!("New wallet generated and saved to {}", STATE_FILE_NODE);
                 info!("Address: {}", public_key);
+                wallet_was_created = true;
 
                 private_key
             }
@@ -96,13 +126,15 @@ impl NodeConfig {
             .await
             .context("Failed to check balance")?;
 
-        // Display appropriate banner
-        if balance == U256::zero() {
-            display_insufficient_funds_banner(address, &rpc_url);
-            anyhow::bail!("Insufficient funds. Please load ETH to the address and try again.");
+        let wallet_state = if wallet_was_created {
+            WalletState::Created(address)
+        } else if balance == U256::zero() {
+            WalletState::NeedsFunding(address)
         } else {
-            display_wallet_loaded_banner(address, balance, &rpc_url);
-        }
+            WalletState::Ready { address, balance }
+        };
+
+        wallet_state.ensure_ready(&rpc_url)?;
 
         info!(
             "Loaded NodeConfig: rpc_url={}, contract_address={}",

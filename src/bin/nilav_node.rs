@@ -2,8 +2,8 @@ use anyhow::Result;
 use clap::Parser;
 use ethers::core::types::H256;
 use nilav::{
-    config::{NodeCliArgs, NodeConfig},
     config::consts::{INITIAL_RECONNECT_DELAY_SECS, MAX_RECONNECT_DELAY_SECS},
+    config::{NodeCliArgs, NodeConfig},
     contract_client::{ContractConfig, NilAVWsClient},
     types::Htx,
     verification::verify_htx,
@@ -172,7 +172,6 @@ async fn main() -> Result<()> {
         }
 
         let ws_client_arc = std::sync::Arc::new(ws_client);
-
 
         // IMPORTANT: Process any backlog of assignments that happened before we connected
         // Query historical HTX assigned events for this node
