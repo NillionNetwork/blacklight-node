@@ -20,6 +20,7 @@ use std::collections::HashMap;
 use std::io;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
+use tracing::error;
 
 /// Convert a byte array to a 0x-prefixed hex string
 fn bytes_to_hex(bytes: &[u8]) -> String {
@@ -150,7 +151,7 @@ async fn main() -> Result<()> {
                 })
                 .collect(),
             Err(e) => {
-                eprintln!("Failed to fetch historical HTX submitted events: {}", e);
+                error!("Failed to fetch historical HTX submitted events: {}", e);
                 Vec::new()
             }
         }
@@ -173,7 +174,7 @@ async fn main() -> Result<()> {
                 })
                 .collect(),
             Err(e) => {
-                eprintln!("Failed to fetch historical HTX assigned events: {}", e);
+                error!("Failed to fetch historical HTX assigned events: {}", e);
                 Vec::new()
             }
         }
@@ -197,7 +198,7 @@ async fn main() -> Result<()> {
                 })
                 .collect(),
             Err(e) => {
-                eprintln!("Failed to fetch historical HTX responded events: {}", e);
+                error!("Failed to fetch historical HTX responded events: {}", e);
                 Vec::new()
             }
         }

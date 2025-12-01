@@ -6,6 +6,7 @@ pub mod config;
 
 pub mod json;
 pub mod state;
+pub mod wallet;
 
 // Business logic
 pub mod contract_client;

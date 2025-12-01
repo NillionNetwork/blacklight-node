@@ -1,11 +1,16 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Parser;
 use ethers::core::types::Address;
+use ethers::prelude::U256;
+use ethers::signers::Signer;
 
+use crate::config::consts::{DEFAULT_CONTRACT_ADDRESS, DEFAULT_RPC_URL, STATE_FILE_NODE};
 use crate::state::StateFile;
+use crate::wallet::{
+    check_balance, display_account_created_banner, display_insufficient_funds_banner,
+    display_wallet_loaded_banner, generate_wallet, load_wallet,
+};
 use tracing::info;
-
-const STATE_FILE: &str = "nilav_node.env";
 
 /// CLI arguments for the NilAV node
 #[derive(Parser, Debug)]
@@ -33,33 +38,103 @@ pub struct NodeConfig {
     pub private_key: String,
 }
 
+enum WalletState {
+    Created(Address),
+    NeedsFunding(Address),
+    Ready { address: Address, balance: U256 },
+}
+
+impl WalletState {
+    fn ensure_ready(self, rpc_url: &str) -> Result<()> {
+        match self {
+            WalletState::Created(address) => {
+                display_account_created_banner(address, rpc_url);
+                anyhow::bail!(
+                    "Account created successfully. Please fund the address with ETH to continue."
+                );
+            }
+            WalletState::NeedsFunding(address) => {
+                display_insufficient_funds_banner(address, rpc_url);
+                anyhow::bail!("Insufficient funds. Please load ETH to the address and try again.");
+            }
+            WalletState::Ready { address, balance } => {
+                display_wallet_loaded_banner(address, balance, rpc_url);
+                Ok(())
+            }
+        }
+    }
+}
+
 impl NodeConfig {
     /// Load configuration with priority: CLI/env -> state file -> defaults
-    pub fn load(cli_args: CliArgs) -> Result<Self> {
-        let state_file = StateFile::new(STATE_FILE);
+    /// Generates a new wallet if none exists and checks balance before proceeding
+    pub async fn load(cli_args: CliArgs) -> Result<Self> {
+        let state_file = StateFile::new(STATE_FILE_NODE);
 
         // Load RPC URL with priority
         let rpc_url = cli_args
             .rpc_url
             .or_else(|| state_file.load_value("RPC_URL"))
-            .unwrap_or_else(|| "http://localhost:8545".to_string());
+            .unwrap_or_else(|| DEFAULT_RPC_URL.to_string());
 
         // Load contract address with priority
         let contract_address_str = cli_args
             .contract_address
             .or_else(|| state_file.load_value("CONTRACT_ADDRESS"))
-            .unwrap_or_else(|| "0x5FbDB2315678afecb367f032d93F642f64180aa3".to_string());
+            .unwrap_or_else(|| DEFAULT_CONTRACT_ADDRESS.to_string());
 
-        // Load private key with priority
-        let private_key = cli_args
+        let mut wallet_was_created = false;
+
+        // Load or generate private key
+        let private_key = match cli_args
             .private_key
             .or_else(|| state_file.load_value("PRIVATE_KEY"))
-            .unwrap_or_else(|| {
-                "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d".to_string()
-            });
+        {
+            Some(pk) => pk,
+            None => {
+                // Generate a new wallet
+                info!("No private key found. Generating new wallet...");
+                let wallet = generate_wallet()?;
+                let private_key = format!("0x{}", hex::encode(wallet.signer().to_bytes()));
+                let public_key = format!("{:?}", wallet.address());
+
+                // Save all values to state file using save_all
+                let mut state = std::collections::HashMap::new();
+                state.insert("PRIVATE_KEY".to_string(), private_key.clone());
+                state.insert("PUBLIC_KEY".to_string(), public_key.clone());
+                state.insert("RPC_URL".to_string(), rpc_url.clone());
+                state.insert("CONTRACT_ADDRESS".to_string(), contract_address_str.clone());
+                state_file.save_all(&state)?;
+
+                info!("New wallet generated and saved to {}", STATE_FILE_NODE);
+                info!("Address: {}", public_key);
+                wallet_was_created = true;
+
+                private_key
+            }
+        };
 
         // Parse contract address
         let contract_address = contract_address_str.parse::<Address>()?;
+
+        // Load wallet and check balance
+        let wallet = load_wallet(&private_key)?;
+        let address = wallet.address();
+
+        info!("Checking balance for address: {:?}", address);
+        let balance = check_balance(&rpc_url, address)
+            .await
+            .context("Failed to check balance")?;
+
+        let wallet_state = if wallet_was_created {
+            WalletState::Created(address)
+        } else if balance == U256::zero() {
+            WalletState::NeedsFunding(address)
+        } else {
+            WalletState::Ready { address, balance }
+        };
+
+        wallet_state.ensure_ready(&rpc_url)?;
 
         info!(
             "Loaded NodeConfig: rpc_url={}, contract_address={}",
