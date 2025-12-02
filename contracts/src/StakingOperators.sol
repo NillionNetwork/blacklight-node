@@ -21,6 +21,7 @@ contract StakingOperators is IStakingOperators, AccessControl, ReentrancyGuard {
     error NotStaker();
     error UnbondingExists();
     error InsufficientStake();
+    error InsufficientStakeForActivation();
     error OperatorJailed();
     error NoUnbonding();
     error NotReady();
@@ -31,6 +32,9 @@ contract StakingOperators is IStakingOperators, AccessControl, ReentrancyGuard {
 
     IERC20 private immutable _stakingToken;
     uint256 public override unstakeDelay;
+
+    /// @notice Optional protocol config registry used to fetch the minimum operator stake.
+    IProtocolConfig public protocolConfig;
 
     mapping(address => uint256) private _operatorStake;
     uint256 private _totalStaked;
@@ -64,6 +68,7 @@ contract StakingOperators is IStakingOperators, AccessControl, ReentrancyGuard {
     event OperatorRegistered(address indexed operator, string metadataURI);
     event OperatorDeactivated(address indexed operator);
     event UnstakeDelayUpdated(uint256 oldDelay, uint256 newDelay);
+    event ProtocolConfigUpdated(address oldConfig, address newConfig);
 
     constructor(IERC20 token_, address admin, uint256 initialUnstakeDelay) {
         if (address(token_) == address(0)) revert ZeroAddress();
@@ -72,6 +77,29 @@ contract StakingOperators is IStakingOperators, AccessControl, ReentrancyGuard {
         _stakingToken = token_;
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
         unstakeDelay = initialUnstakeDelay;
+    }
+
+    /// @notice Sets the protocol config contract used to read the minimum operator stake.
+    /// @dev Callable by the admin; allows late wiring and future governance-controlled updates.
+    function setProtocolConfig(IProtocolConfig newConfig) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (address(newConfig) == address(0)) revert ZeroAddress();
+        address old = address(protocolConfig);
+        protocolConfig = newConfig;
+        emit ProtocolConfigUpdated(old, address(newConfig));
+    }
+
+    function _hasMinStake(address operator) internal view returns (bool) {
+        uint256 bal = _operatorStake[operator];
+        // If no config is set, fall back to simple non-zero check to preserve old behavior.
+        IProtocolConfig cfg = protocolConfig;
+        if (address(cfg) == address(0)) {
+            return bal > 0;
+        }
+        uint256 minStake = cfg.minOperatorStake();
+        if (minStake == 0) {
+            return bal > 0;
+        }
+        return bal >= minStake;
     }
 
     // Views
@@ -175,7 +203,7 @@ contract StakingOperators is IStakingOperators, AccessControl, ReentrancyGuard {
     // Operator registry
 
     function registerOperator(string calldata metadataURI) external override {
-        if (_operatorStake[msg.sender] == 0) revert NoStake();
+        if (!_hasMinStake(msg.sender)) revert InsufficientStakeForActivation();
 
         OperatorData storage data = _operators[msg.sender];
         if (!data.exists) {
@@ -210,7 +238,7 @@ contract StakingOperators is IStakingOperators, AccessControl, ReentrancyGuard {
     function isActiveOperator(address operator) public view override returns (bool) {
         OperatorData storage data = _operators[operator];
         if (!data.active) return false;
-        if (_operatorStake[operator] == 0) return false;
+        if (!_hasMinStake(operator)) return false;
         return block.timestamp >= _jailedUntil[operator];
     }
 

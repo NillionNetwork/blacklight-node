@@ -91,6 +91,9 @@ interface IProtocolConfig {
     function rewardPolicy() external view returns (address);
 
     // Params
+    /// @notice Minimum stake required for an operator to be considered active.
+    /// @dev Used by the staking module to gate operator activation/eligibility.
+    function minOperatorStake() external view returns (uint256);
     function verificationBps() external view returns (uint16);
     function responseWindow() external view returns (uint256);
     function maxEscalations() external view returns (uint8);

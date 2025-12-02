@@ -12,6 +12,7 @@ contract ProtocolConfig is IProtocolConfig, Ownable {
     address private _slashing;
     address private _reward;
 
+    uint256 private _minOperatorStake;
     uint16  private _verificationBps;
     uint256 private _responseWindow;
     uint8   private _maxEscalations;
@@ -26,6 +27,7 @@ contract ProtocolConfig is IProtocolConfig, Ownable {
     );
 
     event ParamsUpdated(
+        uint256 minOperatorStake,
         uint16 verificationBps,
         uint256 responseWindow,
         uint8 maxEscalations,
@@ -50,6 +52,7 @@ contract ProtocolConfig is IProtocolConfig, Ownable {
         _slashing = slashing_;
         _reward = reward_;
 
+        _minOperatorStake = 0;
         _verificationBps = verificationBps_;
         _responseWindow = responseWindow_;
         _maxEscalations = maxEscalations_;
@@ -64,6 +67,7 @@ contract ProtocolConfig is IProtocolConfig, Ownable {
     function slashingPolicy() external view override returns (address) { return _slashing; }
     function rewardPolicy() external view override returns (address) { return _reward; }
 
+    function minOperatorStake() external view override returns (uint256) { return _minOperatorStake; }
     function verificationBps() external view override returns (uint16) { return _verificationBps; }
     function responseWindow() external view override returns (uint256) { return _responseWindow; }
     function maxEscalations() external view override returns (uint8) { return _maxEscalations; }
@@ -86,18 +90,21 @@ contract ProtocolConfig is IProtocolConfig, Ownable {
     }
 
     function setParams(
+        uint256 minOperatorStake_,
         uint16 verificationBps_,
         uint256 responseWindow_,
         uint8 maxEscalations_,
         uint32 baseCommitteeSize_,
         uint32 committeeSizeGrowthBps_
     ) external onlyOwner {
+        _minOperatorStake = minOperatorStake_;
         _verificationBps = verificationBps_;
         _responseWindow = responseWindow_;
         _maxEscalations = maxEscalations_;
         _baseCommitteeSize = baseCommitteeSize_;
         _committeeSizeGrowthBps = committeeSizeGrowthBps_;
         emit ParamsUpdated(
+            minOperatorStake_,
             verificationBps_,
             responseWindow_,
             maxEscalations_,
