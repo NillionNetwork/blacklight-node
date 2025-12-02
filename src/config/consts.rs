@@ -35,7 +35,7 @@ pub const DEFAULT_STAKING_CONTRACT_ADDRESS: &str = "0x4f071c297EF53565A86c634C9A
 
 /// Default contract address - Anvil's first deployed contract address
 #[cfg(debug_assertions)]
-pub const DEFAULT_TOKEN_CONTRACT_ADDRESS: &str = "0x5fbdb2315678afecb367f032d93f642f64180aa";
+pub const DEFAULT_TOKEN_CONTRACT_ADDRESS: &str = "0x5fbdb2315678afecb367f032d93f642f64180aa3";
 #[cfg(not(debug_assertions))]
 pub const DEFAULT_TOKEN_CONTRACT_ADDRESS: &str = "0x4f071c297EF53565A86c634C9AAf5faCa89f6209";
 

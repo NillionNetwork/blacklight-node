@@ -7,7 +7,7 @@ use crossterm::{
 };
 use ethers::core::types::Address;
 use nilav::config::{MonitorCliArgs, MonitorConfig};
-use nilav::contract_client::{ContractConfig, NilAVWsClient};
+use nilav::contract_client::{ContractConfig, NilAVClient};
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -126,18 +126,23 @@ async fn main() -> Result<()> {
 
     // Store values before they're moved
     let rpc_url = config.rpc_url.clone();
-    let contract_address = config.contract_address;
+    let contract_address = config.router_contract_address;
 
-    let contract_config = ContractConfig::new(config.rpc_url, config.contract_address);
-    let client = NilAVWsClient::new(contract_config, config.private_key).await?;
+    let contract_config = ContractConfig::new(
+        config.rpc_url,
+        config.router_contract_address,
+        config.staking_contract_address,
+        config.token_contract_address,
+    );
+    let client = NilAVClient::new(contract_config, config.private_key).await?;
 
     // Initial data fetch for node count and list
-    let node_count = client.node_count().await?.as_usize();
-    let nodes = client.get_nodes().await?;
+    let node_count = client.router.node_count().await?.as_usize();
+    let nodes = client.router.get_nodes().await?;
 
     // Fetch historical events to populate initial state
     let htx_submitted = if config.all_htxs {
-        match client.get_htx_submitted_events().await {
+        match client.router.get_htx_submitted_events().await {
             Ok(events) => events
                 .iter()
                 .map(|e| {
@@ -160,7 +165,7 @@ async fn main() -> Result<()> {
     };
 
     let htx_assigned = if config.all_htxs {
-        match client.get_htx_assigned_events().await {
+        match client.router.get_htx_assigned_events().await {
             Ok(events) => events
                 .iter()
                 .map(|e| {
@@ -183,7 +188,7 @@ async fn main() -> Result<()> {
     };
 
     let htx_responded = if config.all_htxs {
-        match client.get_htx_responded_events().await {
+        match client.router.get_htx_responded_events().await {
             Ok(events) => events
                 .iter()
                 .map(|e| {
@@ -213,7 +218,7 @@ async fn main() -> Result<()> {
 
     // Add submitted events
     if config.all_htxs {
-        if let Ok(events) = client.get_htx_submitted_events().await {
+        if let Ok(events) = client.router.get_htx_submitted_events().await {
             for e in events {
                 let htx_id = bytes_to_hex(&e.htx_id);
                 let sender = format!("{:?}", e.sender);
@@ -231,7 +236,7 @@ async fn main() -> Result<()> {
         }
 
         // Add assigned events
-        if let Ok(events) = client.get_htx_assigned_events().await {
+        if let Ok(events) = client.router.get_htx_assigned_events().await {
             for e in events {
                 let htx_id = bytes_to_hex(&e.htx_id);
                 let node = format!("{:?}", e.node);
@@ -249,7 +254,7 @@ async fn main() -> Result<()> {
         }
 
         // Add responded events
-        if let Ok(events) = client.get_htx_responded_events().await {
+        if let Ok(events) = client.router.get_htx_responded_events().await {
             for e in events {
                 let htx_id = bytes_to_hex(&e.htx_id);
                 htx_tracking
@@ -294,7 +299,7 @@ async fn main() -> Result<()> {
     run_monitor(client, initial_state).await
 }
 
-async fn run_monitor(client: NilAVWsClient, initial_state: MonitorState) -> Result<()> {
+async fn run_monitor(client: NilAVClient, initial_state: MonitorState) -> Result<()> {
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -341,7 +346,7 @@ async fn run_monitor(client: NilAVWsClient, initial_state: MonitorState) -> Resu
 
 async fn run_monitor_loop(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    client: Arc<NilAVWsClient>,
+    client: Arc<NilAVClient>,
     state: Arc<Mutex<MonitorState>>,
 ) -> Result<()> {
     loop {
@@ -373,13 +378,14 @@ async fn run_monitor_loop(
                                             format!("Deregistering node {:?}...", node_addr);
                                         drop(state_guard); // Release lock before async call
 
-                                        match client.deregister_node(node_addr).await {
+                                        // Note: deactivate_operator deactivates the signer, ignoring node_addr
+                                        match client.staking.deactivate_operator().await {
                                             Ok(tx_hash) => {
                                                 let mut state_guard = state.lock().unwrap();
                                                 state_guard.status_message =
                                                     format!("Node deregistered! TX: {:?}", tx_hash);
                                                 // Refresh node list
-                                                match client.get_nodes().await {
+                                                match client.router.get_nodes().await {
                                                     Ok(nodes) => {
                                                         state_guard.nodes = nodes;
                                                         state_guard.node_count =
@@ -420,7 +426,7 @@ async fn run_monitor_loop(
                                 state_guard.status_message = "Refreshing...".to_string();
                                 drop(state_guard);
 
-                                match client.get_nodes().await {
+                                match client.router.get_nodes().await {
                                     Ok(nodes) => {
                                         let mut state_guard = state.lock().unwrap();
                                         state_guard.nodes = nodes;
@@ -537,10 +543,12 @@ async fn run_monitor_loop(
 
 // WebSocket event listener for HTX submitted events
 async fn listen_htx_submitted(
-    client: Arc<NilAVWsClient>,
+    client: Arc<NilAVClient>,
     state: Arc<Mutex<MonitorState>>,
 ) -> Result<()> {
     client
+        .router
+        .clone()
         .listen_htx_submitted_events(move |event| {
             let state = state.clone();
             async move {
@@ -577,10 +585,12 @@ async fn listen_htx_submitted(
 
 // WebSocket event listener for HTX assigned events
 async fn listen_htx_assigned(
-    client: Arc<NilAVWsClient>,
+    client: Arc<NilAVClient>,
     state: Arc<Mutex<MonitorState>>,
 ) -> Result<()> {
     client
+        .router
+        .clone()
         .listen_htx_assigned_events(move |event| {
             let state = state.clone();
             async move {
@@ -617,10 +627,12 @@ async fn listen_htx_assigned(
 
 // WebSocket event listener for HTX responded events
 async fn listen_htx_responded(
-    client: Arc<NilAVWsClient>,
+    client: Arc<NilAVClient>,
     state: Arc<Mutex<MonitorState>>,
 ) -> Result<()> {
     client
+        .router
+        .clone()
         .listen_htx_responded_events(move |event| {
             let state = state.clone();
             async move {

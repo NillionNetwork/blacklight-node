@@ -23,7 +23,10 @@ pub struct TESTTokenClient {
 
 impl TESTTokenClient {
     /// Create a new WebSocket client from configuration
-    pub fn new(provider: Arc<SignedWsProvider>, config: crate::contract_client::ContractConfig) -> Self {
+    pub fn new(
+        provider: Arc<SignedWsProvider>,
+        config: crate::contract_client::ContractConfig,
+    ) -> Self {
         let contract_address = config.token_contract_address;
         let contract = TESTToken::new(contract_address, provider.clone());
         Self { contract }

@@ -12,9 +12,9 @@ use std::sync::Arc;
 
 pub struct NilAVClient {
     provider: Arc<SignedWsProvider>,
-    pub router: NilAVRouterClient,
-    pub token: TESTTokenClient,
-    pub staking: StakingOperatorsClient,
+    pub router: Arc<NilAVRouterClient>,
+    pub token: Arc<TESTTokenClient>,
+    pub staking: Arc<StakingOperatorsClient>,
 }
 
 impl NilAVClient {
@@ -42,9 +42,9 @@ impl NilAVClient {
             wallet_address,
         ));
 
-        let router = NilAVRouterClient::new(provider.clone(), config.clone());
-        let token = TESTTokenClient::new(provider.clone(), config.clone());
-        let staking = StakingOperatorsClient::new(provider.clone(), config)?;
+        let router = Arc::new(NilAVRouterClient::new(provider.clone(), config.clone()));
+        let token = Arc::new(TESTTokenClient::new(provider.clone(), config.clone()));
+        let staking = Arc::new(StakingOperatorsClient::new(provider.clone(), config));
 
         Ok(Self {
             provider,

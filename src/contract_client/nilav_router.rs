@@ -29,6 +29,7 @@ pub struct Assignment {
 }
 
 /// WebSocket-based client for real-time event streaming and contract interaction with NilAVRouter
+#[derive(Clone)]
 pub struct NilAVRouterClient {
     provider: Arc<SignedWsProvider>,
     contract: NilAVRouter<SignedWsProvider>,
@@ -40,6 +41,11 @@ impl NilAVRouterClient {
         let contract_address = config.router_contract_address;
         let contract = NilAVRouter::new(contract_address, provider.clone());
         Self { provider, contract }
+    }
+
+    /// Get the contract address
+    pub fn address(&self) -> Address {
+        self.contract.address()
     }
 
     // ------------------------------------------------------------------------
@@ -58,6 +64,21 @@ impl NilAVRouterClient {
         let current_block = self.get_block_number().await?;
         Ok(current_block.saturating_sub(lookback_blocks))
     }
+
+    // ------------------------------------------------------------------------
+    // Node Management (delegates to StakingOperators contract)
+    // ------------------------------------------------------------------------
+
+    /// Get the total number of active nodes
+    pub async fn node_count(&self) -> anyhow::Result<U256> {
+        Ok(self.contract.node_count().call().await?)
+    }
+
+    /// Get the list of all active node addresses
+    pub async fn get_nodes(&self) -> anyhow::Result<Vec<Address>> {
+        Ok(self.contract.get_nodes().call().await?)
+    }
+
     // ------------------------------------------------------------------------
     // HTX Submission and Verification
     // ------------------------------------------------------------------------

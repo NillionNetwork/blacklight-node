@@ -4,7 +4,7 @@ use ethers::core::types::H256;
 use nilav::{
     config::consts::{INITIAL_RECONNECT_DELAY_SECS, MAX_RECONNECT_DELAY_SECS},
     config::{NodeCliArgs, NodeConfig},
-    contract_client::{ContractConfig, NilAVWsClient},
+    contract_client::{ContractConfig, NilAVClient},
     types::Htx,
     verification::verify_htx,
 };
@@ -12,12 +12,9 @@ use tracing::{debug, error, info, warn};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 /// Process a single HTX assignment - verifies and submits result
-async fn process_htx_assignment(
-    ws_client: std::sync::Arc<NilAVWsClient>,
-    htx_id: H256,
-) -> Result<()> {
+async fn process_htx_assignment(client: std::sync::Arc<NilAVClient>, htx_id: H256) -> Result<()> {
     // Retrieve the HTX data from the contract
-    let htx_bytes = ws_client.get_htx(htx_id).await.map_err(|e| {
+    let htx_bytes = client.router.get_htx(htx_id).await.map_err(|e| {
         error!(
             htx_id = ?htx_id,
             error = %e,
@@ -36,7 +33,7 @@ async fn process_htx_assignment(
                 "Failed to parse HTX data"
             );
             // Respond with false if we can't parse the data
-            ws_client.respond_htx(htx_id, false).await?;
+            client.router.respond_htx(htx_id, false).await?;
             warn!(
                 htx_id = ?htx_id,
                 "HTX not verified (parse error) | tx: submitted"
@@ -58,7 +55,7 @@ async fn process_htx_assignment(
     }
 
     // Submit the verification result
-    match ws_client.respond_htx(htx_id, result).await {
+    match client.router.respond_htx(htx_id, result).await {
         Ok(tx_hash) => {
             let verdict = if result { "VALID" } else { "INVALID" };
             info!(
@@ -106,9 +103,13 @@ async fn main() -> Result<()> {
         info!("Connecting WebSocket listener");
 
         // Create a fresh WebSocket client for this connection attempt
-        let contract_config = ContractConfig::new(config.rpc_url.clone(), config.contract_address);
-        let ws_client = match NilAVWsClient::new(contract_config, config.private_key.clone()).await
-        {
+        let contract_config = ContractConfig::new(
+            config.rpc_url.clone(),
+            config.router_contract_address,
+            config.staking_contract_address,
+            config.token_contract_address,
+        );
+        let client = match NilAVClient::new(contract_config, config.private_key.clone()).await {
             Ok(client) => {
                 let balance = client.get_balance().await?;
                 info!(balance = ?balance, "WebSocket connection established");
@@ -128,18 +129,18 @@ async fn main() -> Result<()> {
         };
 
         // Register node if not already registered
-        let node_address = ws_client.signer_address();
+        let node_address = client.signer_address();
         if !registered {
             info!(node_address = %node_address, "Registering node with contract");
 
             // Check if already registered
-            match ws_client.is_node(node_address).await {
+            match client.staking.is_active_operator(node_address).await {
                 Ok(is_registered) => {
                     if is_registered {
                         info!("Node already registered");
                         registered = true;
                     } else {
-                        match ws_client.register_node(node_address).await {
+                        match client.staking.register_operator("".to_string()).await {
                             Ok(tx_hash) => {
                                 info!(tx_hash = ?tx_hash, "Node registered successfully");
                                 registered = true;
@@ -171,12 +172,12 @@ async fn main() -> Result<()> {
             }
         }
 
-        let ws_client_arc = std::sync::Arc::new(ws_client);
+        let client_arc = std::sync::Arc::new(client);
 
         // IMPORTANT: Process any backlog of assignments that happened before we connected
         // Query historical HTX assigned events for this node
         info!("Checking for pending assignments from before connection");
-        match ws_client_arc.get_htx_assigned_events().await {
+        match client_arc.router.get_htx_assigned_events().await {
             Ok(assigned_events) => {
                 let pending: Vec<_> = assigned_events
                     .iter()
@@ -193,8 +194,12 @@ async fn main() -> Result<()> {
                         let htx_id = H256::from(event.htx_id);
 
                         // Check if already responded
-                        match ws_client_arc.get_assignment(htx_id).await {
-                            Ok(assignment) if assignment.responded => {
+                        match client_arc
+                            .router
+                            .has_node_responded(htx_id, node_address)
+                            .await
+                        {
+                            Ok((responded, _result)) if responded => {
                                 // Already responded, skip
                                 debug!(htx_id = ?htx_id, "Already responded HTX, skipping");
                                 continue;
@@ -205,10 +210,9 @@ async fn main() -> Result<()> {
                                     "Processing pending HTX"
                                 );
                                 // Spawn a task to process this assignment concurrently
-                                let ws_client = ws_client_arc.clone();
+                                let client = client_arc.clone();
                                 tokio::spawn(async move {
-                                    if let Err(e) = process_htx_assignment(ws_client, htx_id).await
-                                    {
+                                    if let Err(e) = process_htx_assignment(client, htx_id).await {
                                         error!(
                                             htx_id = ?htx_id,
                                             error = %e,
@@ -240,20 +244,23 @@ async fn main() -> Result<()> {
         }
 
         // Start listening for HTX assigned events for this specific node
-        let ws_client_for_callback = ws_client_arc.clone();
-        let listen_result = ws_client_arc
+        let client_for_callback = client_arc.clone();
+        let listen_result = client_arc
+            .router
+            .clone()
             .listen_htx_assigned_for_node(node_address, move |event| {
-                let ws_client = ws_client_for_callback.clone();
+                let client = client_for_callback.clone();
 
                 async move {
                     let htx_id = H256::from(event.htx_id);
 
                     // Spawn a task to process this HTX concurrently (non-blocking)
+                    let node_addr = client.signer_address();
                     tokio::spawn(async move {
                         // Check if already responded
-                        match ws_client.get_assignment(htx_id).await {
-                            Ok(assignment) => {
-                                if assignment.responded {
+                        match client.router.has_node_responded(htx_id, node_addr).await {
+                            Ok((responded, _result)) => {
+                                if responded {
                                     // Already responded, skip
                                     return;
                                 }
@@ -264,7 +271,7 @@ async fn main() -> Result<()> {
                                 );
 
                                 // Use the same function as backlog processing
-                                if let Err(e) = process_htx_assignment(ws_client, htx_id).await {
+                                if let Err(e) = process_htx_assignment(client, htx_id).await {
                                     error!(
                                         htx_id = ?htx_id,
                                         error = %e,

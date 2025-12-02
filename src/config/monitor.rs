@@ -2,7 +2,10 @@ use anyhow::Result;
 use clap::Parser;
 use ethers::core::types::Address;
 
-use crate::config::consts::{DEFAULT_ROUTER_CONTRACT_ADDRESS, DEFAULT_RPC_URL, STATE_FILE_MONITOR};
+use crate::config::consts::{
+    DEFAULT_ROUTER_CONTRACT_ADDRESS, DEFAULT_RPC_URL, DEFAULT_STAKING_CONTRACT_ADDRESS,
+    DEFAULT_TOKEN_CONTRACT_ADDRESS, STATE_FILE_MONITOR,
+};
 use crate::state::StateFile;
 use tracing::info;
 
@@ -14,10 +17,18 @@ pub struct CliArgs {
     /// Ethereum RPC endpoint
     #[arg(long, env = "RPC_URL")]
     pub rpc_url: Option<String>,
+    
+    /// NilAV router contract address
+    #[arg(long, env = "ROUTER_CONTRACT_ADDRESS")]
+    pub router_contract_address: Option<String>,
 
-    /// NilAV contract address
-    #[arg(long, env = "CONTRACT_ADDRESS")]
-    pub contract_address: Option<String>,
+    /// NilAV staking contract address
+    #[arg(long, env = "STAKING_CONTRACT_ADDRESS")]
+    pub staking_contract_address: Option<String>,
+
+    /// TEST token contract address
+    #[arg(long, env = "TOKEN_CONTRACT_ADDRESS")]
+    pub token_contract_address: Option<String>,
 
     /// Private key for contract interactions
     #[arg(long, env = "PRIVATE_KEY")]
@@ -32,7 +43,9 @@ pub struct CliArgs {
 #[derive(Debug, Clone)]
 pub struct MonitorConfig {
     pub rpc_url: String,
-    pub contract_address: Address,
+    pub router_contract_address: Address,
+    pub staking_contract_address: Address,
+    pub token_contract_address: Address,
     pub private_key: String,
     pub all_htxs: bool,
 }
@@ -48,11 +61,21 @@ impl MonitorConfig {
             .or_else(|| state_file.load_value("RPC_URL"))
             .unwrap_or_else(|| DEFAULT_RPC_URL.to_string());
 
-        // Load contract address with priority
-        let contract_address_str = cli_args
-            .contract_address
-            .or_else(|| state_file.load_value("CONTRACT_ADDRESS"))
+        // Load contract addresses with priority
+        let router_contract_address_str = cli_args
+            .router_contract_address
+            .or_else(|| state_file.load_value("ROUTER_CONTRACT_ADDRESS"))
             .unwrap_or_else(|| DEFAULT_ROUTER_CONTRACT_ADDRESS.to_string());
+
+        let staking_contract_address_str = cli_args
+            .staking_contract_address
+            .or_else(|| state_file.load_value("STAKING_CONTRACT_ADDRESS"))
+            .unwrap_or_else(|| DEFAULT_STAKING_CONTRACT_ADDRESS.to_string());
+
+        let token_contract_address_str = cli_args
+            .token_contract_address
+            .or_else(|| state_file.load_value("TOKEN_CONTRACT_ADDRESS"))
+            .unwrap_or_else(|| DEFAULT_TOKEN_CONTRACT_ADDRESS.to_string());
 
         // Load private key with priority (monitor uses first Hardhat account)
         let private_key = cli_args
@@ -72,16 +95,20 @@ impl MonitorConfig {
             })
             .unwrap_or(false);
 
-        // Parse contract address
-        let contract_address = contract_address_str.parse::<Address>()?;
+        // Parse contract addresses
+        let router_contract_address = router_contract_address_str.parse::<Address>()?;
+        let staking_contract_address = staking_contract_address_str.parse::<Address>()?;
+        let token_contract_address = token_contract_address_str.parse::<Address>()?;
 
         info!(
-            "Loaded MonitorConfig: rpc_url={}, contract_address={}, all_htxs={}",
-            rpc_url, contract_address, all_htxs
+            "Loaded MonitorConfig: rpc_url={}, router_contract_address={}, all_htxs={}",
+            rpc_url, router_contract_address, all_htxs
         );
         Ok(MonitorConfig {
             rpc_url,
-            contract_address,
+            router_contract_address,
+            staking_contract_address,
+            token_contract_address,
             private_key,
             all_htxs,
         })

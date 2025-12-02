@@ -26,10 +26,10 @@ impl StakingOperatorsClient {
     pub fn new(
         provider: Arc<SignedWsProvider>,
         config: crate::contract_client::ContractConfig,
-    ) -> anyhow::Result<Self> {
+    ) -> Self {
         let contract = StakingOperators::new(config.staking_contract_address, provider.clone());
 
-        Ok(Self { contract })
+        Self { contract }
     }
 
     /// Get the contract address

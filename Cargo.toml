@@ -15,10 +15,6 @@ name = "nilav_node"
 path = "src/bin/nilav_node.rs"
 
 [[bin]]
-name = "contract_cli"
-path = "src/bin/contract_cli.rs"
-
-[[bin]]
 name = "monitor"
 path = "src/bin/monitor.rs"
 

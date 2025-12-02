@@ -4,7 +4,7 @@ use anyhow::Result;
 use clap::Parser;
 use nilav::{
     config::{SimulatorCliArgs, SimulatorConfig},
-    contract_client::{ContractConfig, NilAVWsClient},
+    contract_client::{ContractConfig, NilAVClient},
     types::Htx,
 };
 use tokio::time::interval;
@@ -26,11 +26,16 @@ async fn main() -> Result<()> {
     info!(slot_ms = config.slot_ms, "Loaded configuration");
 
     // Setup smart contract client
-    let contract_config = ContractConfig::new(config.rpc_url.clone(), config.contract_address);
-    let client = NilAVWsClient::new(contract_config, config.private_key.clone()).await?;
+    let contract_config = ContractConfig::new(
+        config.rpc_url.clone(),
+        config.router_contract_address,
+        config.staking_contract_address,
+        config.token_contract_address,
+    );
+    let client = NilAVClient::new(contract_config, config.private_key.clone()).await?;
 
     info!(
-        contract_address = %client.address(),
+        contract_address = %client.router.address(),
         signer_address = %client.signer_address(),
         "Connected to smart contract"
     );
@@ -63,7 +68,7 @@ async fn main() -> Result<()> {
         let htx = &htxs[idx];
 
         // Check how many nodes are registered
-        let node_count = client.node_count().await?;
+        let node_count = client.router.node_count().await?;
         if node_count.is_zero() {
             warn!(slot = slot, "No nodes registered, skipping HTX submission");
             continue;
@@ -76,7 +81,7 @@ async fn main() -> Result<()> {
         );
 
         // Submit HTX to contract - the contract will handle assignment
-        match client.submit_htx(htx).await {
+        match client.router.submit_htx(htx).await {
             Ok((tx_hash, htx_id)) => {
                 info!(
                     slot = slot,

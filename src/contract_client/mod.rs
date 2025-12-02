@@ -8,6 +8,7 @@ pub mod staking_operators;
 pub mod test_token;
 
 // Re-export client types
+pub use nilav_client::NilAVClient;
 pub use nilav_router::{NilAVRouterClient, SignedWsProvider as NilAVRouterSignedWsProvider};
 pub use staking_operators::{
     SignedWsProvider as StakingOperatorsSignedWsProvider, StakingOperatorsClient,
