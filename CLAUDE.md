@@ -41,12 +41,12 @@ cargo test -- --nocapture
 cargo check
 ```
 
-### Smart Contract (Foundry)
+### Smart Contracts (Foundry Monorepo)
 
 ```bash
-cd contracts/nilav-router
+cd contracts
 
-# Compile contract
+# Compile all contracts
 forge build
 
 # Run tests
@@ -57,6 +57,16 @@ forge test -vvv
 
 # Format Solidity code
 forge fmt
+
+# Deploy to local Anvil
+./script/deploy_local.sh router    # Deploy NilAVRouter
+./script/deploy_local.sh staking   # Deploy StakingOperators
+
+# Deploy to any chain
+export RPC_URL=<your-rpc-url>
+export PRIVATE_KEY=<your-private-key>
+./script/deploy.sh router    # Deploy NilAVRouter
+./script/deploy.sh staking   # Deploy StakingOperators with TESTToken
 ```
 
 ### Docker
@@ -223,20 +233,48 @@ The project uses `ethers-rs` `abigen!` macro to generate type-safe contract bind
 ```rust
 abigen!(
     NilAVRouter,
-    "./contracts/nilav-router/out/NilAVRouter.sol/NilAVRouter.json",
+    "./contracts/out/NilAVRouter.sol/NilAVRouter.json",
     event_derives(serde::Deserialize, serde::Serialize)
 );
 ```
 
 **Important:** After modifying the Solidity contract, regenerate the ABI:
 ```bash
-cd contracts/nilav-router
+cd contracts
 forge build
 ```
 
 Then rebuild Rust to regenerate bindings:
 ```bash
 cargo build
+```
+
+## Contract Structure
+
+The contracts are organized in a monorepo structure:
+
+```
+contracts/
+├── src/
+│   ├── core/              # Core contract implementations
+│   │   ├── NilAVRouter.sol
+│   │   ├── StakingOperators.sol
+│   │   └── TESTToken.sol
+│   ├── interfaces/        # Shared interfaces
+│   │   └── Interfaces.sol
+│   └── libraries/         # Shared utility libraries
+├── test/                  # All tests
+│   ├── NilAVRouter.t.sol
+│   └── integration/       # Integration tests
+├── script/                # Deployment scripts
+│   ├── DeployRouter.s.sol
+│   ├── DeployStaking.s.sol
+│   ├── deploy.sh
+│   └── deploy_local.sh
+├── lib/                   # Dependencies
+│   ├── forge-std/
+│   └── openzeppelin-contracts/
+└── out/                   # Compiled artifacts
 ```
 
 ## Error Handling Patterns

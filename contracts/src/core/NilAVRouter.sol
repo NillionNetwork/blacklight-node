@@ -1,24 +1,29 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-/// @title NilAV Router Stub
-/// @dev This is a stub:
-///      - Anyone can register/deregister nodes
-///      - Node selection randomness is not secure
+import "../interfaces/Interfaces.sol";
+
+/// @title NilAV Router
+/// @dev Integrates with StakingOperators to select nodes from active staked operators
+///      - Node selection uses active operators from staking contract
+///      - Node selection randomness is not cryptographically secure
 ///      - No HTX reassignment / timeout
 
-contract NilAVRouter{
+contract NilAVRouter {
     // ------------------------------------------------------------------------
     // Data structures
     // ------------------------------------------------------------------------
 
     struct Assignment {
-        address node;    // nilAV node chosen for this HTX
-        bool responded;  // has the node responded?
-        bool result;     // True/False from the node
+        address node; // nilAV node chosen for this HTX
+        bool responded; // has the node responded?
+        bool result; // True/False from the node
     }
 
-    // List of registered nilAV nodes
+    // Reference to the StakingOperators contract
+    IStakingOperators public immutable stakingOperators;
+
+    // DEPRECATED: Legacy node registry (kept for backwards compatibility)
     address[] public nodes;
     mapping(address => bool) public isNode;
 
@@ -30,11 +35,7 @@ contract NilAVRouter{
     // ------------------------------------------------------------------------
 
     /// @dev Only the keccak256 of rawHTX is emitted to avoid storing raw data.
-    event HTXSubmitted(
-        bytes32 indexed htxId,
-        bytes32 indexed rawHTXHash,
-        address indexed sender
-    );
+    event HTXSubmitted(bytes32 indexed htxId, bytes32 indexed rawHTXHash, address indexed sender);
 
     event HTXAssigned(bytes32 indexed htxId, address indexed node);
 
@@ -44,10 +45,22 @@ contract NilAVRouter{
     event NodeDeregistered(address indexed node);
 
     // ------------------------------------------------------------------------
-    // Node management (public, no access control — stub)
+    // Constructor
     // ------------------------------------------------------------------------
 
-    /// @notice Register a new nilAV node.
+    /// @notice Initialize the router with a reference to the staking contract
+    /// @param _stakingOperators Address of the StakingOperators contract
+    constructor(address _stakingOperators) {
+        require(_stakingOperators != address(0), "NilAV: zero staking address");
+        stakingOperators = IStakingOperators(_stakingOperators);
+    }
+
+    // ------------------------------------------------------------------------
+    // Node management (DEPRECATED - use StakingOperators instead)
+    // ------------------------------------------------------------------------
+
+    /// @notice DEPRECATED: Register a new nilAV node. Use StakingOperators.registerOperator() instead.
+    /// @dev Kept for backwards compatibility. New deployments should use StakingOperators.
     function registerNode(address node) external {
         require(node != address(0), "NilAV: zero address");
         require(!isNode[node], "NilAV: already registered");
@@ -58,7 +71,7 @@ contract NilAVRouter{
         emit NodeRegistered(node);
     }
 
-    /// @notice Deregister a nilAV node.
+    /// @notice DEPRECATED: Deregister a nilAV node. Use StakingOperators.deactivateOperator() instead.
     function deregisterNode(address node) external {
         require(isNode[node], "NilAV: not registered");
 
@@ -77,14 +90,19 @@ contract NilAVRouter{
         emit NodeDeregistered(node);
     }
 
-    /// @notice Returns the total number of registered nodes.
+    /// @notice Returns the total number of active operators from staking contract
     function nodeCount() external view returns (uint256) {
-        return nodes.length;
+        return stakingOperators.getActiveOperators().length;
     }
 
-    /// @notice Returns the full list of registered nodes.
+    /// @notice Returns the full list of active operators from staking contract
     function getNodes() external view returns (address[] memory) {
-        return nodes;
+        return stakingOperators.getActiveOperators();
+    }
+
+    /// @notice Returns the number of legacy registered nodes (deprecated)
+    function legacyNodeCount() external view returns (uint256) {
+        return nodes.length;
     }
 
     // ------------------------------------------------------------------------
@@ -92,10 +110,12 @@ contract NilAVRouter{
     // ------------------------------------------------------------------------
 
     /// @notice HTX submitted for verification.
+    /// @dev Selects a node from active staked operators
     /// @param rawHTX The raw HTX payload (e.g. JSON bytes).
     /// @return htxId A deterministic ID for this HTX.
     function submitHTX(bytes calldata rawHTX) external returns (bytes32 htxId) {
-        require(nodes.length > 0, "NilAV: no nodes registered");
+        address[] memory activeOperators = stakingOperators.getActiveOperators();
+        require(activeOperators.length > 0, "NilAV: no active operators");
 
         bytes32 rawHTXHash = keccak256(rawHTX);
 
@@ -105,13 +125,9 @@ contract NilAVRouter{
         Assignment storage existing = assignments[htxId];
         require(existing.node == address(0), "NilAV: HTX already exists");
 
-        address chosenNode = _chooseNode(htxId);
+        address chosenNode = _chooseNode(htxId, activeOperators);
 
-        assignments[htxId] = Assignment({
-            node: chosenNode,
-            responded: false,
-            result: false
-        });
+        assignments[htxId] = Assignment({node: chosenNode, responded: false, result: false});
 
         emit HTXSubmitted(htxId, rawHTXHash, msg.sender);
         emit HTXAssigned(htxId, chosenNode);
@@ -144,12 +160,14 @@ contract NilAVRouter{
     // Internal helpers
     // ------------------------------------------------------------------------
 
-    function _chooseNode(bytes32 htxId) internal view returns (address) {
-        require(nodes.length > 0, "NilAV: no nodes");
+    /// @dev Selects a node from the active operators using pseudo-random selection
+    /// @param htxId The HTX ID for additional randomness
+    /// @param activeOperators Array of active operators to choose from
+    /// @return Selected operator address
+    function _chooseNode(bytes32 htxId, address[] memory activeOperators) internal view returns (address) {
+        require(activeOperators.length > 0, "NilAV: no active operators");
 
-        uint256 rand = uint256(
-            keccak256(abi.encode(block.prevrandao, block.timestamp, htxId))
-        );
-        return nodes[rand % nodes.length];
+        uint256 rand = uint256(keccak256(abi.encode(block.prevrandao, block.timestamp, htxId)));
+        return activeOperators[rand % activeOperators.length];
     }
 }

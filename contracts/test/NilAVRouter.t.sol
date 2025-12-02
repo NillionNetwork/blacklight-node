@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
-import "./NilAVRouter.sol";
+import "src/core/NilAVRouter.sol";
 
 /// @title NilAVRouter Test Suite
 /// @notice Comprehensive tests for the NilAVRouter contract
@@ -152,7 +152,7 @@ contract NilAVRouterTest is Test {
         bytes32 htxId = router.submitHTX(htxData);
 
         // Get assignment
-        (address assignedNode, , ) = router.assignments(htxId);
+        (address assignedNode,,) = router.assignments(htxId);
 
         // Should be assigned to one of the registered nodes
         assertTrue(
@@ -188,9 +188,7 @@ contract NilAVRouterTest is Test {
         bytes32 rawHTXHash = keccak256(htxData);
 
         // Calculate expected htxId
-        bytes32 expectedHtxId = keccak256(
-            abi.encode(rawHTXHash, address(this), block.number)
-        );
+        bytes32 expectedHtxId = keccak256(abi.encode(rawHTXHash, address(this), block.number));
 
         // Expect HTXSubmitted event
         vm.expectEmit(true, true, true, false);
@@ -210,9 +208,7 @@ contract NilAVRouterTest is Test {
         bytes32 rawHTXHash = keccak256(htxData);
 
         // Calculate expected htxId
-        bytes32 expectedHtxId = keccak256(
-            abi.encode(rawHTXHash, address(this), block.number)
-        );
+        bytes32 expectedHtxId = keccak256(abi.encode(rawHTXHash, address(this), block.number));
 
         bytes32 actualHtxId = router.submitHTX(htxData);
 
@@ -290,7 +286,7 @@ contract NilAVRouterTest is Test {
         bytes32 htxId = router.submitHTX(htxData);
 
         // Get assigned node
-        (address assignedNode, , ) = router.assignments(htxId);
+        (address assignedNode,,) = router.assignments(htxId);
 
         // Try to respond from non-assigned node
         address nonAssignedNode = assignedNode == node1 ? node2 : node1;
@@ -358,7 +354,7 @@ contract NilAVRouterTest is Test {
         bool foundNode1 = false;
         bool foundNode2 = false;
 
-        for (uint i = 0; i < nodes.length; i++) {
+        for (uint256 i = 0; i < nodes.length; i++) {
             if (nodes[i] == node1) foundNode1 = true;
             if (nodes[i] == node2) foundNode2 = true;
         }
@@ -375,8 +371,7 @@ contract NilAVRouterTest is Test {
         address secondNode = router.nodes(1);
 
         assertTrue(
-            (firstNode == node1 && secondNode == node2) ||
-            (firstNode == node2 && secondNode == node1),
+            (firstNode == node1 && secondNode == node2) || (firstNode == node2 && secondNode == node1),
             "Nodes should be retrievable by index"
         );
     }
@@ -422,14 +417,14 @@ contract NilAVRouterTest is Test {
         // Submit multiple HTXs
         bytes32[] memory htxIds = new bytes32[](5);
 
-        for (uint i = 0; i < 5; i++) {
-            bytes memory htxData = abi.encodePacked('{"htx":', i, '}');
+        for (uint256 i = 0; i < 5; i++) {
+            bytes memory htxData = abi.encodePacked('{"htx":', i, "}");
             htxIds[i] = router.submitHTX(htxData);
         }
 
         // Verify all HTXs have assignments
-        for (uint i = 0; i < 5; i++) {
-            (address assignedNode, , ) = router.assignments(htxIds[i]);
+        for (uint256 i = 0; i < 5; i++) {
+            (address assignedNode,,) = router.assignments(htxIds[i]);
             assertTrue(assignedNode != address(0), "HTX should have assigned node");
             assertTrue(router.isNode(assignedNode), "Assigned node should be registered");
         }
@@ -453,7 +448,7 @@ contract NilAVRouterTest is Test {
         router.registerNode(node1);
         bytes32 htxId = router.submitHTX(htxData);
 
-        (address assignedNode, , ) = router.assignments(htxId);
+        (address assignedNode,,) = router.assignments(htxId);
         assertEq(assignedNode, node1, "Should be assigned to node1");
     }
 
@@ -466,7 +461,7 @@ contract NilAVRouterTest is Test {
         vm.prank(node1);
         router.respondHTX(htxId, response);
 
-        (, , bool result) = router.assignments(htxId);
+        (,, bool result) = router.assignments(htxId);
         assertEq(result, response, "Response should match input");
     }
 
@@ -477,7 +472,7 @@ contract NilAVRouterTest is Test {
     function testEmptyHTXData() public {
         router.registerNode(node1);
 
-        bytes memory emptyData = bytes('');
+        bytes memory emptyData = bytes("");
         bytes32 htxId = router.submitHTX(emptyData);
 
         assertTrue(htxId != bytes32(0), "Should accept empty HTX data");
@@ -488,7 +483,7 @@ contract NilAVRouterTest is Test {
 
         // Create large HTX data (1KB)
         bytes memory largeData = new bytes(1024);
-        for (uint i = 0; i < 1024; i++) {
+        for (uint256 i = 0; i < 1024; i++) {
             largeData[i] = bytes1(uint8(i % 256));
         }
 

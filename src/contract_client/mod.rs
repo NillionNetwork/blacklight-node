@@ -63,7 +63,7 @@ pub fn decode_error_string(revert_data: &str) -> Option<String> {
 // Generate type-safe contract bindings from ABI
 abigen!(
     NilAVRouter,
-    "./contracts/nilav-router/out/NilAVRouter.sol/NilAVRouter.json",
+    "./contracts/out/NilAVRouter.sol/NilAVRouter.json",
     event_derives(serde::Deserialize, serde::Serialize)
 );
 

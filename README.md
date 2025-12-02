@@ -42,30 +42,42 @@ Follow these steps to run your own nilAV verification node on the network.
    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
    ```
 
-2. **Clone the repository**:
+2. **Install Foundry** (needed to compile the NilAVRouter contract):
+   ```bash
+   curl -L https://foundry.paradigm.xyz | bash
+   foundryup
+   ```
+   > Re-open your shell or `source ~/.foundry/bin/foundryup` so `forge` is on your `PATH`.
+
+3. **Clone the repository**:
    ```bash
    git clone https://github.com/NillionNetwork/nilAV.git
    cd nilAV
    ```
 
-3. **Build the project**:
+4. **Compile the smart contract before building the Rust binaries**:
+   ```bash
+   cd contracts/nilav-router
+   forge build
+   cd ../..
+   ```
+
+5. **Build the native binaries**:
    ```bash
    cargo build --release
    ```
 
 ### Wallet Setup
 
-### 1. Run Your Node
+#### 1. Initialize your node wallet
 
-Start your verification node:
+Run the node once to generate a fresh keypair and `.env` file. On the first launch the program stops after creating the wallet so you can fund it before proceeding:
 
 ```bash
 cargo run --release --bin nilav_node
 ```
 
-It will produce a `nilav_node.env` file with the secret credentials. Make sure to keep it private and back it up.
-
-It will show something like: 
+This prints your on-chain address and creates `nilav_node.env` with the private key and RPC defaults. **Back up this file and keep it secret.**
 
 ```bash
 ╔══════════════════════════════════════════════════════════════════════╗
@@ -73,16 +85,15 @@ It will show something like:
 ╠═════════════════════════╦════════════════════════════════════════════╣
 ║                 Address ║ 0x1234567890abcdef1234567890abcdef12345678 ║
 ╠═════════════════════════╬════════════════════════════════════════════╣
-║                 RPC URL ║ http://localhost:8545                      ║
+║                 RPC URL ║ https://rpc-nilav-shzvox09l5.t.conduit.xyz ║
 ╠═════════════════════════╩════════════════════════════════════════════╣
 ║                ❗ Please fund this address with ETH ❗               ║
-╠══════════════════════════════════════════════════════════════════════╣
-║            Please fund this address with ETH to continue.            ║
 ╚══════════════════════════════════════════════════════════════════════╝
 ```
-#### 2. Add the nilAV Network to Your Wallet
 
-Add the nilAV network to MetaMask or your preferred Ethereum wallet:
+#### 2. Add the nilAV Network to your wallet
+
+Configure MetaMask (or another wallet) so you can view and fund the node address:
 
 | Field | Value |
 |-------|-------|
@@ -91,24 +102,23 @@ Add the nilAV network to MetaMask or your preferred Ethereum wallet:
 | **Chain ID** | 78651 |
 | **Currency Symbol** | ETH (Sepolia) |
 
-#### 3. Get ETH Funds and send them to that address
+#### 3. Fund the node wallet
 
-**⚠️ IMPORTANT:** Your node wallet **MUST have ETH funds** on the nilAV network to pay for gas fees when:
-- Registering your node with the contract
-- Submitting verification results for assigned HTXs
+Your node must hold ETH on the nilAV network to cover:
+- Contract registration transactions
+- HTX response submissions
 
-**How to get funds:**
-- Bridge ETH from another network if applicable
+Recommended balance: **≥ 0.1 ETH**. Bridge from another network or request funds from the NilAV team/faucet (if available), then verify the deposit in your wallet before proceeding.
 
-**Recommended minimum:** Start with at least 0.1 ETH to cover registration and initial verifications.
+#### 4. Run the node with the funded wallet
 
-### 4. Run Your Node
-
-Start your verification node:
+After confirming the deposit, start the verifier again:
 
 ```bash
 cargo run --release --bin nilav_node
 ```
+
+The node loads `nilav_node.env` automatically, registers with the contract if needed, and begins streaming HTX assignments.
 
 **What happens next:**
 

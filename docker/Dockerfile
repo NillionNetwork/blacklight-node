@@ -8,15 +8,26 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     pkg-config \
     libssl-dev \
+    curl git \
     && rm -rf /var/lib/apt/lists/*
 
+# Install Foundry toolchain
+RUN curl -L https://foundry.paradigm.xyz | bash && \
+    /root/.foundry/bin/foundryup
+ENV PATH="/root/.foundry/bin:${PATH}"
+
 # Copy project files
-COPY Cargo.toml Cargo.lock ./
+COPY Cargo.toml ./
 COPY src ./src
 COPY config ./config
 COPY data ./data
 COPY ./contracts/nilav-router/ ./contracts/nilav-router/
 
+WORKDIR /app/contracts/nilav-router
+
+RUN forge build 
+
+WORKDIR /app
 # Build all binaries with caching
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/app/target \
