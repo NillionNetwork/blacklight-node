@@ -22,8 +22,12 @@ DEFAULT_ADDRESS="0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
 RPC_URL="http://127.0.0.1:8545"
 
 # Check which contract to deploy
-CONTRACT=$1
+CONTRACT=${1:-"all"}
 case $CONTRACT in
+    all)
+        SCRIPT_PATH="script/DeployAll.s.sol:DeployAll"
+        CONTRACT_NAME="NilAV full stack (TESTToken + StakingOperators + NilAVRouter)"
+        ;;
     router)
         SCRIPT_PATH="script/DeployRouter.s.sol:DeployRouter"
         CONTRACT_NAME="NilAVRouter"
@@ -33,9 +37,10 @@ case $CONTRACT in
         CONTRACT_NAME="StakingOperators"
         ;;
     *)
-        echo "Usage: $0 [router|staking]"
-        echo "  router  - Deploy NilAVRouter contract (default)"
-        echo "  staking - Deploy StakingOperators contract"
+        echo "Usage: $0 [all|router|staking]"
+        echo "  all     - Deploy TESTToken, StakingOperators, and NilAVRouter (default)"
+        echo "  router  - Deploy NilAVRouter contract (requires STAKING_ADDRESS env var)"
+        echo "  staking - Deploy StakingOperators contract (deploys TESTToken as well)"
         exit 1
         ;;
 esac
@@ -64,6 +69,19 @@ if ! command -v forge &> /dev/null; then
 fi
 echo -e "${GREEN}✓ Foundry is installed${NC}"
 echo ""
+
+# Ensure router-only deployments know where staking lives
+if [ "$CONTRACT" = "router" ] && [ -z "$STAKING_ADDRESS" ]; then
+    if [ -f /tmp/nilav_staking_address.txt ]; then
+        STAKING_ADDRESS=$(cat /tmp/nilav_staking_address.txt)
+        echo -e "${YELLOW}Using STAKING_ADDRESS from /tmp/nilav_staking_address.txt:${NC} $STAKING_ADDRESS"
+    else
+        echo -e "${YELLOW}STAKING_ADDRESS env var is required when deploying only the router.${NC}"
+        echo "Either run './deploy_local.sh all' first or set:"
+        echo "  export STAKING_ADDRESS=0xYourStakingAddress"
+        exit 1
+    fi
+fi
 
 # Deploy the contract
 echo -e "${BLUE}Step 3: Deploying $CONTRACT_NAME...${NC}"
@@ -109,6 +127,28 @@ if command -v jq &> /dev/null; then
                         echo "  $addr"
                     done
                 fi
+            elif [ "$CONTRACT" = "all" ]; then
+                if [ ${#ADDRESSES[@]} -ge 3 ]; then
+                    TOKEN_ADDRESS="${ADDRESSES[0]}"
+                    STAKING_ADDRESS="${ADDRESSES[1]}"
+                    ROUTER_ADDRESS="${ADDRESSES[2]}"
+                    echo -e "${GREEN}✓ TESTToken deployed to:        $TOKEN_ADDRESS${NC}"
+                    echo -e "${GREEN}✓ StakingOperators deployed to: $STAKING_ADDRESS${NC}"
+                    echo -e "${GREEN}✓ NilAVRouter deployed to:      $ROUTER_ADDRESS${NC}"
+                    echo ""
+                    echo "$TOKEN_ADDRESS" > /tmp/nilav_token_address.txt
+                    echo "$STAKING_ADDRESS" > /tmp/nilav_staking_address.txt
+                    echo "$ROUTER_ADDRESS" > /tmp/nilav_router_address.txt
+                    echo "Addresses saved to:"
+                    echo "  /tmp/nilav_token_address.txt"
+                    echo "  /tmp/nilav_staking_address.txt"
+                    echo "  /tmp/nilav_router_address.txt"
+                else
+                    echo -e "${YELLOW}Expected 3 contracts but found ${#ADDRESSES[@]}${NC}"
+                    for addr in "${ADDRESSES[@]}"; do
+                        echo "  $addr"
+                    done
+                fi
             else
                 # For router deployment: single contract
                 ROUTER_ADDRESS="${ADDRESSES[0]}"
@@ -144,6 +184,21 @@ if [ "$CONTRACT" = "staking" ]; then
     echo "  export PRIVATE_KEY=$DEFAULT_PRIVATE_KEY"
     echo "  export TOKEN_ADDRESS=$TOKEN_ADDRESS"
     echo "  export STAKING_ADDRESS=$STAKING_ADDRESS"
+elif [ "$CONTRACT" = "all" ]; then
+    echo "Deployed Contracts:"
+    echo "  TESTToken:        ${TOKEN_ADDRESS:-Check forge output above}"
+    echo "  StakingOperators: ${STAKING_ADDRESS:-Check forge output above}"
+    echo "  NilAVRouter:      ${ROUTER_ADDRESS:-Check forge output above}"
+    echo ""
+    echo "RPC URL: $RPC_URL"
+    echo "Deployer: $DEFAULT_ADDRESS"
+    echo ""
+    echo "To interact with the contracts:"
+    echo "  export RPC_URL=$RPC_URL"
+    echo "  export PRIVATE_KEY=$DEFAULT_PRIVATE_KEY"
+    echo "  export TOKEN_ADDRESS=$TOKEN_ADDRESS"
+    echo "  export STAKING_ADDRESS=$STAKING_ADDRESS"
+    echo "  export ROUTER_ADDRESS=$ROUTER_ADDRESS"
 else
     echo "Deployed Contract:"
     echo "  NilAVRouter: ${ROUTER_ADDRESS:-Check forge output above}"

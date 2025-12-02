@@ -4,7 +4,7 @@ use ethers::core::types::Address;
 use ethers::prelude::U256;
 use ethers::signers::Signer;
 
-use crate::config::consts::{DEFAULT_CONTRACT_ADDRESS, DEFAULT_RPC_URL, STATE_FILE_NODE};
+use crate::config::consts::{DEFAULT_ROUTER_CONTRACT_ADDRESS, DEFAULT_RPC_URL, STATE_FILE_NODE};
 use crate::state::StateFile;
 use crate::wallet::{
     check_balance, display_account_created_banner, display_insufficient_funds_banner,
@@ -81,7 +81,7 @@ impl NodeConfig {
         let contract_address_str = cli_args
             .contract_address
             .or_else(|| state_file.load_value("CONTRACT_ADDRESS"))
-            .unwrap_or_else(|| DEFAULT_CONTRACT_ADDRESS.to_string());
+            .unwrap_or_else(|| DEFAULT_ROUTER_CONTRACT_ADDRESS.to_string());
 
         let mut wallet_was_created = false;
 

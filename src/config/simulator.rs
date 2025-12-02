@@ -3,7 +3,7 @@ use clap::Parser;
 use ethers::core::types::Address;
 
 use crate::config::consts::{
-    DEFAULT_CONTRACT_ADDRESS, DEFAULT_HTXS_PATH, DEFAULT_RPC_URL, DEFAULT_SLOT_MS,
+    DEFAULT_HTXS_PATH, DEFAULT_ROUTER_CONTRACT_ADDRESS, DEFAULT_RPC_URL, DEFAULT_SLOT_MS,
     STATE_FILE_SIMULATOR,
 };
 use crate::state::StateFile;
@@ -60,7 +60,7 @@ impl SimulatorConfig {
         let contract_address_str = cli_args
             .contract_address
             .or_else(|| state_file.load_value("CONTRACT_ADDRESS"))
-            .unwrap_or_else(|| DEFAULT_CONTRACT_ADDRESS.to_string());
+            .unwrap_or_else(|| DEFAULT_ROUTER_CONTRACT_ADDRESS.to_string());
 
         // Load private key with priority (different default than node)
         let private_key = cli_args

@@ -6,8 +6,12 @@ echo "NilAV Contract Deployer"
 echo "==================================================================="
 
 # Check which contract to deploy
-CONTRACT=${1:-"router"}
+CONTRACT=${1:-"all"}
 case $CONTRACT in
+    all)
+        SCRIPT_PATH="script/DeployAll.s.sol:DeployAll"
+        CONTRACT_NAME="NilAV full stack (TESTToken + StakingOperators + NilAVRouter)"
+        ;;
     router)
         SCRIPT_PATH="script/DeployRouter.s.sol:DeployRouter"
         CONTRACT_NAME="NilAVRouter"
@@ -17,9 +21,10 @@ case $CONTRACT in
         CONTRACT_NAME="StakingOperators"
         ;;
     *)
-        echo "Usage: $0 [router|staking]"
-        echo "  router  - Deploy NilAVRouter contract (default)"
-        echo "  staking - Deploy StakingOperators contract"
+        echo "Usage: $0 [all|router|staking]"
+        echo "  all     - Deploy TESTToken, StakingOperators, and NilAVRouter (default)"
+        echo "  router  - Deploy NilAVRouter contract (requires STAKING_ADDRESS env var)"
+        echo "  staking - Deploy StakingOperators contract (deploys TESTToken as well)"
         exit 1
         ;;
 esac
@@ -34,6 +39,12 @@ fi
 if [ -z "$PRIVATE_KEY" ]; then
     echo "Error: PRIVATE_KEY environment variable is not set"
     echo "Example: export PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+    exit 1
+fi
+
+if [ "$CONTRACT" = "router" ] && [ -z "$STAKING_ADDRESS" ]; then
+    echo "Error: STAKING_ADDRESS environment variable is required when deploying only the router"
+    echo "Example: export STAKING_ADDRESS=0xYourStakingAddress"
     exit 1
 fi
 
@@ -84,6 +95,26 @@ if command -v jq &> /dev/null; then
                     echo "  export RPC_URL=$RPC_URL"
                 else
                     echo "Expected 2 contracts but found ${#ADDRESSES[@]}"
+                    for addr in "${ADDRESSES[@]}"; do
+                        echo "  $addr"
+                    done
+                fi
+            elif [ "$CONTRACT" = "all" ]; then
+                if [ ${#ADDRESSES[@]} -ge 3 ]; then
+                    TOKEN_ADDRESS="${ADDRESSES[0]}"
+                    STAKING_ADDRESS="${ADDRESSES[1]}"
+                    ROUTER_ADDRESS="${ADDRESSES[2]}"
+                    echo "✓ TESTToken deployed to:        $TOKEN_ADDRESS"
+                    echo "✓ StakingOperators deployed to: $STAKING_ADDRESS"
+                    echo "✓ NilAVRouter deployed to:      $ROUTER_ADDRESS"
+                    echo ""
+                    echo "Save these for your .env file:"
+                    echo "  export TOKEN_ADDRESS=$TOKEN_ADDRESS"
+                    echo "  export STAKING_ADDRESS=$STAKING_ADDRESS"
+                    echo "  export ROUTER_ADDRESS=$ROUTER_ADDRESS"
+                    echo "  export RPC_URL=$RPC_URL"
+                else
+                    echo "Expected 3 contracts but found ${#ADDRESSES[@]}"
                     for addr in "${ADDRESSES[@]}"; do
                         echo "  $addr"
                     done
