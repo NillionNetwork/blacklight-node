@@ -27,6 +27,9 @@ Cargo.lock
 out/
 cache/
 
+# Foundry broadcast logs (transaction traces, run outputs, etc.)
+/broadcast
+
 # Note: foundry.lock should be committed for reproducible builds
 
 # IDE and editor files
