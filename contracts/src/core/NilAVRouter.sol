@@ -14,18 +14,25 @@ contract NilAVRouter {
     // Data structures
     // ------------------------------------------------------------------------
 
+    struct NodeResponse {
+        bool responded;
+        bool result;
+    }
+
     struct Assignment {
-        address node; // nilAV node chosen for this HTX
-        bool responded; // has the node responded?
-        bool result; // True/False from the node
+        address[] nodes; // Array of nodes assigned to this HTX
+        mapping(address => NodeResponse) responses; // Track each node's response
+        uint256 requiredStake; // Minimum stake required (10% of total)
+        uint256 assignedStake; // Total stake of assigned nodes
+        uint256 respondedCount; // Number of nodes that have responded
     }
 
     // Reference to the StakingOperators contract
     IStakingOperators public immutable stakingOperators;
 
-    // DEPRECATED: Legacy node registry (kept for backwards compatibility)
-    address[] public nodes;
-    mapping(address => bool) public isNode;
+    // Minimum percentage of total stake required (in basis points: 1000 = 10%)
+    uint256 public constant MIN_STAKE_BPS = 1000; // 10%
+    uint256 public constant BPS_DENOMINATOR = 10000; // 100%
 
     // htxId => assignment
     mapping(bytes32 => Assignment) public assignments;
@@ -41,9 +48,6 @@ contract NilAVRouter {
 
     event HTXResponded(bytes32 indexed htxId, address indexed node, bool result);
 
-    event NodeRegistered(address indexed node);
-    event NodeDeregistered(address indexed node);
-
     // ------------------------------------------------------------------------
     // Constructor
     // ------------------------------------------------------------------------
@@ -53,41 +57,6 @@ contract NilAVRouter {
     constructor(address _stakingOperators) {
         require(_stakingOperators != address(0), "NilAV: zero staking address");
         stakingOperators = IStakingOperators(_stakingOperators);
-    }
-
-    // ------------------------------------------------------------------------
-    // Node management (DEPRECATED - use StakingOperators instead)
-    // ------------------------------------------------------------------------
-
-    /// @notice DEPRECATED: Register a new nilAV node. Use StakingOperators.registerOperator() instead.
-    /// @dev Kept for backwards compatibility. New deployments should use StakingOperators.
-    function registerNode(address node) external {
-        require(node != address(0), "NilAV: zero address");
-        require(!isNode[node], "NilAV: already registered");
-
-        isNode[node] = true;
-        nodes.push(node);
-
-        emit NodeRegistered(node);
-    }
-
-    /// @notice DEPRECATED: Deregister a nilAV node. Use StakingOperators.deactivateOperator() instead.
-    function deregisterNode(address node) external {
-        require(isNode[node], "NilAV: not registered");
-
-        isNode[node] = false;
-
-        uint256 len = nodes.length;
-        for (uint256 i = 0; i < len; ++i) {
-            if (nodes[i] == node) {
-                // swap and pop to keep array compact
-                nodes[i] = nodes[len - 1];
-                nodes.pop();
-                break;
-            }
-        }
-
-        emit NodeDeregistered(node);
     }
 
     /// @notice Returns the total number of active operators from staking contract
@@ -100,17 +69,12 @@ contract NilAVRouter {
         return stakingOperators.getActiveOperators();
     }
 
-    /// @notice Returns the number of legacy registered nodes (deprecated)
-    function legacyNodeCount() external view returns (uint256) {
-        return nodes.length;
-    }
-
     // ------------------------------------------------------------------------
     // HTX flow
     // ------------------------------------------------------------------------
 
     /// @notice HTX submitted for verification.
-    /// @dev Selects a node from active staked operators
+    /// @dev Selects multiple nodes to ensure at least 10% of total stake is assigned
     /// @param rawHTX The raw HTX payload (e.g. JSON bytes).
     /// @return htxId A deterministic ID for this HTX.
     function submitHTX(bytes calldata rawHTX) external returns (bytes32 htxId) {
@@ -122,15 +86,37 @@ contract NilAVRouter {
         // Derive an ID from the HTX contents + sender + block info.
         htxId = keccak256(abi.encode(rawHTXHash, msg.sender, block.number));
 
-        Assignment storage existing = assignments[htxId];
-        require(existing.node == address(0), "NilAV: HTX already exists");
+        Assignment storage assignment = assignments[htxId];
+        require(assignment.nodes.length == 0, "NilAV: HTX already exists");
 
-        address chosenNode = _chooseNode(htxId, activeOperators);
+        // Get total stake and calculate minimum required
+        uint256 totalStake = stakingOperators.totalStaked();
+        require(totalStake > 0, "NilAV: no stake in system");
 
-        assignments[htxId] = Assignment({node: chosenNode, responded: false, result: false});
+        uint256 requiredStake = (totalStake * MIN_STAKE_BPS) / BPS_DENOMINATOR;
+
+        // Select nodes until we reach the required stake
+        address[] memory selectedNodes = _selectNodesByStake(htxId, activeOperators, requiredStake);
+        require(selectedNodes.length > 0, "NilAV: could not select nodes");
+
+        // Calculate total assigned stake
+        uint256 assignedStake = 0;
+        for (uint256 i = 0; i < selectedNodes.length; i++) {
+            assignedStake += stakingOperators.stakeOf(selectedNodes[i]);
+        }
+
+        // Initialize assignment
+        assignment.requiredStake = requiredStake;
+        assignment.assignedStake = assignedStake;
+        assignment.respondedCount = 0;
+
+        // Store nodes and emit events
+        for (uint256 i = 0; i < selectedNodes.length; i++) {
+            assignment.nodes.push(selectedNodes[i]);
+            emit HTXAssigned(htxId, selectedNodes[i]);
+        }
 
         emit HTXSubmitted(htxId, rawHTXHash, msg.sender);
-        emit HTXAssigned(htxId, chosenNode);
     }
 
     /// @notice nilAV node responds to an assigned HTX with True/False.
@@ -138,12 +124,25 @@ contract NilAVRouter {
     /// @param result True/False result of the verification.
     function respondHTX(bytes32 htxId, bool result) external {
         Assignment storage a = assignments[htxId];
-        require(a.node != address(0), "NilAV: unknown HTX");
-        require(msg.sender == a.node, "NilAV: not assigned node");
-        require(!a.responded, "NilAV: already responded");
+        require(a.nodes.length > 0, "NilAV: unknown HTX");
 
-        a.responded = true;
-        a.result = result;
+        // Check if sender is one of the assigned nodes
+        bool isAssigned = false;
+        for (uint256 i = 0; i < a.nodes.length; i++) {
+            if (a.nodes[i] == msg.sender) {
+                isAssigned = true;
+                break;
+            }
+        }
+        require(isAssigned, "NilAV: not assigned node");
+
+        // Check if already responded
+        require(!a.responses[msg.sender].responded, "NilAV: already responded");
+
+        // Record response
+        a.responses[msg.sender].responded = true;
+        a.responses[msg.sender].result = result;
+        a.respondedCount++;
 
         emit HTXResponded(htxId, msg.sender, result);
     }
@@ -152,22 +151,100 @@ contract NilAVRouter {
     // Views
     // ------------------------------------------------------------------------
 
-    function getAssignment(bytes32 htxId) external view returns (Assignment memory) {
-        return assignments[htxId];
+    /// @notice Get the assigned nodes for an HTX
+    function getAssignedNodes(bytes32 htxId) external view returns (address[] memory) {
+        return assignments[htxId].nodes;
+    }
+
+    /// @notice Get assignment details for an HTX
+    function getAssignmentInfo(bytes32 htxId)
+        external
+        view
+        returns (address[] memory nodes, uint256 requiredStake, uint256 assignedStake, uint256 respondedCount)
+    {
+        Assignment storage a = assignments[htxId];
+        return (a.nodes, a.requiredStake, a.assignedStake, a.respondedCount);
+    }
+
+    /// @notice Check if a specific node has responded to an HTX
+    function hasNodeResponded(bytes32 htxId, address node) external view returns (bool responded, bool result) {
+        NodeResponse storage response = assignments[htxId].responses[node];
+        return (response.responded, response.result);
+    }
+
+    /// @notice Check if all assigned nodes have responded
+    function allNodesResponded(bytes32 htxId) external view returns (bool) {
+        Assignment storage a = assignments[htxId];
+        return a.respondedCount == a.nodes.length;
     }
 
     // ------------------------------------------------------------------------
     // Internal helpers
     // ------------------------------------------------------------------------
 
-    /// @dev Selects a node from the active operators using pseudo-random selection
-    /// @param htxId The HTX ID for additional randomness
+    /// @dev Selects nodes until the combined stake meets the required threshold
+    /// @param htxId The HTX ID for randomness
     /// @param activeOperators Array of active operators to choose from
-    /// @return Selected operator address
-    function _chooseNode(bytes32 htxId, address[] memory activeOperators) internal view returns (address) {
-        require(activeOperators.length > 0, "NilAV: no active operators");
+    /// @param requiredStake Minimum total stake needed
+    /// @return selectedNodes Array of selected operator addresses
+    function _selectNodesByStake(bytes32 htxId, address[] memory activeOperators, uint256 requiredStake)
+        internal
+        view
+        returns (address[] memory selectedNodes)
+    {
+        uint256 len = activeOperators.length;
+        require(len != 0, "NilAV: no active operators");
 
-        uint256 rand = uint256(keccak256(abi.encode(block.prevrandao, block.timestamp, htxId)));
-        return activeOperators[rand % activeOperators.length];
+        // Pseudo-random seed
+        uint256 seed = uint256(keccak256(abi.encodePacked(block.prevrandao, htxId)));
+
+        uint256 totalSelectedStake;
+        uint256 selectedCount;
+
+        // We will:
+        //  - do a Fisher–Yates style shuffle in-place on `activeOperators`
+        //  - treat the *front* of the array [0 .. selectedCount-1] as the selected set
+        //
+        // Loop invariant: the segment [0 .. i-1] has already been processed.
+        for (uint256 i; i < len && totalSelectedStake < requiredStake;) {
+            // Fisher–Yates: pick random index in [i, len-1]
+            uint256 remaining = len - i; // How many elements left to shuffle
+            uint256 j = i + (seed % remaining); // Pick a random index in [i, len-1]
+
+            // Swap activeOperators[i] and activeOperators[j]
+            (activeOperators[i], activeOperators[j]) = (activeOperators[j], activeOperators[i]);
+
+            // Get operator stake
+            uint256 operatorStake = stakingOperators.stakeOf(activeOperators[i]);
+
+            if (operatorStake != 0) { // Just consider in case of active operators
+                // Ensure selected operators are packed at the front (e.g., if any operator wasn't selected in the previous iteration of the loop)
+                //  - if i > selectedCount, swap to keep selected ones in [0..selectedCount-1]
+                if (i != selectedCount) {
+                    (activeOperators[i], activeOperators[selectedCount]) =
+                    (activeOperators[selectedCount], activeOperators[i]);
+                }
+
+                totalSelectedStake += operatorStake;
+                unchecked {
+                    ++selectedCount; // Safe because we know i < len and len max is 2**256
+                }
+            }
+
+            // Update seed & increment i
+            seed = uint256(keccak256(abi.encodePacked(seed, i)));
+            unchecked {
+                ++i; // Safe because we know i < len and len max is 2**256
+            }
+        }
+
+        // Now the first `selectedCount` items of `activeOperators` are our result
+        selectedNodes = new address[](selectedCount);
+        for (uint256 i; i < selectedCount;) {
+            selectedNodes[i] = activeOperators[i];
+            unchecked {
+                ++i;
+            }
+        }
     }
 }

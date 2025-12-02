@@ -3,510 +3,466 @@ pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
 import "src/core/NilAVRouter.sol";
+import "src/core/StakingOperators.sol";
+import "src/core/TESTToken.sol";
+import "src/interfaces/Interfaces.sol";
 
 /// @title NilAVRouter Test Suite
-/// @notice Comprehensive tests for the NilAVRouter contract
+/// @notice Comprehensive tests for the NilAVRouter contract with stake-based multi-node assignment
 contract NilAVRouterTest is Test {
     NilAVRouter public router;
+    StakingOperators public stakingOps;
+    TESTToken public token;
 
     // Test addresses
-    address public node1 = address(0x1);
-    address public node2 = address(0x2);
-    address public node3 = address(0x3);
-    address public user1 = address(0x4);
-    address public user2 = address(0x5);
+    address public deployer = address(this);
+    address public operator1 = address(0x1);
+    address public operator2 = address(0x2);
+    address public operator3 = address(0x3);
+    address public operator4 = address(0x4);
+    address public user1 = address(0x5);
+    address public user2 = address(0x6);
 
     // Events to test
-    event NodeRegistered(address indexed node);
-    event NodeDeregistered(address indexed node);
     event HTXSubmitted(bytes32 indexed htxId, bytes32 indexed rawHTXHash, address indexed sender);
     event HTXAssigned(bytes32 indexed htxId, address indexed node);
     event HTXResponded(bytes32 indexed htxId, address indexed node, bool result);
 
     function setUp() public {
-        router = new NilAVRouter();
+        // Deploy token
+        token = new TESTToken(deployer);
+
+        // Deploy staking contract
+        stakingOps = new StakingOperators(IERC20(address(token)), deployer, 7 days);
+
+        // Deploy router with staking contract
+        router = new NilAVRouter(address(stakingOps));
+
+        // Mint tokens for testing
+        token.mint(deployer, 1000 ether);
+
+        // Register operators and stake tokens
+        _registerAndStakeOperator(operator1, 10 ether);
+        _registerAndStakeOperator(operator2, 20 ether);
+        _registerAndStakeOperator(operator3, 30 ether);
+        _registerAndStakeOperator(operator4, 40 ether);
+    }
+
+    function _registerAndStakeOperator(address operator, uint256 amount) internal {
+        token.approve(address(stakingOps), amount);
+        stakingOps.stakeTo(operator, amount);
+
+        vm.startPrank(operator);
+        stakingOps.registerOperator("");
+        vm.stopPrank();
     }
 
     // ========================================================================
-    // Node Registration Tests
+    // Constructor & Initialization Tests
     // ========================================================================
 
-    function testRegisterNode() public {
-        // Register node and verify
-        router.registerNode(node1);
+    function testConstructorWithValidStakingAddress() public {
+        NilAVRouter newRouter = new NilAVRouter(address(stakingOps));
+        assertEq(address(newRouter.stakingOperators()), address(stakingOps));
+    }
 
-        assertTrue(router.isNode(node1), "Node should be registered");
-        assertEq(router.nodeCount(), 1, "Node count should be 1");
+    function testConstructorRevertsWithZeroAddress() public {
+        vm.expectRevert("NilAV: zero staking address");
+        new NilAVRouter(address(0));
+    }
 
-        // Verify node appears in list
+    function testConstantsAreSetCorrectly() public view {
+        assertEq(router.MIN_STAKE_BPS(), 1000, "MIN_STAKE_BPS should be 1000 (10%)");
+        assertEq(router.BPS_DENOMINATOR(), 10000, "BPS_DENOMINATOR should be 10000");
+    }
+
+    // ========================================================================
+    // Node Count & Getter Tests
+    // ========================================================================
+
+    function testNodeCountReturnsActiveOperators() public view {
+        assertEq(router.nodeCount(), 4, "Should have 4 active operators");
+    }
+
+    function testGetNodesReturnsActiveOperators() public view {
         address[] memory nodes = router.getNodes();
-        assertEq(nodes.length, 1, "Nodes array length should be 1");
-        assertEq(nodes[0], node1, "First node should be node1");
+        assertEq(nodes.length, 4, "Should return 4 operators");
+        assertEq(nodes[0], operator1);
+        assertEq(nodes[1], operator2);
+        assertEq(nodes[2], operator3);
+        assertEq(nodes[3], operator4);
     }
 
-    function testRegisterMultipleNodes() public {
-        router.registerNode(node1);
-        router.registerNode(node2);
-        router.registerNode(node3);
+    function testNodeCountUpdatesWhenOperatorDeactivates() public {
+        vm.prank(operator1);
+        stakingOps.deactivateOperator();
 
-        assertEq(router.nodeCount(), 3, "Should have 3 nodes");
-        assertTrue(router.isNode(node1), "node1 should be registered");
-        assertTrue(router.isNode(node2), "node2 should be registered");
-        assertTrue(router.isNode(node3), "node3 should be registered");
-
-        address[] memory nodes = router.getNodes();
-        assertEq(nodes.length, 3, "Nodes array should have 3 elements");
-    }
-
-    function testCannotRegisterZeroAddress() public {
-        vm.expectRevert("NilAV: zero address");
-        router.registerNode(address(0));
-    }
-
-    function testCannotRegisterDuplicateNode() public {
-        router.registerNode(node1);
-
-        vm.expectRevert("NilAV: already registered");
-        router.registerNode(node1);
-    }
-
-    function testRegisterNodeEmitsEvent() public {
-        vm.expectEmit(true, false, false, false);
-        emit NodeRegistered(node1);
-
-        router.registerNode(node1);
+        assertEq(router.nodeCount(), 3, "Should have 3 active operators after deactivation");
     }
 
     // ========================================================================
-    // Node Deregistration Tests
+    // HTX Submission Tests - Multi-Node Assignment
     // ========================================================================
 
-    function testDeregisterNode() public {
-        // Register then deregister
-        router.registerNode(node1);
-        router.deregisterNode(node1);
-
-        assertFalse(router.isNode(node1), "Node should not be registered");
-        assertEq(router.nodeCount(), 0, "Node count should be 0");
-
-        address[] memory nodes = router.getNodes();
-        assertEq(nodes.length, 0, "Nodes array should be empty");
-    }
-
-    function testDeregisterNodeFromMultiple() public {
-        // Register multiple nodes
-        router.registerNode(node1);
-        router.registerNode(node2);
-        router.registerNode(node3);
-
-        // Deregister middle node
-        router.deregisterNode(node2);
-
-        assertEq(router.nodeCount(), 2, "Should have 2 nodes");
-        assertTrue(router.isNode(node1), "node1 should still be registered");
-        assertFalse(router.isNode(node2), "node2 should not be registered");
-        assertTrue(router.isNode(node3), "node3 should still be registered");
-    }
-
-    function testCannotDeregisterUnregisteredNode() public {
-        vm.expectRevert("NilAV: not registered");
-        router.deregisterNode(node1);
-    }
-
-    function testDeregisterNodeEmitsEvent() public {
-        router.registerNode(node1);
-
-        vm.expectEmit(true, false, false, false);
-        emit NodeDeregistered(node1);
-
-        router.deregisterNode(node1);
-    }
-
-    // ========================================================================
-    // HTX Submission Tests
-    // ========================================================================
-
-    function testSubmitHTX() public {
-        router.registerNode(node1);
-
+    function testSubmitHTXAssignsMultipleNodes() public {
         bytes memory htxData = bytes('{"workload_id":{"current":1,"previous":0}}');
         bytes32 htxId = router.submitHTX(htxData);
 
-        // Verify HTX ID is not zero
-        assertTrue(htxId != bytes32(0), "HTX ID should not be zero");
-
-        // Verify assignment was created
-        (address assignedNode, bool responded, bool result) = router.assignments(htxId);
-        assertTrue(assignedNode != address(0), "Node should be assigned");
-        assertEq(assignedNode, node1, "Should be assigned to node1");
-        assertFalse(responded, "Should not have responded yet");
-        assertFalse(result, "Result should be false initially");
+        address[] memory assignedNodes = router.getAssignedNodes(htxId);
+        assertTrue(assignedNodes.length > 0, "Should assign at least one node");
+        assertTrue(assignedNodes.length <= 4, "Should not assign more nodes than available");
     }
 
-    function testSubmitHTXWithMultipleNodes() public {
-        router.registerNode(node1);
-        router.registerNode(node2);
-        router.registerNode(node3);
-
-        bytes memory htxData = bytes('{"test": "data"}');
+    function testSubmitHTXMeets10PercentStakeRequirement() public {
+        bytes memory htxData = bytes('{"workload_id":{"current":1,"previous":0}}');
         bytes32 htxId = router.submitHTX(htxData);
 
-        // Get assignment
-        (address assignedNode,,) = router.assignments(htxId);
+        (address[] memory nodes, uint256 requiredStake, uint256 assignedStake, uint256 respondedCount) =
+            router.getAssignmentInfo(htxId);
 
-        // Should be assigned to one of the registered nodes
-        assertTrue(
-            assignedNode == node1 || assignedNode == node2 || assignedNode == node3,
-            "Should be assigned to a registered node"
-        );
+        uint256 totalStake = stakingOps.totalStaked(); // 100 ether
+        uint256 expectedMinStake = (totalStake * 1000) / 10000; // 10 ether
+
+        assertEq(requiredStake, expectedMinStake, "Required stake should be 10% of total");
+        assertGe(assignedStake, requiredStake, "Assigned stake should meet requirement");
+        assertEq(respondedCount, 0, "No responses yet");
+        assertTrue(nodes.length > 0, "Should have assigned nodes");
     }
 
-    function testCannotSubmitHTXWithNoNodes() public {
-        vm.expectRevert("NilAV: no nodes registered");
-        router.submitHTX(bytes("test"));
+    function testSubmitHTXEmitsMultipleAssignedEvents() public {
+        bytes memory htxData = bytes('{"workload_id":{"current":1,"previous":0}}');
+
+        // We can't predict exact number of nodes, but at least 1 should be assigned
+        vm.recordLogs();
+        bytes32 htxId = router.submitHTX(htxData);
+
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+
+        // Count HTXAssigned events
+        uint256 assignedEventCount = 0;
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].topics[0] == keccak256("HTXAssigned(bytes32,address)")) {
+                assignedEventCount++;
+            }
+        }
+
+        assertTrue(assignedEventCount > 0, "Should emit at least one HTXAssigned event");
+
+        // Verify assignment count matches events
+        address[] memory assignedNodes = router.getAssignedNodes(htxId);
+        assertEq(assignedEventCount, assignedNodes.length, "Event count should match assigned nodes");
+    }
+
+    function testSubmitHTXEmitsHTXSubmittedEvent() public {
+        bytes memory htxData = bytes('{"workload_id":{"current":1,"previous":0}}');
+        bytes32 expectedHash = keccak256(htxData);
+
+        vm.expectEmit(false, true, true, true);
+        emit HTXSubmitted(bytes32(0), expectedHash, address(this));
+
+        router.submitHTX(htxData);
+    }
+
+    function testSubmitHTXGeneratesUniqueIds() public {
+        bytes memory htxData1 = bytes('{"workload_id":{"current":1}}');
+        bytes memory htxData2 = bytes('{"workload_id":{"current":2}}');
+
+        bytes32 htxId1 = router.submitHTX(htxData1);
+        bytes32 htxId2 = router.submitHTX(htxData2);
+
+        assertTrue(htxId1 != htxId2, "HTX IDs should be unique");
+    }
+
+    function testSubmitHTXRevertsWithNoActiveOperators() public {
+        // Deactivate all operators
+        vm.prank(operator1);
+        stakingOps.deactivateOperator();
+        vm.prank(operator2);
+        stakingOps.deactivateOperator();
+        vm.prank(operator3);
+        stakingOps.deactivateOperator();
+        vm.prank(operator4);
+        stakingOps.deactivateOperator();
+
+        bytes memory htxData = bytes('{"test":"data"}');
+
+        vm.expectRevert("NilAV: no active operators");
+        router.submitHTX(htxData);
+    }
+
+    function testSubmitHTXRevertsWithNoActiveOperators_NoStake() public {
+        // Deploy new staking contract with no stake
+        StakingOperators emptyStaking = new StakingOperators(IERC20(address(token)), deployer, 7 days);
+        NilAVRouter emptyRouter = new NilAVRouter(address(emptyStaking));
+
+        // Try to submit HTX without any operators
+        bytes memory htxData = bytes('{"test":"data"}');
+
+        vm.expectRevert("NilAV: no active operators");
+        emptyRouter.submitHTX(htxData);
     }
 
     function testCannotSubmitDuplicateHTX() public {
-        router.registerNode(node1);
+        bytes memory htxData = bytes('{"workload_id":{"current":1}}');
 
-        bytes memory htxData = bytes('{"test": "data"}');
-
-        // Submit once from user1
-        vm.prank(user1);
         router.submitHTX(htxData);
 
-        // Try to submit the same data from same address in same block
-        vm.prank(user1);
         vm.expectRevert("NilAV: HTX already exists");
         router.submitHTX(htxData);
     }
 
-    function testSubmitHTXEmitsEvents() public {
-        router.registerNode(node1);
-
-        bytes memory htxData = bytes('{"test": "data"}');
-        bytes32 rawHTXHash = keccak256(htxData);
-
-        // Calculate expected htxId
-        bytes32 expectedHtxId = keccak256(abi.encode(rawHTXHash, address(this), block.number));
-
-        // Expect HTXSubmitted event
-        vm.expectEmit(true, true, true, false);
-        emit HTXSubmitted(expectedHtxId, rawHTXHash, address(this));
-
-        // Expect HTXAssigned event
-        vm.expectEmit(true, true, false, false);
-        emit HTXAssigned(expectedHtxId, node1);
-
-        router.submitHTX(htxData);
-    }
-
-    function testHTXIDIsDeterministic() public {
-        router.registerNode(node1);
-
-        bytes memory htxData = bytes('{"test": "data"}');
-        bytes32 rawHTXHash = keccak256(htxData);
-
-        // Calculate expected htxId
-        bytes32 expectedHtxId = keccak256(abi.encode(rawHTXHash, address(this), block.number));
-
-        bytes32 actualHtxId = router.submitHTX(htxData);
-
-        assertEq(actualHtxId, expectedHtxId, "HTX ID should match expected value");
-    }
-
-    function testSubmitHTXFromDifferentSenders() public {
-        router.registerNode(node1);
-
-        bytes memory htxData = bytes('{"test": "data"}');
-
-        // Submit from user1
-        vm.prank(user1);
-        bytes32 htxId1 = router.submitHTX(htxData);
-
-        // Submit same data from user2 - should succeed with different htxId
-        vm.prank(user2);
-        bytes32 htxId2 = router.submitHTX(htxData);
-
-        assertTrue(htxId1 != htxId2, "HTX IDs should be different for different senders");
-    }
-
     // ========================================================================
-    // HTX Response Tests
+    // HTX Response Tests - Multi-Node
     // ========================================================================
 
-    function testRespondHTXTrue() public {
-        router.registerNode(node1);
-
-        bytes memory htxData = bytes('{"test": "data"}');
+    function testRespondHTXByAssignedNode() public {
+        bytes memory htxData = bytes('{"test":"data"}');
         bytes32 htxId = router.submitHTX(htxData);
 
-        // Node responds with true
-        vm.prank(node1);
+        address[] memory assignedNodes = router.getAssignedNodes(htxId);
+        address firstNode = assignedNodes[0];
+
+        vm.prank(firstNode);
         router.respondHTX(htxId, true);
 
-        // Verify response
-        (address assignedNode, bool responded, bool result) = router.assignments(htxId);
-        assertEq(assignedNode, node1, "Assigned node should be node1");
-        assertTrue(responded, "Should have responded");
+        (bool responded, bool result) = router.hasNodeResponded(htxId, firstNode);
+        assertTrue(responded, "Node should have responded");
         assertTrue(result, "Result should be true");
     }
 
-    function testRespondHTXFalse() public {
-        router.registerNode(node1);
-
-        bytes memory htxData = bytes('{"test": "data"}');
+    function testMultipleNodesCanRespond() public {
+        bytes memory htxData = bytes('{"test":"data"}');
         bytes32 htxId = router.submitHTX(htxData);
 
-        // Node responds with false
-        vm.prank(node1);
-        router.respondHTX(htxId, false);
+        address[] memory assignedNodes = router.getAssignedNodes(htxId);
 
-        // Verify response
-        (, bool responded, bool result) = router.assignments(htxId);
-        assertTrue(responded, "Should have responded");
-        assertFalse(result, "Result should be false");
+        // Have each node respond
+        for (uint256 i = 0; i < assignedNodes.length; i++) {
+            vm.prank(assignedNodes[i]);
+            router.respondHTX(htxId, i % 2 == 0); // Alternate true/false
+        }
+
+        // Verify all responded
+        assertTrue(router.allNodesResponded(htxId), "All nodes should have responded");
+
+        (,,, uint256 respondedCount) = router.getAssignmentInfo(htxId);
+        assertEq(respondedCount, assignedNodes.length, "Responded count should match node count");
+    }
+
+    function testRespondHTXEmitsEvent() public {
+        bytes memory htxData = bytes('{"test":"data"}');
+        bytes32 htxId = router.submitHTX(htxData);
+
+        address[] memory assignedNodes = router.getAssignedNodes(htxId);
+        address node = assignedNodes[0];
+
+        vm.expectEmit(true, true, false, true);
+        emit HTXResponded(htxId, node, true);
+
+        vm.prank(node);
+        router.respondHTX(htxId, true);
     }
 
     function testCannotRespondToUnknownHTX() public {
-        router.registerNode(node1);
-
         bytes32 fakeHtxId = keccak256("fake");
 
-        vm.prank(node1);
+        vm.prank(operator1);
         vm.expectRevert("NilAV: unknown HTX");
         router.respondHTX(fakeHtxId, true);
     }
 
-    function testCannotRespondIfNotAssignedNode() public {
-        router.registerNode(node1);
-        router.registerNode(node2);
-
-        bytes memory htxData = bytes('{"test": "data"}');
+    function testCannotRespondIfNotAssigned() public {
+        bytes memory htxData = bytes('{"test":"data"}');
         bytes32 htxId = router.submitHTX(htxData);
 
-        // Get assigned node
-        (address assignedNode,,) = router.assignments(htxId);
+        address[] memory assignedNodes = router.getAssignedNodes(htxId);
 
-        // Try to respond from non-assigned node
-        address nonAssignedNode = assignedNode == node1 ? node2 : node1;
+        // Find an operator that wasn't assigned
+        address unassignedNode;
+        address[] memory allOperators = new address[](4);
+        allOperators[0] = operator1;
+        allOperators[1] = operator2;
+        allOperators[2] = operator3;
+        allOperators[3] = operator4;
 
-        vm.prank(nonAssignedNode);
-        vm.expectRevert("NilAV: not assigned node");
-        router.respondHTX(htxId, true);
+        for (uint256 i = 0; i < allOperators.length; i++) {
+            bool isAssigned = false;
+            for (uint256 j = 0; j < assignedNodes.length; j++) {
+                if (allOperators[i] == assignedNodes[j]) {
+                    isAssigned = true;
+                    break;
+                }
+            }
+            if (!isAssigned) {
+                unassignedNode = allOperators[i];
+                break;
+            }
+        }
+
+        if (unassignedNode != address(0)) {
+            vm.prank(unassignedNode);
+            vm.expectRevert("NilAV: not assigned node");
+            router.respondHTX(htxId, true);
+        }
     }
 
     function testCannotRespondTwice() public {
-        router.registerNode(node1);
-
-        bytes memory htxData = bytes('{"test": "data"}');
+        bytes memory htxData = bytes('{"test":"data"}');
         bytes32 htxId = router.submitHTX(htxData);
 
-        // First response
-        vm.prank(node1);
+        address[] memory assignedNodes = router.getAssignedNodes(htxId);
+        address node = assignedNodes[0];
+
+        vm.startPrank(node);
         router.respondHTX(htxId, true);
 
-        // Second response attempt
-        vm.prank(node1);
         vm.expectRevert("NilAV: already responded");
         router.respondHTX(htxId, false);
-    }
-
-    function testRespondHTXEmitsEvent() public {
-        router.registerNode(node1);
-
-        bytes memory htxData = bytes('{"test": "data"}');
-        bytes32 htxId = router.submitHTX(htxData);
-
-        vm.expectEmit(true, true, false, true);
-        emit HTXResponded(htxId, node1, true);
-
-        vm.prank(node1);
-        router.respondHTX(htxId, true);
+        vm.stopPrank();
     }
 
     // ========================================================================
     // View Function Tests
     // ========================================================================
 
-    function testGetAssignment() public {
-        router.registerNode(node1);
-
-        bytes memory htxData = bytes('{"test": "data"}');
+    function testGetAssignedNodes() public {
+        bytes memory htxData = bytes('{"test":"data"}');
         bytes32 htxId = router.submitHTX(htxData);
 
-        NilAVRouter.Assignment memory assignment = router.getAssignment(htxId);
+        address[] memory nodes = router.getAssignedNodes(htxId);
+        assertTrue(nodes.length > 0, "Should return assigned nodes");
 
-        assertEq(assignment.node, node1, "Assignment node should be node1");
-        assertFalse(assignment.responded, "Assignment should not have responded");
-        assertFalse(assignment.result, "Assignment result should be false");
-    }
-
-    function testGetNodesReturnsCorrectList() public {
-        router.registerNode(node1);
-        router.registerNode(node2);
-
-        address[] memory nodes = router.getNodes();
-
-        assertEq(nodes.length, 2, "Should have 2 nodes");
-
-        // Check both nodes are in the list (order doesn't matter)
-        bool foundNode1 = false;
-        bool foundNode2 = false;
-
+        // Verify all nodes are active operators
+        address[] memory activeOps = stakingOps.getActiveOperators();
         for (uint256 i = 0; i < nodes.length; i++) {
-            if (nodes[i] == node1) foundNode1 = true;
-            if (nodes[i] == node2) foundNode2 = true;
-        }
-
-        assertTrue(foundNode1, "node1 should be in the list");
-        assertTrue(foundNode2, "node2 should be in the list");
-    }
-
-    function testNodeAtIndex() public {
-        router.registerNode(node1);
-        router.registerNode(node2);
-
-        address firstNode = router.nodes(0);
-        address secondNode = router.nodes(1);
-
-        assertTrue(
-            (firstNode == node1 && secondNode == node2) || (firstNode == node2 && secondNode == node1),
-            "Nodes should be retrievable by index"
-        );
-    }
-
-    // ========================================================================
-    // Complex Workflow Tests
-    // ========================================================================
-
-    function testCompleteWorkflow() public {
-        // 1. Register multiple nodes
-        router.registerNode(node1);
-        router.registerNode(node2);
-        router.registerNode(node3);
-        assertEq(router.nodeCount(), 3, "Should have 3 nodes");
-
-        // 2. Submit HTX
-        bytes memory htxData = bytes('{"workload_id":{"current":1,"previous":0}}');
-        bytes32 htxId = router.submitHTX(htxData);
-
-        // 3. Get assignment
-        (address assignedNode, bool responded, bool result) = router.assignments(htxId);
-        assertTrue(assignedNode != address(0), "Should have assigned node");
-
-        // 4. Respond to HTX
-        vm.prank(assignedNode);
-        router.respondHTX(htxId, true);
-
-        // 5. Verify response was recorded
-        (, responded, result) = router.assignments(htxId);
-        assertTrue(responded, "Should have responded");
-        assertTrue(result, "Result should be true");
-
-        // 6. Deregister a node that wasn't assigned
-        address nodeToRemove = assignedNode == node1 ? node2 : node1;
-        router.deregisterNode(nodeToRemove);
-        assertEq(router.nodeCount(), 2, "Should have 2 nodes after deregistration");
-    }
-
-    function testMultipleHTXSubmissions() public {
-        router.registerNode(node1);
-        router.registerNode(node2);
-
-        // Submit multiple HTXs
-        bytes32[] memory htxIds = new bytes32[](5);
-
-        for (uint256 i = 0; i < 5; i++) {
-            bytes memory htxData = abi.encodePacked('{"htx":', i, "}");
-            htxIds[i] = router.submitHTX(htxData);
-        }
-
-        // Verify all HTXs have assignments
-        for (uint256 i = 0; i < 5; i++) {
-            (address assignedNode,,) = router.assignments(htxIds[i]);
-            assertTrue(assignedNode != address(0), "HTX should have assigned node");
-            assertTrue(router.isNode(assignedNode), "Assigned node should be registered");
+            bool found = false;
+            for (uint256 j = 0; j < activeOps.length; j++) {
+                if (nodes[i] == activeOps[j]) {
+                    found = true;
+                    break;
+                }
+            }
+            assertTrue(found, "Assigned node should be an active operator");
         }
     }
 
-    // ========================================================================
-    // Fuzz Tests
-    // ========================================================================
-
-    function testFuzzRegisterNode(address nodeAddr) public {
-        vm.assume(nodeAddr != address(0));
-        vm.assume(!router.isNode(nodeAddr));
-
-        router.registerNode(nodeAddr);
-        assertTrue(router.isNode(nodeAddr), "Node should be registered");
-    }
-
-    function testFuzzSubmitHTX(bytes calldata htxData) public {
-        vm.assume(htxData.length > 0);
-
-        router.registerNode(node1);
+    function testAllNodesRespondedReturnsFalseInitially() public {
+        bytes memory htxData = bytes('{"test":"data"}');
         bytes32 htxId = router.submitHTX(htxData);
 
-        (address assignedNode,,) = router.assignments(htxId);
-        assertEq(assignedNode, node1, "Should be assigned to node1");
+        assertFalse(router.allNodesResponded(htxId), "Should return false before responses");
     }
 
-    function testFuzzRespondHTX(bool response) public {
-        router.registerNode(node1);
-
-        bytes memory htxData = bytes('{"test": "data"}');
+    function testAllNodesRespondedReturnsTrueAfterAllRespond() public {
+        bytes memory htxData = bytes('{"test":"data"}');
         bytes32 htxId = router.submitHTX(htxData);
 
-        vm.prank(node1);
-        router.respondHTX(htxId, response);
+        address[] memory assignedNodes = router.getAssignedNodes(htxId);
 
-        (,, bool result) = router.assignments(htxId);
-        assertEq(result, response, "Response should match input");
+        // All nodes respond
+        for (uint256 i = 0; i < assignedNodes.length; i++) {
+            vm.prank(assignedNodes[i]);
+            router.respondHTX(htxId, true);
+        }
+
+        assertTrue(router.allNodesResponded(htxId), "Should return true after all respond");
     }
 
     // ========================================================================
-    // Edge Case Tests
+    // Stake Distribution Tests
     // ========================================================================
 
-    function testEmptyHTXData() public {
-        router.registerNode(node1);
+    function testDifferentStakeDistributionsSelectCorrectly() public {
+        // Test with operators having vastly different stakes
+        // operator1: 10 ether, operator2: 20 ether, operator3: 30 ether, operator4: 40 ether
+        // Total: 100 ether, Required: 10 ether
 
+        bytes memory htxData = bytes('{"test":"data"}');
+        bytes32 htxId = router.submitHTX(htxData);
+
+        (address[] memory nodes, uint256 requiredStake, uint256 assignedStake,) = router.getAssignmentInfo(htxId);
+
+        assertEq(requiredStake, 10 ether, "Required should be 10 ether");
+        assertGe(assignedStake, 10 ether, "Assigned should be >= 10 ether");
+
+        // With these stakes, could be 1 node (operator4) or multiple smaller nodes
+        assertTrue(nodes.length >= 1 && nodes.length <= 4, "Should select appropriate number of nodes");
+    }
+
+    function testSingleLargeStakerIsAssigned() public {
+        // Deploy new setup where one operator has >10% stake
+        TESTToken newToken = new TESTToken(deployer);
+        StakingOperators newStaking = new StakingOperators(IERC20(address(newToken)), deployer, 7 days);
+        NilAVRouter newRouter = new NilAVRouter(address(newStaking));
+
+        newToken.mint(deployer, 1000 ether);
+
+        // Register operator with large stake
+        newToken.approve(address(newStaking), 100 ether);
+        newStaking.stakeTo(operator1, 100 ether);
+
+        vm.prank(operator1);
+        newStaking.registerOperator("");
+
+        bytes memory htxData = bytes('{"test":"data"}');
+        bytes32 htxId = newRouter.submitHTX(htxData);
+
+        address[] memory nodes = newRouter.getAssignedNodes(htxId);
+        assertEq(nodes.length, 1, "Should only need one operator");
+        assertEq(nodes[0], operator1, "Should select the large staker");
+    }
+
+    // ========================================================================
+    // Edge Cases
+    // ========================================================================
+
+    function testSubmitHTXWithEmptyData() public {
         bytes memory emptyData = bytes("");
         bytes32 htxId = router.submitHTX(emptyData);
 
-        assertTrue(htxId != bytes32(0), "Should accept empty HTX data");
+        assertTrue(htxId != bytes32(0), "Should generate valid HTX ID even with empty data");
+        address[] memory nodes = router.getAssignedNodes(htxId);
+        assertTrue(nodes.length > 0, "Should still assign nodes");
     }
 
-    function testLargeHTXData() public {
-        router.registerNode(node1);
-
-        // Create large HTX data (1KB)
-        bytes memory largeData = new bytes(1024);
-        for (uint256 i = 0; i < 1024; i++) {
+    function testSubmitHTXWithLargeData() public {
+        bytes memory largeData = new bytes(10000);
+        for (uint256 i = 0; i < largeData.length; i++) {
             largeData[i] = bytes1(uint8(i % 256));
         }
 
         bytes32 htxId = router.submitHTX(largeData);
-        assertTrue(htxId != bytes32(0), "Should accept large HTX data");
+        assertTrue(htxId != bytes32(0), "Should handle large data");
     }
 
-    function testDeregisterLastNode() public {
-        router.registerNode(node1);
-        router.deregisterNode(node1);
+    function testMultipleHTXSubmissionsAssignDifferently() public {
+        bytes32[] memory htxIds = new bytes32[](5);
 
-        assertEq(router.nodeCount(), 0, "Should have no nodes");
+        for (uint256 i = 0; i < 5; i++) {
+            bytes memory htxData = abi.encodePacked('{"index":', i, "}");
+            htxIds[i] = router.submitHTX(htxData);
+        }
 
-        address[] memory nodes = router.getNodes();
-        assertEq(nodes.length, 0, "Nodes array should be empty");
-    }
+        // Check that assignments vary (randomness working)
+        address[] memory firstAssignment = router.getAssignedNodes(htxIds[0]);
+        bool foundDifferent = false;
 
-    function testRegisterAfterDeregister() public {
-        router.registerNode(node1);
-        router.deregisterNode(node1);
-        router.registerNode(node1);
+        for (uint256 i = 1; i < 5; i++) {
+            address[] memory assignment = router.getAssignedNodes(htxIds[i]);
+            if (assignment.length != firstAssignment.length) {
+                foundDifferent = true;
+                break;
+            }
+            for (uint256 j = 0; j < assignment.length; j++) {
+                if (assignment[j] != firstAssignment[j]) {
+                    foundDifferent = true;
+                    break;
+                }
+            }
+            if (foundDifferent) break;
+        }
 
-        assertTrue(router.isNode(node1), "Node should be registered again");
-        assertEq(router.nodeCount(), 1, "Should have 1 node");
+        // Note: This might occasionally fail due to randomness, but unlikely with 5 submissions
+        assertTrue(foundDifferent, "Should have some variation in assignments");
     }
 }

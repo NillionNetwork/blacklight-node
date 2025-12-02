@@ -181,6 +181,7 @@ contract StakingOperators is IStakingOperators, AccessControl, ReentrancyGuard {
     function stakeTo(address operator, uint256 amount) external override nonReentrant {
         if (operator == address(0)) revert ZeroAddress();
         if (amount == 0) revert ZeroAmount();
+        if (block.timestamp < _jailedUntil[operator]) revert OperatorJailed();
 
         Unbonding storage u = unbondings[operator];
         address currentStaker = operatorStaker[operator];
