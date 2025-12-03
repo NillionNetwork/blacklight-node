@@ -62,6 +62,32 @@ impl StakingOperatorsClient {
     }
 
     // ------------------------------------------------------------------------
+    // Event Query Functions
+    // ------------------------------------------------------------------------
+
+    /// Get historical Staked events
+    /// Set lookback_blocks to u64::MAX to search entire history
+    pub async fn get_staked_events(&self, lookback_blocks: u64) -> anyhow::Result<Vec<StakedToFilter>> {
+        use ethers::providers::Middleware;
+
+        let from_block = if lookback_blocks == u64::MAX {
+            0
+        } else {
+            let provider = self.contract.client();
+            let current_block = provider.get_block_number().await?.as_u64();
+            current_block.saturating_sub(lookback_blocks)
+        };
+
+        let events = self
+            .contract
+            .event::<StakedToFilter>()
+            .from_block(from_block)
+            .query()
+            .await?;
+        Ok(events)
+    }
+
+    // ------------------------------------------------------------------------
     // Staking Functions
     // ------------------------------------------------------------------------
 

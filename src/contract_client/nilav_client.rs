@@ -44,7 +44,7 @@ impl NilAVClient {
 
         let router = Arc::new(NilAVRouterClient::new(provider.clone(), config.clone()));
         let token = Arc::new(TESTTokenClient::new(provider.clone(), config.clone()));
-        let staking = Arc::new(StakingOperatorsClient::new(provider.clone(), config));
+        let staking = Arc::new(StakingOperatorsClient::new(provider.clone(), config.clone()));
 
         Ok(Self {
             provider,

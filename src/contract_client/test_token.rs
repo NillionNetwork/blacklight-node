@@ -105,4 +105,63 @@ impl TESTTokenClient {
         let receipt = receipt.ok_or_else(|| anyhow::anyhow!("No transaction receipt"))?;
         Ok(receipt.transaction_hash)
     }
+
+    // ------------------------------------------------------------------------
+    // Event Query Functions
+    // ------------------------------------------------------------------------
+
+    /// Get historical Transfer events
+    /// Set lookback_blocks to u64::MAX to search entire history
+    pub async fn get_transfer_events(&self, lookback_blocks: u64) -> anyhow::Result<Vec<TransferFilter>> {
+        use ethers::providers::Middleware;
+
+        let from_block = if lookback_blocks == u64::MAX {
+            0
+        } else {
+            let provider = self.contract.client();
+            let current_block = provider.get_block_number().await?.as_u64();
+            current_block.saturating_sub(lookback_blocks)
+        };
+
+        let events = self
+            .contract
+            .event::<TransferFilter>()
+            .from_block(from_block)
+            .query()
+            .await?;
+        Ok(events)
+    }
+
+    // ------------------------------------------------------------------------
+    // Event Listening Functions
+    // ------------------------------------------------------------------------
+
+    /// Start listening for Transfer events (including mints where from == address(0))
+    pub async fn listen_transfer_events<F, Fut>(
+        self: Arc<Self>,
+        mut callback: F,
+    ) -> anyhow::Result<()>
+    where
+        F: FnMut(TransferFilter) -> Fut + Send,
+        Fut: std::future::Future<Output = anyhow::Result<()>> + Send,
+    {
+        use ethers::providers::StreamExt;
+
+        let event_stream = self.contract.event::<TransferFilter>();
+        let mut events = event_stream.subscribe().await?;
+
+        while let Some(event_result) = events.next().await {
+            match event_result {
+                Ok(event) => {
+                    if let Err(e) = callback(event).await {
+                        tracing::error!("Error processing Transfer event: {}", e);
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("Error receiving Transfer event: {}", e);
+                }
+            }
+        }
+        Ok(())
+    }
 }
