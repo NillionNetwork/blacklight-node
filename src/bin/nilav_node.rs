@@ -8,11 +8,26 @@ use nilav::{
     types::Htx,
     verification::verify_htx,
 };
+use std::sync::Arc;
+use tokio::sync::Notify;
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
+/// Setup shutdown signal handler (Ctrl+C / SIGTERM)
+async fn setup_shutdown_handler(shutdown_notify: Arc<Notify>) {
+    match tokio::signal::ctrl_c().await {
+        Ok(()) => {
+            info!("Shutdown signal received (Ctrl+C)");
+            shutdown_notify.notify_waiters();
+        }
+        Err(err) => {
+            error!(error = %err, "Failed to listen for shutdown signal");
+        }
+    }
+}
+
 /// Process a single HTX assignment - verifies and submits result
-async fn process_htx_assignment(client: std::sync::Arc<NilAVClient>, htx_id: H256) -> Result<()> {
+async fn process_htx_assignment(client: Arc<NilAVClient>, htx_id: H256) -> Result<()> {
     // Retrieve the HTX data from the contract
     let htx_bytes = client.router.get_htx(htx_id).await.map_err(|e| {
         error!(
@@ -103,13 +118,23 @@ async fn main() -> Result<()> {
 
     info!("Node initialized");
 
+    // Setup graceful shutdown handler
+    let shutdown_notify = Arc::new(Notify::new());
+    let shutdown_notify_clone = shutdown_notify.clone();
+    tokio::spawn(async move {
+        setup_shutdown_handler(shutdown_notify_clone).await;
+    });
+
     // Start WebSocket event listener with auto-reconnection
     info!("Starting real-time WebSocket event listener with auto-reconnection");
+    info!("Press Ctrl+C to gracefully shutdown and deregister");
 
     // Reconnection loop - will restart the listener if it fails
     let mut reconnect_delay = std::time::Duration::from_secs(INITIAL_RECONNECT_DELAY_SECS);
     let max_reconnect_delay = std::time::Duration::from_secs(MAX_RECONNECT_DELAY_SECS);
     let mut registered = false;
+    #[allow(unused_assignments)]
+    let mut node_address = None;
 
     loop {
         info!("Connecting WebSocket listener");
@@ -141,12 +166,14 @@ async fn main() -> Result<()> {
         };
 
         // Register node if not already registered
-        let node_address = client.signer_address();
+        let current_address = client.signer_address();
+        node_address = Some(current_address);
+        
         if !registered {
-            info!(node_address = %node_address, "Registering node with contract");
+            info!(node_address = %current_address, "Registering node with contract");
 
             // Check if already registered
-            match client.staking.is_active_operator(node_address).await {
+            match client.staking.is_active_operator(current_address).await {
                 Ok(is_registered) => {
                     if is_registered {
                         info!("Node already registered");
@@ -184,7 +211,7 @@ async fn main() -> Result<()> {
             }
         }
 
-        let client_arc = std::sync::Arc::new(client);
+        let client_arc = Arc::new(client);
 
         // IMPORTANT: Process any backlog of assignments that happened before we connected
         // Query historical HTX assigned events for this node
@@ -193,7 +220,7 @@ async fn main() -> Result<()> {
             Ok(assigned_events) => {
                 let pending: Vec<_> = assigned_events
                     .iter()
-                    .filter(|e| e.node == node_address)
+                    .filter(|e| e.node == current_address)
                     .collect();
 
                 if !pending.is_empty() {
@@ -208,7 +235,7 @@ async fn main() -> Result<()> {
                         // Check if already responded
                         match client_arc
                             .router
-                            .has_node_responded(htx_id, node_address)
+                            .has_node_responded(htx_id, current_address)
                             .await
                         {
                             Ok((responded, _result)) if responded => {
@@ -257,10 +284,13 @@ async fn main() -> Result<()> {
 
         // Start listening for HTX assigned events for this specific node
         let client_for_callback = client_arc.clone();
-        let listen_result = client_arc
+        let shutdown_notify_listener = shutdown_notify.clone();
+        
+        // Use tokio::select to listen for either events or shutdown signal
+        let listen_future = client_arc
             .router
             .clone()
-            .listen_htx_assigned_for_node(node_address, move |event| {
+            .listen_htx_assigned_for_node(current_address, move |event| {
                 let client = client_for_callback.clone();
 
                 async move {
@@ -304,8 +334,16 @@ async fn main() -> Result<()> {
                     // Return immediately to allow processing next event
                     Ok(())
                 }
-            })
-            .await;
+            });
+        
+        // Listen for either events or shutdown signal
+        let listen_result = tokio::select! {
+            result = listen_future => result,
+            _ = shutdown_notify_listener.notified() => {
+                info!("Shutdown signal received during event listening");
+                break;
+            }
+        };
 
         // If we reach here, the listener has exited (connection dropped or error)
         match listen_result {
@@ -327,4 +365,37 @@ async fn main() -> Result<()> {
         tokio::time::sleep(reconnect_delay).await;
         reconnect_delay = std::cmp::min(reconnect_delay * 2, max_reconnect_delay);
     }
+
+    // Graceful shutdown - deactivate node from contract
+    info!("Initiating graceful shutdown");
+    if let Some(addr) = node_address {
+        info!(node_address = %addr, "Deactivating node from contract");
+        // Create client for deactivation
+        let contract_config = ContractConfig::new(
+            config.rpc_url.clone(),
+            config.router_contract_address,
+            config.staking_contract_address,
+            config.token_contract_address,
+        );
+        match NilAVClient::new(contract_config, config.private_key.clone()).await {
+            Ok(client) => {
+                match client.staking.deactivate_operator().await {
+                    Ok(tx_hash) => {
+                        info!(tx_hash = ?tx_hash, "Node deactivated successfully");
+                    }
+                    Err(e) => {
+                        error!(error = %e, "Failed to deactivate node");
+                    }
+                }
+            }
+            Err(e) => {
+                error!(error = %e, "Failed to create client for deactivation");
+            }
+        }
+    } else {
+        warn!("Node was never registered, skipping deactivation");
+    }
+    
+    info!("Shutdown complete");
+    Ok(())
 }
