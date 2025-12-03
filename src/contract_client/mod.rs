@@ -155,19 +155,27 @@ mod tests {
 
     #[test]
     fn test_config_creation() {
+        let router_address = "0x89c1312Cedb0B0F67e4913D2076bd4a860652B69"
+            .parse::<Address>()
+            .unwrap();
+        let staking_address = "0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9"
+            .parse::<Address>()
+            .unwrap();
+        let token_address = "0x5FC8d32690cc91D4c39d9d3abcBD16989F875707"
+            .parse::<Address>()
+            .unwrap();
+        
         let config = ContractConfig::new(
             "http://localhost:8545".to_string(),
-            "0x89c1312Cedb0B0F67e4913D2076bd4a860652B69"
-                .to_string()
-                .parse::<Address>()
-                .unwrap(),
+            router_address,
+            staking_address,
+            token_address,
         );
-        assert_eq!(
-            config.router_contract_address,
-            "0x89c1312Cedb0B0F67e4913D2076bd4a860652B69"
-                .parse::<Address>()
-                .unwrap()
-        );
+        
+        assert_eq!(config.router_contract_address, router_address);
+        assert_eq!(config.staking_contract_address, staking_address);
+        assert_eq!(config.token_contract_address, token_address);
+        assert_eq!(config.rpc_url, "http://localhost:8545");
     }
 
     #[test]
@@ -180,14 +188,52 @@ mod tests {
     // Helper function to create a test WebSocket client
     // Note: These tests require a local Ethereum node (e.g., Hardhat, Ganache, or Anvil)
     async fn create_test_client() -> Result<NilAVWsClient, Box<dyn std::error::Error>> {
+        use ethers::{
+            middleware::{NonceManagerMiddleware, SignerMiddleware},
+            providers::{Middleware, Provider, Ws},
+            signers::{LocalWallet, Signer},
+        };
+        use std::sync::Arc;
+
         let rpc_url =
             env::var("TEST_RPC_URL").unwrap_or_else(|_| "http://localhost:8545".to_string());
-        let private_key = env::var("TEST_PRIVATE_KEY").ok();
-        let contract_address = "0x89c1312Cedb0B0F67e4913D2076bd4a860652B69"
+        let private_key = env::var("TEST_PRIVATE_KEY")
+            .unwrap_or_else(|_| "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string());
+        
+        let router_address = "0x89c1312Cedb0B0F67e4913D2076bd4a860652B69"
+            .parse::<Address>()
+            .unwrap();
+        let staking_address = "0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9"
+            .parse::<Address>()
+            .unwrap();
+        let token_address = "0x5FC8d32690cc91D4c39d9d3abcBD16989F875707"
             .parse::<Address>()
             .unwrap();
 
-        let client = NilAVWsClient::new(rpc_url, contract_address, private_key.unwrap()).await?;
+        // Convert HTTP URL to WebSocket URL
+        let ws_url = rpc_url
+            .replace("http://", "ws://")
+            .replace("https://", "wss://");
+
+        // Connect with keepalive enabled
+        let provider = Provider::<Ws>::connect_with_reconnects(&ws_url, usize::MAX).await?;
+        let chain_id = provider.get_chainid().await?;
+
+        let wallet = private_key
+            .parse::<LocalWallet>()?
+            .with_chain_id(chain_id.as_u64());
+
+        // Wrap with SignerMiddleware first, then NonceManagerMiddleware
+        let wallet_address = wallet.address();
+        let signer_middleware = SignerMiddleware::new(provider, wallet);
+        let provider = Arc::new(NonceManagerMiddleware::new(
+            signer_middleware,
+            wallet_address,
+        ));
+
+        let config = ContractConfig::new(rpc_url, router_address, staking_address, token_address);
+        let client = NilAVWsClient::new(provider, config);
+        
         Ok(client)
     }
 
