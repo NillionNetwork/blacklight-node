@@ -64,4 +64,24 @@ impl NilAVClient {
         let address = self.signer_address();
         Ok(self.provider.get_balance(address, None).await?)
     }
+
+    /// Get the balance of a specific address
+    pub async fn get_balance_of(&self, address: Address) -> anyhow::Result<U256> {
+        Ok(self.provider.get_balance(address, None).await?)
+    }
+
+    /// Send ETH to an address
+    pub async fn send_eth(&self, to: Address, amount: U256) -> anyhow::Result<ethers::types::H256> {
+        use ethers::providers::Middleware;
+        use ethers::types::TransactionRequest;
+
+        let tx = TransactionRequest::new()
+            .to(to)
+            .value(amount);
+
+        let pending_tx = self.provider.send_transaction(tx, None).await?;
+        let receipt = pending_tx.await?;
+        let receipt = receipt.ok_or_else(|| anyhow::anyhow!("No transaction receipt"))?;
+        Ok(receipt.transaction_hash)
+    }
 }

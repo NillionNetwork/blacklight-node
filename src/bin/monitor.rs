@@ -57,6 +57,7 @@ struct NodeInfo {
     address: Address,
     stake: U256,
     is_registered: bool,
+    eth_balance: U256,
 }
 
 #[derive(Debug, Clone)]
@@ -81,6 +82,14 @@ enum MintingInputField {
     None,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum TransferInputField {
+    PrivateKey,
+    TargetAddress,
+    Amount,
+    None,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Tab {
     Overview,
@@ -89,6 +98,7 @@ enum Tab {
     Staking,
     Minting,
     TokenHolders,
+    TransferETH,
 }
 
 impl Tab {
@@ -100,6 +110,7 @@ impl Tab {
             Tab::Staking => "Staking",
             Tab::Minting => "Mint Tokens",
             Tab::TokenHolders => "Token Holders",
+            Tab::TransferETH => "Transfer ETH",
         }
     }
 
@@ -110,18 +121,20 @@ impl Tab {
             Tab::HTXTracking => Tab::Staking,
             Tab::Staking => Tab::Minting,
             Tab::Minting => Tab::TokenHolders,
-            Tab::TokenHolders => Tab::Overview,
+            Tab::TokenHolders => Tab::TransferETH,
+            Tab::TransferETH => Tab::Overview,
         }
     }
 
     fn prev(&self) -> Self {
         match self {
-            Tab::Overview => Tab::TokenHolders,
+            Tab::Overview => Tab::TransferETH,
             Tab::Nodes => Tab::Overview,
             Tab::HTXTracking => Tab::Nodes,
             Tab::Staking => Tab::HTXTracking,
             Tab::Minting => Tab::Staking,
             Tab::TokenHolders => Tab::Minting,
+            Tab::TransferETH => Tab::TokenHolders,
         }
     }
 }
@@ -157,6 +170,11 @@ struct MonitorState {
     token_holders: Vec<TokenHolder>,
     token_holder_addresses: HashSet<Address>, // Track all addresses that have interacted with the token
     token_holders_state: ratatui::widgets::ListState,
+    // Transfer ETH Tab State
+    transfer_private_key: String,
+    transfer_target_address: String,
+    transfer_amount: String,
+    transfer_active_input: TransferInputField,
 }
 
 #[tokio::main]
@@ -199,10 +217,12 @@ async fn main() -> Result<()> {
         if let Ok(stake) = client.staking.stake_of(addr).await {
             if stake > U256::zero() {
                 let is_registered = registered_set.contains(&addr);
+                let eth_balance = client.get_balance_of(addr).await.unwrap_or(U256::zero());
                 nodes.push(NodeInfo {
                     address: addr,
                     stake,
                     is_registered,
+                    eth_balance,
                 });
             }
         }
@@ -351,6 +371,10 @@ async fn main() -> Result<()> {
         token_holders,
         token_holder_addresses,
         token_holders_state: ratatui::widgets::ListState::default(),
+        transfer_private_key: String::new(),
+        transfer_target_address: String::new(),
+        transfer_amount: String::new(),
+        transfer_active_input: TransferInputField::None,
     };
 
     run_monitor(client, initial_state).await
@@ -444,6 +468,13 @@ async fn run_monitor_loop(
                             MintingInputField::Amount => state_guard.minting_amount.push_str(&pasted_text),
                             _ => {}
                         }
+                    } else if state_guard.current_tab == Tab::TransferETH && state_guard.transfer_active_input != TransferInputField::None {
+                        match state_guard.transfer_active_input {
+                            TransferInputField::PrivateKey => state_guard.transfer_private_key.push_str(&pasted_text),
+                            TransferInputField::TargetAddress => state_guard.transfer_target_address.push_str(&pasted_text),
+                            TransferInputField::Amount => state_guard.transfer_amount.push_str(&pasted_text),
+                            _ => {}
+                        }
                     }
                 }
                 Event::Key(key) if key.kind == KeyEventKind::Press => {
@@ -481,10 +512,12 @@ async fn run_monitor_loop(
                                             if let Ok(stake) = client.staking.stake_of(addr).await {
                                                 if stake > U256::zero() {
                                                     let is_registered = registered_set.contains(&addr);
+                                                    let eth_balance = client.get_balance_of(addr).await.unwrap_or(U256::zero());
                                                     nodes.push(NodeInfo {
                                                         address: addr,
                                                         stake,
                                                         is_registered,
+                                                        eth_balance,
                                                     });
                                                 }
                                             }
@@ -542,6 +575,10 @@ async fn run_monitor_loop(
                                     state_guard.minting_active_input = MintingInputField::TargetAddress;
                                     state_guard.status_message = "Fill in the form and press Enter to mint".to_string();
                                 }
+                                if state_guard.current_tab == Tab::TransferETH && state_guard.transfer_active_input == TransferInputField::None {
+                                    state_guard.transfer_active_input = TransferInputField::TargetAddress;
+                                    state_guard.status_message = "Fill in the form and press Enter to transfer ETH".to_string();
+                                }
                             }
                             KeyCode::BackTab => {
                                 state_guard.current_tab = state_guard.current_tab.prev();
@@ -553,6 +590,10 @@ async fn run_monitor_loop(
                                 if state_guard.current_tab == Tab::Minting && state_guard.minting_active_input == MintingInputField::None {
                                     state_guard.minting_active_input = MintingInputField::TargetAddress;
                                     state_guard.status_message = "Fill in the form and press Enter to mint".to_string();
+                                }
+                                if state_guard.current_tab == Tab::TransferETH && state_guard.transfer_active_input == TransferInputField::None {
+                                    state_guard.transfer_active_input = TransferInputField::TargetAddress;
+                                    state_guard.status_message = "Fill in the form and press Enter to transfer ETH".to_string();
                                 }
                             }
                             KeyCode::Right => {
@@ -566,6 +607,10 @@ async fn run_monitor_loop(
                                     state_guard.minting_active_input = MintingInputField::TargetAddress;
                                     state_guard.status_message = "Fill in the form and press Enter to mint".to_string();
                                 }
+                                if state_guard.current_tab == Tab::TransferETH && state_guard.transfer_active_input == TransferInputField::None {
+                                    state_guard.transfer_active_input = TransferInputField::TargetAddress;
+                                    state_guard.status_message = "Fill in the form and press Enter to transfer ETH".to_string();
+                                }
                             }
                             KeyCode::Left => {
                                 state_guard.current_tab = state_guard.current_tab.prev();
@@ -577,6 +622,10 @@ async fn run_monitor_loop(
                                 if state_guard.current_tab == Tab::Minting && state_guard.minting_active_input == MintingInputField::None {
                                     state_guard.minting_active_input = MintingInputField::TargetAddress;
                                     state_guard.status_message = "Fill in the form and press Enter to mint".to_string();
+                                }
+                                if state_guard.current_tab == Tab::TransferETH && state_guard.transfer_active_input == TransferInputField::None {
+                                    state_guard.transfer_active_input = TransferInputField::TargetAddress;
+                                    state_guard.status_message = "Fill in the form and press Enter to transfer ETH".to_string();
                                 }
                             }
                             KeyCode::Down => match state_guard.current_tab {
@@ -605,6 +654,13 @@ async fn run_monitor_loop(
                                         MintingInputField::None | MintingInputField::PrivateKey => MintingInputField::TargetAddress,
                                         MintingInputField::TargetAddress => MintingInputField::Amount,
                                         MintingInputField::Amount => MintingInputField::Amount,
+                                    };
+                                }
+                                Tab::TransferETH => {
+                                    state_guard.transfer_active_input = match state_guard.transfer_active_input {
+                                        TransferInputField::None | TransferInputField::PrivateKey => TransferInputField::TargetAddress,
+                                        TransferInputField::TargetAddress => TransferInputField::Amount,
+                                        TransferInputField::Amount => TransferInputField::Amount,
                                     };
                                 }
                                 Tab::TokenHolders if !state_guard.token_holders.is_empty() => {
@@ -641,6 +697,13 @@ async fn run_monitor_loop(
                                         MintingInputField::None | MintingInputField::Amount => MintingInputField::TargetAddress,
                                         MintingInputField::TargetAddress => MintingInputField::PrivateKey,
                                         MintingInputField::PrivateKey => MintingInputField::PrivateKey,
+                                    };
+                                }
+                                Tab::TransferETH => {
+                                    state_guard.transfer_active_input = match state_guard.transfer_active_input {
+                                        TransferInputField::None | TransferInputField::Amount => TransferInputField::TargetAddress,
+                                        TransferInputField::TargetAddress => TransferInputField::PrivateKey,
+                                        TransferInputField::PrivateKey => TransferInputField::PrivateKey,
                                     };
                                 }
                                 Tab::TokenHolders if !state_guard.token_holders.is_empty() => {
@@ -692,8 +755,8 @@ async fn run_monitor_loop(
                                             state_guard.status_message = "Error: Amount is required".to_string();
                                         } else {
                                             // Validate amount first
-                                            let amount = match U256::from_dec_str(&amount_str) {
-                                                Ok(a) if a > U256::zero() => a,
+                                            let amount_eth = match amount_str.parse::<f64>() {
+                                                Ok(a) if a > 0.0 => a,
                                                 Ok(_) => {
                                                     state_guard.status_message = "Error: Amount must be greater than 0".to_string();
                                                     continue;
@@ -746,12 +809,12 @@ async fn run_monitor_loop(
                                                     // Use the existing client's staking and token contracts
                                                     (client.staking.clone(), client.token.clone())
                                                 };
-
+                                                let amount_wei = U256::from((amount_eth * 1e18) as u128);
                                                 // First, approve the staking contract to spend tokens
-                                                token_client.approve(staking_addr, amount).await?;
+                                                token_client.approve(staking_addr, amount_wei).await?;
 
                                                 // Then stake
-                                                staking_client.stake_to(target_addr, amount).await
+                                                staking_client.stake_to(target_addr, amount_wei).await
                                             }.await;
 
                                             match result {
@@ -803,8 +866,8 @@ async fn run_monitor_loop(
                                             state_guard.status_message = "Error: Amount is required".to_string();
                                         } else {
                                             // Validate amount first
-                                            let amount = match U256::from_dec_str(&amount_str) {
-                                                Ok(a) if a > U256::zero() => a,
+                                            let amount_eth = match amount_str.parse::<f64>() {
+                                                Ok(a) if a > 0.0 => a,
                                                 Ok(_) => {
                                                     state_guard.status_message = "Error: Amount must be greater than 0".to_string();
                                                     continue;
@@ -857,8 +920,9 @@ async fn run_monitor_loop(
                                                     // Use the existing client's token contract
                                                     client.token.clone()
                                                 };
+                                                let amount_wei = U256::from((amount_eth * 1e18) as u128);
 
-                                                token_client.mint(target_addr, amount).await
+                                                token_client.mint(target_addr, amount_wei).await
                                             }.await;
 
                                             match result {
@@ -888,6 +952,114 @@ async fn run_monitor_loop(
                                             MintingInputField::PrivateKey => { state_guard.minting_private_key.pop(); }
                                             MintingInputField::TargetAddress => { state_guard.minting_target_address.pop(); }
                                             MintingInputField::Amount => { state_guard.minting_amount.pop(); }
+                                            _ => {}
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            // Transfer ETH Tab Input Handling
+                            code if state_guard.current_tab == Tab::TransferETH => {
+                                match code {
+                                    KeyCode::Enter => {
+                                        // Submit ETH Transfer Transaction
+                                        let private_key = state_guard.transfer_private_key.trim().to_string();
+                                        let target_addr_str = state_guard.transfer_target_address.trim().to_string();
+                                        let amount_str = state_guard.transfer_amount.trim().to_string();
+
+                                        // Validate inputs
+                                        if target_addr_str.is_empty() {
+                                            state_guard.status_message = "Error: Target address is required".to_string();
+                                        } else if amount_str.is_empty() {
+                                            state_guard.status_message = "Error: Amount is required".to_string();
+                                        } else {
+                                            // Validate amount (ETH amount as decimal string)
+                                            let amount_eth: f64 = match amount_str.parse() {
+                                                Ok(a) if a > 0.0 => a,
+                                                Ok(_) => {
+                                                    state_guard.status_message = "Error: Amount must be greater than 0".to_string();
+                                                    continue;
+                                                }
+                                                Err(_) => {
+                                                    state_guard.status_message = format!("Error: Invalid amount format: {}", amount_str).to_string();
+                                                    continue;
+                                                }
+                                            };
+
+                                            // Convert ETH to Wei (1 ETH = 10^18 Wei)
+                                            let amount_wei = U256::from((amount_eth * 1e18) as u128);
+
+                                            // Validate address
+                                            let target_addr = match target_addr_str.parse::<Address>() {
+                                                Ok(addr) => addr,
+                                                Err(e) => {
+                                                    state_guard.status_message = format!(
+                                                        "Error: Invalid address '{}' (len: {}) - {}",
+                                                        target_addr_str,
+                                                        target_addr_str.len(),
+                                                        e
+                                                    );
+                                                    continue;
+                                                }
+                                            };
+
+                                            state_guard.status_message = "Transferring ETH...".to_string();
+
+                                            // Clone necessary data to drop lock
+                                            let rpc_url = state_guard.rpc_url.clone();
+                                            let router_addr = state_guard.contract_address;
+                                            let staking_addr = state_guard.staking_contract_address;
+                                            let token_addr = state_guard.token_contract_address;
+
+                                            let use_custom_key = !private_key.is_empty();
+
+                                            drop(state_guard); // Drop lock
+
+                                            let result = async {
+                                                if use_custom_key {
+                                                    // Create a new client with the provided private key
+                                                    let config = ContractConfig::new(
+                                                        rpc_url,
+                                                        router_addr,
+                                                        staking_addr,
+                                                        token_addr
+                                                    );
+
+                                                    let new_client = NilAVClient::new(config, private_key).await?;
+                                                    new_client.send_eth(target_addr, amount_wei).await
+                                                } else {
+                                                    // Use the existing client
+                                                    client.send_eth(target_addr, amount_wei).await
+                                                }
+                                            }.await;
+
+                                            match result {
+                                                Ok(tx) => {
+                                                    let mut state_guard = state.lock().unwrap();
+                                                    state_guard.status_message = format!("ETH transferred! TX: {:?}", tx);
+                                                    state_guard.transfer_amount = String::new(); // Clear amount
+                                                }
+                                                Err(e) => {
+                                                    let mut state_guard = state.lock().unwrap();
+                                                    state_guard.status_message = format!("Error transferring: {}", e);
+                                                }
+                                            }
+                                            continue;
+                                        }
+                                    }
+                                    KeyCode::Char(c) => {
+                                        match state_guard.transfer_active_input {
+                                            TransferInputField::PrivateKey => state_guard.transfer_private_key.push(c),
+                                            TransferInputField::TargetAddress => state_guard.transfer_target_address.push(c),
+                                            TransferInputField::Amount => state_guard.transfer_amount.push(c),
+                                            _ => {}
+                                        }
+                                    }
+                                    KeyCode::Backspace => {
+                                        match state_guard.transfer_active_input {
+                                            TransferInputField::PrivateKey => { state_guard.transfer_private_key.pop(); }
+                                            TransferInputField::TargetAddress => { state_guard.transfer_target_address.pop(); }
+                                            TransferInputField::Amount => { state_guard.transfer_amount.pop(); }
                                             _ => {}
                                         }
                                     }
@@ -1053,6 +1225,7 @@ fn render_header(f: &mut Frame, area: Rect, state: &MonitorState) {
         Tab::Staking,
         Tab::Minting,
         Tab::TokenHolders,
+        Tab::TransferETH,
     ]
     .iter()
     .flat_map(|tab| {
@@ -1093,6 +1266,7 @@ fn render_content(f: &mut Frame, area: Rect, state: &mut MonitorState) {
         Tab::Staking => render_staking(f, area, state),
         Tab::Minting => render_minting(f, area, state),
         Tab::TokenHolders => render_token_holders(f, area, state),
+        Tab::TransferETH => render_transfer_eth(f, area, state),
     }
 }
 
@@ -1268,6 +1442,7 @@ fn render_nodes(f: &mut Frame, area: Rect, state: &MonitorState) {
         .enumerate()
         .map(|(idx, node_info)| {
             let stake_formatted = format_units(node_info.stake, 18).unwrap_or_else(|_| "0".to_string());
+            let eth_balance_formatted = format_units(node_info.eth_balance, 18).unwrap_or_else(|_| "0".to_string());
             let status = if node_info.is_registered {
                 "✓ Registered"
             } else {
@@ -1287,7 +1462,7 @@ fn render_nodes(f: &mut Frame, area: Rect, state: &MonitorState) {
                         .fg(status_color)
                         .add_modifier(Modifier::BOLD)
                 ),
-                Span::raw(format!(" | {:?} | Stake: {} TEST", node_info.address, stake_formatted)),
+                Span::raw(format!(" | {:?} | Stake: {} TEST | ETH: {}", node_info.address, stake_formatted, eth_balance_formatted)),
             ];
 
             let style = if Some(idx) == state.selected_node_index {
@@ -1704,6 +1879,96 @@ fn render_minting(f: &mut Frame, area: Rect, state: &MonitorState) {
     let help_text = vec![
         Line::from(vec![Span::styled(
             "Press Enter to Mint Tokens",
+            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+        )]),
+        Line::from("Use Up/Down to navigate fields"),
+    ];
+
+    let help = Paragraph::new(help_text)
+        .block(Block::default().borders(Borders::NONE));
+
+    f.render_widget(help, chunks[4]);
+}
+
+fn render_transfer_eth(f: &mut Frame, area: Rect, state: &MonitorState) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3), // Private Key
+            Constraint::Length(3), // Target Address
+            Constraint::Length(3), // Amount
+            Constraint::Length(5), // Status/Feedback
+            Constraint::Min(0),    // Help
+        ])
+        .split(area);
+
+    let pk_style = if state.transfer_active_input == TransferInputField::PrivateKey {
+        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::White)
+    };
+
+    let target_style = if state.transfer_active_input == TransferInputField::TargetAddress {
+        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::White)
+    };
+
+    let amount_style = if state.transfer_active_input == TransferInputField::Amount {
+        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::White)
+    };
+
+    let pk_input = Paragraph::new(state.transfer_private_key.as_str())
+        .block(Block::default().borders(Borders::ALL).title("Private Key (Optional - leave empty to use default)"))
+        .style(pk_style)
+        .scroll((0, state.transfer_private_key.len().saturating_sub(50) as u16));
+
+    let target_title = format!("Target Address (entered: {} chars, need: 42)", state.transfer_target_address.len());
+    let target_scroll_offset = state.transfer_target_address.len().saturating_sub(50) as u16;
+    let target_input = Paragraph::new(state.transfer_target_address.as_str())
+        .block(Block::default().borders(Borders::ALL).title(target_title))
+        .style(target_style)
+        .scroll((0, target_scroll_offset));
+
+    let amount_input = Paragraph::new(state.transfer_amount.as_str())
+        .block(Block::default().borders(Borders::ALL).title("Amount (ETH)"))
+        .style(amount_style)
+        .scroll((0, 0));
+
+    f.render_widget(pk_input, chunks[0]);
+    f.render_widget(target_input, chunks[1]);
+    f.render_widget(amount_input, chunks[2]);
+
+    // Status feedback box
+    let status_color = if state.status_message.contains("Error") {
+        Color::Red
+    } else if state.status_message.contains("transferred") || state.status_message.contains("ETH transferred") {
+        Color::Green
+    } else if state.status_message.contains("Transferring") {
+        Color::Yellow
+    } else {
+        Color::Cyan
+    };
+
+    let status_text = vec![
+        Line::from(""),
+        Line::from(vec![Span::styled(
+            &state.status_message,
+            Style::default().fg(status_color).add_modifier(Modifier::BOLD),
+        )]),
+    ];
+
+    let status = Paragraph::new(status_text)
+        .block(Block::default().borders(Borders::ALL).title("Status"))
+        .alignment(Alignment::Center);
+
+    f.render_widget(status, chunks[3]);
+
+    let help_text = vec![
+        Line::from(vec![Span::styled(
+            "Press Enter to Transfer ETH",
             Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
         )]),
         Line::from("Use Up/Down to navigate fields"),
