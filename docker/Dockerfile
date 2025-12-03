@@ -21,9 +21,9 @@ COPY Cargo.toml ./
 COPY src ./src
 COPY config ./config
 COPY data ./data
-COPY ./contracts/nilav-router/ ./contracts/nilav-router/
+COPY ./contracts/ ./contracts/
 
-WORKDIR /app/contracts/nilav-router
+WORKDIR /app/contracts/
 
 RUN forge build 
 

@@ -55,10 +55,7 @@ echo ""
 # Deploy using forge script
 forge script $SCRIPT_PATH \
     --rpc-url $RPC_URL \
-    --broadcast \
-    --verify \
-    -vvv
-
+    --broadcast 
 echo ""
 echo "==================================================================="
 echo "Deployment Complete!"

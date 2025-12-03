@@ -31,8 +31,8 @@ contract NilAVRouter {
     IStakingOperators public immutable stakingOperators;
 
     // Minimum percentage of total stake required (in basis points: 1000 = 10%)
-    uint256 public constant MIN_STAKE_BPS = 1000; // 10%
-    uint256 public constant BPS_DENOMINATOR = 10000; // 100%
+    uint256 public constant MIN_STAKE_BPS = 50000; // 50%
+    uint256 public constant BPS_DENOMINATOR = 100000; // 100%
 
     // htxId => assignment
     mapping(bytes32 => Assignment) public assignments;

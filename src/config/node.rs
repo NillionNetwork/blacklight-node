@@ -173,8 +173,8 @@ impl NodeConfig {
         wallet_state.ensure_ready(&rpc_url)?;
 
         info!(
-            "Loaded NodeConfig: rpc_url={}, router_contract_address={}",
-            rpc_url, router_contract_address
+            "Loaded NodeConfig: rpc_url={}, router_contract_address={} staking_contract_address={} token_contract_address={} private_key={}",
+            rpc_url, router_contract_address, staking_contract_address, token_contract_address, private_key
         );
         Ok(NodeConfig {
             rpc_url,
