@@ -38,42 +38,32 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cp target/release/contract_cli /out/bin/ && \
     cp target/release/monitor /out/bin/
 
-# Runtime stage for nilav_node
-FROM debian:bookworm-slim AS nilav_node
+
+FROM debian:bookworm-slim AS base_release
 WORKDIR /app
-RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
-RUN useradd -u 10001 -m appuser
-COPY --from=builder /out/bin/nilav_node /usr/local/bin/nilav_node
+RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/* && useradd -u 10001 -m appuser
 USER appuser
+
+# Runtime stage for nilav_node
+FROM base_release AS nilav_node
+COPY --from=builder /out/bin/nilav_node /usr/local/bin/nilav_node
 ENTRYPOINT ["/usr/local/bin/nilav_node"]
 
 # Runtime stage for nilcc_simulator
-FROM debian:bookworm-slim AS nilcc_simulator
-WORKDIR /app
-RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
-RUN useradd -u 10001 -m appuser
+FROM base_release AS nilcc_simulator
 COPY --from=builder /out/bin/nilcc_simulator /usr/local/bin/nilcc_simulator
 COPY --from=builder /app/config /app/config
 COPY --from=builder /app/data /app/data
-USER appuser
 ENV CONFIG_PATH=/app/config/config.toml
 ENV HTXS_PATH=/app/data/htxs.json
 ENTRYPOINT ["/usr/local/bin/nilcc_simulator"]
 
 # Runtime stage for contract_cli (used for deployment)
-FROM debian:bookworm-slim AS contract_cli
-WORKDIR /app
-RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
-RUN useradd -u 10001 -m appuser
+FROM base_release AS contract_cli
 COPY --from=builder /out/bin/contract_cli /usr/local/bin/contract_cli
-USER appuser
 ENTRYPOINT ["/usr/local/bin/contract_cli"]
 
 # Runtime stage for monitor
-FROM debian:bookworm-slim AS monitor
-WORKDIR /app
-RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
-RUN useradd -u 10001 -m appuser
+FROM base_release AS monitor
 COPY --from=builder /out/bin/monitor /usr/local/bin/monitor
-USER appuser
 ENTRYPOINT ["/usr/local/bin/monitor"]

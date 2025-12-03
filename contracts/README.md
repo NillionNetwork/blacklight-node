@@ -1,3 +1,14 @@
+# NilAV Smart Contracts
+
+This directory contains the Solidity smart contracts for the NilAV (Nillion Auditor-Verifier) system.
+
+## Contracts
+
+- **NilAVRouter** (`src/core/NilAVRouter.sol`) - Main contract for HTX submission and verification
+- **StakingOperators** (`src/core/StakingOperators.sol`) - Manages operator staking and selection
+- **TESTToken** (`src/core/TESTToken.sol`) - Test ERC20 token for development
+- **Interfaces** (`src/interfaces/`) - Shared contract interfaces
+
 ## Foundry
 
 **Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust.**

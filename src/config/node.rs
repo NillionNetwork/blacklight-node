@@ -165,7 +165,7 @@ pub async fn validate_node_requirements(
     // Determine wallet status and display unified banner
     let status = if was_wallet_created {
         WalletStatus::Created
-    } else if eth_balance == U256::zero() {
+    } else if eth_balance == U256::zero() || staked_balance == U256::zero() {
         WalletStatus::InsufficientFunds
     } else {
         WalletStatus::Ready

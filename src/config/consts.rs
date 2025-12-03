@@ -25,19 +25,19 @@ pub const DEFAULT_RPC_URL: &str = "https://rpc-nilav-shzvox09l5.t.conduit.xyz";
 #[cfg(debug_assertions)]
 pub const DEFAULT_ROUTER_CONTRACT_ADDRESS: &str = "0x9fe46736679d2d9a65f0992f2272de9f3c7fa6e0";
 #[cfg(not(debug_assertions))]
-pub const DEFAULT_ROUTER_CONTRACT_ADDRESS: &str = "0x4f071c297EF53565A86c634C9AAf5faCa89f6209";
+pub const DEFAULT_ROUTER_CONTRACT_ADDRESS: &str = "0x34ED5BCD598619f7Aad6e3d9264C38CEb4Cd1edF";
 
 /// Default contract address - Anvil's first deployed contract address
 #[cfg(debug_assertions)]
 pub const DEFAULT_STAKING_CONTRACT_ADDRESS: &str = "0xe7f1725e7734ce288f8367e1bb143e90bb3f0512";
 #[cfg(not(debug_assertions))]
-pub const DEFAULT_STAKING_CONTRACT_ADDRESS: &str = "0x4f071c297EF53565A86c634C9AAf5faCa89f6209";
+pub const DEFAULT_STAKING_CONTRACT_ADDRESS: &str = "0x63167beD28912cDe2C7b8bC5B6BB1F8B41B22f46";
 
 /// Default contract address - Anvil's first deployed contract address
 #[cfg(debug_assertions)]
 pub const DEFAULT_TOKEN_CONTRACT_ADDRESS: &str = "0x5fbdb2315678afecb367f032d93f642f64180aa3";
 #[cfg(not(debug_assertions))]
-pub const DEFAULT_TOKEN_CONTRACT_ADDRESS: &str = "0x4f071c297EF53565A86c634C9AAf5faCa89f6209";
+pub const DEFAULT_TOKEN_CONTRACT_ADDRESS: &str = "0x89c1312Cedb0B0F67e4913D2076bd4a860652B69";
 
 /// Default path to HTXs JSON file
 pub const DEFAULT_HTXS_PATH: &str = "data/htxs.json";

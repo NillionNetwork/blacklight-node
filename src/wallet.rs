@@ -56,6 +56,7 @@ pub fn display_wallet_status(
     let address_str = format!("{:?}", address);
     let eth_formatted = ethers::utils::format_ether(eth_balance);
     let staked_formatted = ethers::utils::format_ether(staked_balance);
+    let has_eth = eth_balance > U256::zero();
     let has_stake = staked_balance > U256::zero();
 
     let mut table = Table::new();
@@ -118,14 +119,16 @@ pub fn display_wallet_status(
             "❗ Please fund this address with ETH and stake TEST tokens to continue ❗"
         }
         WalletStatus::InsufficientFunds => {
-            "❗ Please fund this address with ETH and stake TEST tokens to continue ❗"
+            if !has_stake && !has_eth {
+                "❗ Please fund this address with ETH and stake TEST tokens to continue ❗"
+            } else if !has_stake {
+                "⚠️  Please stake TEST tokens to continue"
+            } else {
+                "⚠️  Please fund this address with ETH for gas transactions"
+            }
         }
         WalletStatus::Ready => {
-            if has_stake {
-                "✅ Ready to operate"
-            } else {
-                "⚠️  Please stake TEST tokens to continue"
-            }
+            "✅ Ready to operate"
         }
     };
     table.add_row(Row::new(vec![TableCell::builder(status_message)

@@ -1,4 +1,8 @@
-# Nillion Auditor-Verifier (nilAV) <a href="https://github.com/NillionNetwork/nilAV/blob/main/LICENSE" target="_blank"><img src="https://img.shields.io/badge/License-MIT-green.svg" alt="MIT License"/></a>
+# Nillion Auditor-Verifier (nilAV) 
+
+[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Build Binaries](https://github.com/NillionNetwork/nilAV/actions/workflows/build.yml/badge.svg)](https://github.com/NillionNetwork/nilAV/actions/workflows/build.yml)
+[![Docker Build](https://github.com/NillionNetwork/nilAV/actions/workflows/docker.yml/badge.svg)](https://github.com/NillionNetwork/nilAV/actions/workflows/docker.yml)
 
 A Rust-based HTX (Hash Transaction) verification system with real-time WebSocket event streaming with low latency.
 
@@ -153,6 +157,26 @@ RUST_LOG=debug cargo run --release --bin nilav_node
 ---
 
 ## Development & Testing
+
+### Docker Images
+
+Pre-built Docker images are automatically published to GitHub Container Registry (GHCR) with each release. You can pull and run them directly without building locally:
+
+```bash
+# Pull images
+docker pull ghcr.io/nillionnetwork/nilav/nilav_node:latest
+docker pull ghcr.io/nillionnetwork/nilav/nilcc_simulator:latest
+docker pull ghcr.io/nillionnetwork/nilav/monitor:latest
+
+# Run a node
+docker run --rm \
+  -e RPC_URL=https://rpc-nilav-shzvox09l5.t.conduit.xyz \
+  -e CONTRACT_ADDRESS=0x4f071c297EF53565A86c634C9AAf5faCa89f6209 \
+  -e PRIVATE_KEY=0xYourPrivateKey \
+  ghcr.io/nillionnetwork/nilav/nilav_node:latest
+```
+
+See [docker/README.md](docker/README.md) for more details on using Docker images.
 
 ### Local Testing (Without Blockchain)
 

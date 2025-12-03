@@ -84,6 +84,12 @@ docker compose up --scale node1=5
 
 # Stop all services
 docker compose down
+
+# Use pre-built images from GHCR
+docker pull ghcr.io/nillionnetwork/nilav/nilav_node:latest
+docker pull ghcr.io/nillionnetwork/nilav/nilcc_simulator:latest
+docker pull ghcr.io/nillionnetwork/nilav/monitor:latest
+docker pull ghcr.io/nillionnetwork/nilav/contract_cli:latest
 ```
 
 ## Binaries & Their Purposes
@@ -326,6 +332,58 @@ Run the node:
 ```bash
 cargo run --release --bin nilav_node
 ```
+
+## CI/CD Workflows
+
+### GitHub Actions
+
+The repository includes two automated workflows:
+
+#### 1. Build Binaries (`.github/workflows/build.yml`)
+
+Triggers on version tags (`v*.*.*`) and builds native binaries for multiple platforms:
+
+- **Platforms**: Linux (x64), macOS (Intel & ARM), Windows (x64)
+- **Artifacts**: `nilav_node`, `nilcc_simulator`, `monitor`
+- **Distribution**: Archives uploaded to GitHub Releases (`.tar.gz` for Unix, `.zip` for Windows)
+
+```bash
+# Create a release
+git tag v1.0.0
+git push origin v1.0.0
+# Workflow automatically builds and publishes release artifacts
+```
+
+#### 2. Docker Build & Push (`.github/workflows/docker.yml`)
+
+Triggers on version tags or manual dispatch. Builds and pushes four Docker images to GHCR:
+
+- **Images**: `nilav_node`, `nilcc_simulator`, `monitor`, `contract_cli`
+- **Registry**: `ghcr.io/nillionnetwork/nilav/<image-name>`
+- **Tags**: 
+  - `latest` - most recent release
+  - `v1.0.0`, `v1.0`, `v1` - semantic version tags
+  - `main-sha256abc` - commit-specific tags
+- **Platforms**: linux/amd64, linux/arm64
+
+```bash
+# Images are automatically built and pushed on release tags
+# To manually trigger: Go to Actions → docker-build-push → Run workflow
+
+# Pull and use images
+docker pull ghcr.io/nillionnetwork/nilav/nilav_node:latest
+docker run --rm \
+  -e RPC_URL=https://rpc-nilav-shzvox09l5.t.conduit.xyz \
+  -e CONTRACT_ADDRESS=0x4f071c297EF53565A86c634C9AAf5faCa89f6209 \
+  -e PRIVATE_KEY=0xYourPrivateKey \
+  ghcr.io/nillionnetwork/nilav/nilav_node:latest
+```
+
+**Build Process:**
+1. Multi-stage Dockerfile compiles Rust binaries with Foundry support
+2. Each binary gets its own minimal Debian-based runtime image
+3. Build caches are used for faster subsequent builds
+4. Images include attestation for supply chain security
 
 ## Important Notes
 
