@@ -7,6 +7,17 @@ use term_table::table_cell::{Alignment as CellAlignment, TableCell};
 use term_table::{Table, TableStyle};
 use tracing::{info, warn};
 
+/// Wallet validation status
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WalletStatus {
+    /// Wallet was just created, needs funding
+    Created,
+    /// Wallet has no ETH balance
+    InsufficientFunds,
+    /// Wallet is ready to operate
+    Ready,
+}
+
 /// Generate a new random Ethereum wallet
 pub fn generate_wallet() -> Result<LocalWallet> {
     let wallet = LocalWallet::new(&mut rand::thread_rng());
@@ -33,136 +44,101 @@ pub async fn check_balance(rpc_url: &str, address: Address) -> Result<U256> {
     Ok(balance)
 }
 
-/// Display a nice banner warning about insufficient funds
-pub fn display_insufficient_funds_banner(address: Address, rpc_url: &str) {
+/// Display wallet status banner with ETH balance and TEST stake information
+/// This consolidated function handles all wallet states with a single implementation
+pub fn display_wallet_status(
+    status: WalletStatus,
+    address: Address,
+    rpc_url: &str,
+    eth_balance: U256,
+    staked_balance: U256,
+) {
     let address_str = format!("{:?}", address);
+    let eth_formatted = ethers::utils::format_ether(eth_balance);
+    let staked_formatted = ethers::utils::format_ether(staked_balance);
+    let has_stake = staked_balance > U256::zero();
 
     let mut table = Table::new();
     table.style = TableStyle::extended();
-    table.add_row(Row::new(vec![TableCell::builder(
-        "❌  INSUFFICIENT FUNDS  ❌",
-    )
-    .col_span(2)
-    .alignment(CellAlignment::Center)
-    .build()]));
-    table.add_row(Row::new(vec![
-        TableCell::builder("Address")
-            .alignment(CellAlignment::Right)
-            .build(),
-        TableCell::builder(address_str)
-            .alignment(CellAlignment::Left)
-            .build(),
-    ]));
-    table.add_row(Row::new(vec![
-        TableCell::builder("RPC URL")
-            .alignment(CellAlignment::Right)
-            .build(),
-        TableCell::builder(rpc_url.to_owned())
-            .alignment(CellAlignment::Left)
-            .build(),
-    ]));
-    table.add_row(Row::new(vec![TableCell::builder("❌ No ETH Balance")
-        .col_span(2)
-        .alignment(CellAlignment::Center)
-        .build()]));
-    table.add_row(Row::new(vec![TableCell::builder(
-        "Please fund this address with ETH",
-    )
-    .col_span(2)
-    .alignment(CellAlignment::Center)
-    .build()]));
 
-    warn!("\n{}", table.render());
-}
-
-/// Display a nice banner warning about insufficient funds
-pub fn display_account_created_banner(address: Address, rpc_url: &str) {
-    let address_str = format!("{:?}", address);
-
-    let mut table = Table::new();
-    table.style = TableStyle::extended();
-    table.add_row(Row::new(vec![TableCell::builder(
-        "✅  Account Created Successfully ✅",
-    )
-    .col_span(2)
-    .alignment(CellAlignment::Center)
-    .build()]));
-    table.add_row(Row::new(vec![
-        TableCell::builder("Address")
-            .alignment(CellAlignment::Right)
-            .build(),
-        TableCell::builder(address_str)
-            .alignment(CellAlignment::Left)
-            .build(),
-    ]));
-    table.add_row(Row::new(vec![
-        TableCell::builder("RPC URL")
-            .alignment(CellAlignment::Right)
-            .build(),
-        TableCell::builder(rpc_url.to_owned())
-            .alignment(CellAlignment::Left)
-            .build(),
-    ]));
-    table.add_row(Row::new(vec![TableCell::builder(
-        "❗ Please fund this address with ETH ❗",
-    )
-    .col_span(2)
-    .alignment(CellAlignment::Center)
-    .build()]));
-    table.add_row(Row::new(vec![TableCell::builder(
-        "Please fund this address with ETH to continue.",
-    )
-    .col_span(2)
-    .alignment(CellAlignment::Center)
-    .build()]));
-
-    warn!("\n{}", table.render());
-}
-
-/// Display a success banner showing wallet loaded with funds
-pub fn display_wallet_loaded_banner(address: Address, balance: U256, rpc_url: &str) {
-    let eth_balance = ethers::utils::format_ether(balance);
-    let address_str = format!("{:?}", address);
-    let balance_str = format!("{} ETH", eth_balance);
-
-    let mut table = Table::new();
-    table.style = TableStyle::extended();
-    table.add_row(Row::new(vec![TableCell::builder(
-        "🎉 WALLET LOADED SUCCESSFULLY 🎉",
-    )
-    .col_span(2)
-    .alignment(CellAlignment::Center)
-    .build()]));
-    table.add_row(Row::new(vec![
-        TableCell::builder("Address")
-            .alignment(CellAlignment::Right)
-            .build(),
-        TableCell::builder(address_str)
-            .alignment(CellAlignment::Left)
-            .build(),
-    ]));
-    table.add_row(Row::new(vec![
-        TableCell::builder("Balance")
-            .alignment(CellAlignment::Right)
-            .build(),
-        TableCell::builder(balance_str)
-            .alignment(CellAlignment::Left)
-            .build(),
-    ]));
-    table.add_row(Row::new(vec![
-        TableCell::builder("RPC URL")
-            .alignment(CellAlignment::Right)
-            .build(),
-        TableCell::builder(rpc_url.to_owned())
-            .alignment(CellAlignment::Left)
-            .build(),
-    ]));
-    table.add_row(Row::new(vec![TableCell::builder("✅ Ready to operate")
+    // Header row based on status
+    let (header, use_warn) = match status {
+        WalletStatus::Created => ("✅  Account Created Successfully ✅", true),
+        WalletStatus::InsufficientFunds => ("❌  INSUFFICIENT FUNDS  ❌", true),
+        WalletStatus::Ready => ("🎉 WALLET LOADED SUCCESSFULLY 🎉", false),
+    };
+    table.add_row(Row::new(vec![TableCell::builder(header)
         .col_span(2)
         .alignment(CellAlignment::Center)
         .build()]));
 
-    info!("\n{}", table.render());
+    // Address row
+    table.add_row(Row::new(vec![
+        TableCell::builder("Address")
+            .alignment(CellAlignment::Right)
+            .build(),
+        TableCell::builder(address_str)
+            .alignment(CellAlignment::Left)
+            .build(),
+    ]));
+
+    // ETH Balance row (always shown)
+    table.add_row(Row::new(vec![
+        TableCell::builder("ETH Balance")
+            .alignment(CellAlignment::Right)
+            .build(),
+        TableCell::builder(format!("{} ETH", eth_formatted))
+            .alignment(CellAlignment::Left)
+            .build(),
+    ]));
+
+    // TEST Staked row (always shown)
+    table.add_row(Row::new(vec![
+        TableCell::builder("TEST Staked")
+            .alignment(CellAlignment::Right)
+            .build(),
+        TableCell::builder(format!("{} TEST", staked_formatted))
+            .alignment(CellAlignment::Left)
+            .build(),
+    ]));
+
+    // RPC URL row
+    table.add_row(Row::new(vec![
+        TableCell::builder("RPC URL")
+            .alignment(CellAlignment::Right)
+            .build(),
+        TableCell::builder(rpc_url.to_owned())
+            .alignment(CellAlignment::Left)
+            .build(),
+    ]));
+
+    // Status message based on wallet status and stake
+    let status_message = match status {
+        WalletStatus::Created => {
+            "❗ Please fund this address with ETH and stake TEST tokens to continue ❗"
+        }
+        WalletStatus::InsufficientFunds => {
+            "❗ Please fund this address with ETH and stake TEST tokens to continue ❗"
+        }
+        WalletStatus::Ready => {
+            if has_stake {
+                "✅ Ready to operate"
+            } else {
+                "⚠️  Please stake TEST tokens to continue"
+            }
+        }
+    };
+    table.add_row(Row::new(vec![TableCell::builder(status_message)
+        .col_span(2)
+        .alignment(CellAlignment::Center)
+        .build()]));
+
+    // Log based on status
+    if use_warn {
+        warn!("\n{}", table.render());
+    } else {
+        info!("\n{}", table.render());
+    }
 }
 
 #[cfg(test)]

@@ -3,7 +3,7 @@ use clap::Parser;
 use ethers::core::types::H256;
 use nilav::{
     config::consts::{INITIAL_RECONNECT_DELAY_SECS, MAX_RECONNECT_DELAY_SECS},
-    config::{NodeCliArgs, NodeConfig},
+    config::{validate_node_requirements, NodeCliArgs, NodeConfig},
     contract_client::{ContractConfig, NilAVClient},
     types::Htx,
     verification::verify_htx,
@@ -88,6 +88,18 @@ async fn main() -> Result<()> {
     // Load configuration
     let cli_args = NodeCliArgs::parse();
     let config = NodeConfig::load(cli_args).await?;
+
+    // Create initial client to validate requirements
+    let contract_config = ContractConfig::new(
+        config.rpc_url.clone(),
+        config.router_contract_address,
+        config.staking_contract_address,
+        config.token_contract_address,
+    );
+    let validation_client = NilAVClient::new(contract_config, config.private_key.clone()).await?;
+
+    // Validate node has sufficient ETH and staked TEST tokens
+    validate_node_requirements(&validation_client, &config.rpc_url, config.was_wallet_created).await?;
 
     info!("Node initialized");
 
