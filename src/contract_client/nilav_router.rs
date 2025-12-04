@@ -3,12 +3,14 @@ use crate::types::Htx;
 use ethers::{
     contract::abigen,
     core::types::{Address, H256, U256},
-    middleware::{NonceManagerMiddleware, SignerMiddleware},
-    providers::{Middleware, Provider, StreamExt, Ws},
-    signers::LocalWallet,
 };
+
 use std::sync::Arc;
 use tracing::error;
+
+use ethers::providers::{Middleware, StreamExt};
+
+use crate::contract_client::SignedWsProvider;
 
 // Generate type-safe contract bindings from ABI
 abigen!(
@@ -16,8 +18,6 @@ abigen!(
     "./contracts/out/NilAVRouter.sol/NilAVRouter.json",
     event_derives(serde::Deserialize, serde::Serialize)
 );
-
-pub type SignedWsProvider = NonceManagerMiddleware<SignerMiddleware<Provider<Ws>, LocalWallet>>;
 
 /// Assignment struct for backwards compatibility with old NilAVRouter contract
 /// The new contract uses a different structure with multiple nodes.

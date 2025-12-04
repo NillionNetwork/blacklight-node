@@ -1,7 +1,10 @@
 use anyhow::Result;
 use clap::Parser;
 use crossterm::{
-    event::{self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture, Event, KeyCode, KeyEventKind},
+    event::{
+        self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+        Event, KeyCode, KeyEventKind,
+    },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -150,7 +153,7 @@ struct MonitorState {
     selected_node_index: Option<usize>,
     htx_tracking_state: TableState,
     rpc_url: String,
-    contract_address: Address,
+    router_contract_address: Address,
     staking_contract_address: Address,
     token_contract_address: Address,
     public_key: String,
@@ -184,7 +187,7 @@ async fn main() -> Result<()> {
 
     // Store values before they're moved
     let rpc_url = config.rpc_url.clone();
-    let contract_address = config.router_contract_address;
+    let router_contract_address = config.router_contract_address;
     let staking_contract_address = config.staking_contract_address;
     let token_contract_address = config.token_contract_address;
 
@@ -203,19 +206,11 @@ async fn main() -> Result<()> {
     let registered_nodes = client.router.get_nodes().await?;
     let registered_set: HashSet<Address> = registered_nodes.into_iter().collect();
 
-    // Build a complete list of all addresses with stake by querying historical staking events
-    let mut staked_addresses = HashSet::new();
-    if let Ok(staked_events) = client.staking.get_staked_events(u64::MAX).await {
-        for event in staked_events {
-            staked_addresses.insert(event.operator);
-        }
-    }
-
-    // Fetch current stake for all addresses that have ever staked
+    // Get all operators with stake (efficient: queries contract state directly)
     let mut nodes = Vec::new();
-    for addr in staked_addresses {
-        if let Ok(stake) = client.staking.stake_of(addr).await {
-            if stake > U256::zero() {
+    if let Ok(staked_operators) = client.staking.get_operators_with_stake().await {
+        for addr in staked_operators {
+            if let Ok(stake) = client.staking.stake_of(addr).await {
                 let is_registered = registered_set.contains(&addr);
                 let eth_balance = client.get_balance_of(addr).await.unwrap_or(U256::zero());
                 nodes.push(NodeInfo {
@@ -233,24 +228,32 @@ async fn main() -> Result<()> {
 
     // Fetch initial token balance and ETH balance
     let signer_address = client.signer_address();
-    let token_balance = client.token.balance_of(signer_address).await.unwrap_or(U256::zero());
+    let token_balance = client
+        .token
+        .balance_of(signer_address)
+        .await
+        .unwrap_or(U256::zero());
     let eth_balance = client.get_balance().await.unwrap_or(U256::zero());
 
-    // Build token holders list from historical Transfer events
+    // Build token holders list from system addresses (nodes and operators)
+    // Collect all relevant addresses: registered nodes + all staked operators
     let mut token_holder_addresses = HashSet::new();
-    if let Ok(transfer_events) = client.token.get_transfer_events(u64::MAX).await {
-        let zero_address = Address::zero();
-        for event in transfer_events {
-            // Track sender (if not zero address, meaning not a mint)
-            if event.from != zero_address {
-                token_holder_addresses.insert(event.from);
-            }
-            // Track recipient
-            token_holder_addresses.insert(event.to);
+
+    // Add all registered nodes
+    if let Ok(registered_nodes) = client.router.get_nodes().await {
+        for addr in registered_nodes {
+            token_holder_addresses.insert(addr);
         }
     }
 
-    // Fetch current balances for all tracked addresses
+    // Add all operators with stake (efficient: direct contract query)
+    if let Ok(staked_operators) = client.staking.get_operators_with_stake().await {
+        for operator in staked_operators {
+            token_holder_addresses.insert(operator);
+        }
+    }
+
+    // Fetch current token balances for all system addresses
     let mut token_holders = Vec::new();
     for addr in &token_holder_addresses {
         if let Ok(balance) = client.token.balance_of(*addr).await {
@@ -354,7 +357,7 @@ async fn main() -> Result<()> {
         selected_node_index: None,
         htx_tracking_state: TableState::default(),
         rpc_url,
-        contract_address,
+        router_contract_address,
         staking_contract_address,
         token_contract_address,
         public_key: format!("{:?}", client.signer_address()),
@@ -384,7 +387,12 @@ async fn run_monitor(client: NilAVClient, initial_state: MonitorState) -> Result
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture, EnableBracketedPaste)?;
+    execute!(
+        stdout,
+        EnterAlternateScreen,
+        EnableMouseCapture,
+        EnableBracketedPaste
+    )?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
@@ -454,25 +462,49 @@ async fn run_monitor_loop(
                     let mut state_guard = state.lock().unwrap();
 
                     // Add pasted text to the active input field
-                    if state_guard.current_tab == Tab::Staking && state_guard.staking_active_input != StakingInputField::None {
+                    if state_guard.current_tab == Tab::Staking
+                        && state_guard.staking_active_input != StakingInputField::None
+                    {
                         match state_guard.staking_active_input {
-                            StakingInputField::PrivateKey => state_guard.staking_private_key.push_str(&pasted_text),
-                            StakingInputField::TargetAddress => state_guard.staking_target_address.push_str(&pasted_text),
-                            StakingInputField::Amount => state_guard.staking_amount.push_str(&pasted_text),
+                            StakingInputField::PrivateKey => {
+                                state_guard.staking_private_key.push_str(&pasted_text)
+                            }
+                            StakingInputField::TargetAddress => {
+                                state_guard.staking_target_address.push_str(&pasted_text)
+                            }
+                            StakingInputField::Amount => {
+                                state_guard.staking_amount.push_str(&pasted_text)
+                            }
                             _ => {}
                         }
-                    } else if state_guard.current_tab == Tab::Minting && state_guard.minting_active_input != MintingInputField::None {
+                    } else if state_guard.current_tab == Tab::Minting
+                        && state_guard.minting_active_input != MintingInputField::None
+                    {
                         match state_guard.minting_active_input {
-                            MintingInputField::PrivateKey => state_guard.minting_private_key.push_str(&pasted_text),
-                            MintingInputField::TargetAddress => state_guard.minting_target_address.push_str(&pasted_text),
-                            MintingInputField::Amount => state_guard.minting_amount.push_str(&pasted_text),
+                            MintingInputField::PrivateKey => {
+                                state_guard.minting_private_key.push_str(&pasted_text)
+                            }
+                            MintingInputField::TargetAddress => {
+                                state_guard.minting_target_address.push_str(&pasted_text)
+                            }
+                            MintingInputField::Amount => {
+                                state_guard.minting_amount.push_str(&pasted_text)
+                            }
                             _ => {}
                         }
-                    } else if state_guard.current_tab == Tab::TransferETH && state_guard.transfer_active_input != TransferInputField::None {
+                    } else if state_guard.current_tab == Tab::TransferETH
+                        && state_guard.transfer_active_input != TransferInputField::None
+                    {
                         match state_guard.transfer_active_input {
-                            TransferInputField::PrivateKey => state_guard.transfer_private_key.push_str(&pasted_text),
-                            TransferInputField::TargetAddress => state_guard.transfer_target_address.push_str(&pasted_text),
-                            TransferInputField::Amount => state_guard.transfer_amount.push_str(&pasted_text),
+                            TransferInputField::PrivateKey => {
+                                state_guard.transfer_private_key.push_str(&pasted_text)
+                            }
+                            TransferInputField::TargetAddress => {
+                                state_guard.transfer_target_address.push_str(&pasted_text)
+                            }
+                            TransferInputField::Amount => {
+                                state_guard.transfer_amount.push_str(&pasted_text)
+                            }
                             _ => {}
                         }
                     }
@@ -482,592 +514,765 @@ async fn run_monitor_loop(
 
                     // Normal key handling
                     match key.code {
-                            KeyCode::Char('q') => {
-                                state_guard.should_quit = true;
-                                break;
-                            }
-                            KeyCode::Char('r') => {
-                                // Manual refresh - update node list and balance
-                                state_guard.status_message = "Refreshing...".to_string();
-                                drop(state_guard);
+                        KeyCode::Char('q') => {
+                            state_guard.should_quit = true;
+                            break;
+                        }
+                        KeyCode::Char('r') => {
+                            // Manual refresh - update node list and balance
+                            state_guard.status_message = "Refreshing...".to_string();
+                            drop(state_guard);
 
-                                // Get all registered nodes from router
-                                let registered_result = client.router.get_nodes().await;
-                                // Get all addresses that have staked by querying historical events
-                                let staked_events_result = client.staking.get_staked_events(u64::MAX).await;
+                            // Get all registered nodes from router
+                            let registered_result = client.router.get_nodes().await;
+                            // Get all operators with stake (efficient: direct contract query)
+                            let staked_operators_result =
+                                client.staking.get_operators_with_stake().await;
 
-                                match (registered_result, staked_events_result) {
-                                    (Ok(registered_nodes), Ok(staked_events)) => {
-                                        let registered_set: HashSet<Address> = registered_nodes.into_iter().collect();
+                            match (registered_result, staked_operators_result) {
+                                (Ok(registered_nodes), Ok(staked_operators)) => {
+                                    let registered_set: HashSet<Address> =
+                                        registered_nodes.into_iter().collect();
 
-                                        // Collect all addresses that have ever staked
-                                        let mut staked_addresses = HashSet::new();
-                                        for event in staked_events {
-                                            staked_addresses.insert(event.operator);
+                                    // Fetch current stake for all operators with stake
+                                    let mut nodes = Vec::new();
+                                    for addr in staked_operators {
+                                        if let Ok(stake) = client.staking.stake_of(addr).await {
+                                            let is_registered = registered_set.contains(&addr);
+                                            let eth_balance = client
+                                                .get_balance_of(addr)
+                                                .await
+                                                .unwrap_or(U256::zero());
+                                            nodes.push(NodeInfo {
+                                                address: addr,
+                                                stake,
+                                                is_registered,
+                                                eth_balance,
+                                            });
                                         }
+                                    }
 
-                                        // Fetch current stake for all addresses
-                                        let mut nodes = Vec::new();
-                                        for addr in staked_addresses {
-                                            if let Ok(stake) = client.staking.stake_of(addr).await {
-                                                if stake > U256::zero() {
-                                                    let is_registered = registered_set.contains(&addr);
-                                                    let eth_balance = client.get_balance_of(addr).await.unwrap_or(U256::zero());
-                                                    nodes.push(NodeInfo {
-                                                        address: addr,
-                                                        stake,
-                                                        is_registered,
-                                                        eth_balance,
-                                                    });
-                                                }
+                                    // Sort by stake descending
+                                    nodes.sort_by(|a, b| b.stake.cmp(&a.stake));
+
+                                    // Fetch updated balances
+                                    let signer_address = client.signer_address();
+                                    let token_balance = client
+                                        .token
+                                        .balance_of(signer_address)
+                                        .await
+                                        .unwrap_or(U256::zero());
+                                    let eth_balance =
+                                        client.get_balance().await.unwrap_or(U256::zero());
+
+                                    // Fetch updated token holder balances from system addresses
+                                    // Collect addresses from registered nodes and staked operators
+                                    let mut token_holder_addresses = HashSet::new();
+
+                                    // Add all registered nodes
+                                    if let Ok(registered_nodes) = client.router.get_nodes().await {
+                                        for addr in registered_nodes {
+                                            token_holder_addresses.insert(addr);
+                                        }
+                                    }
+
+                                    // Add all operators with stake (efficient: direct contract query)
+                                    if let Ok(staked_operators) =
+                                        client.staking.get_operators_with_stake().await
+                                    {
+                                        for operator in staked_operators {
+                                            token_holder_addresses.insert(operator);
+                                        }
+                                    }
+
+                                    let mut token_holders = Vec::new();
+                                    for addr in token_holder_addresses.iter() {
+                                        if let Ok(balance) = client.token.balance_of(*addr).await {
+                                            if balance > U256::zero() {
+                                                token_holders.push(TokenHolder {
+                                                    address: *addr,
+                                                    balance,
+                                                });
                                             }
                                         }
-
-                                        // Sort by stake descending
-                                        nodes.sort_by(|a, b| b.stake.cmp(&a.stake));
-
-                                        // Fetch updated balances
-                                        let signer_address = client.signer_address();
-                                        let token_balance = client.token.balance_of(signer_address).await.unwrap_or(U256::zero());
-                                        let eth_balance = client.get_balance().await.unwrap_or(U256::zero());
-
-                                        // Fetch updated token holder balances
-                                        let state_guard = state.lock().unwrap();
-                                        let tracked_addresses: Vec<Address> = state_guard.token_holder_addresses.iter().copied().collect();
-                                        drop(state_guard);
-
-                                        let mut token_holders = Vec::new();
-                                        for addr in tracked_addresses {
-                                            if let Ok(balance) = client.token.balance_of(addr).await {
-                                                if balance > U256::zero() {
-                                                    token_holders.push(TokenHolder {
-                                                        address: addr,
-                                                        balance,
-                                                    });
-                                                }
-                                            }
-                                        }
-                                        token_holders.sort_by(|a, b| b.balance.cmp(&a.balance));
-
-                                        let mut state_guard = state.lock().unwrap();
-                                        state_guard.nodes = nodes;
-                                        state_guard.node_count = registered_set.len();
-                                        state_guard.token_balance = token_balance;
-                                        state_guard.eth_balance = eth_balance;
-                                        state_guard.token_holders = token_holders;
-                                        state_guard.status_message = "Refreshed!".to_string();
                                     }
-                                    (Err(e), _) | (_, Err(e)) => {
-                                        let mut state_guard = state.lock().unwrap();
-                                        state_guard.status_message = format!("Error: {}", e);
-                                    }
+                                    token_holders.sort_by(|a, b| b.balance.cmp(&a.balance));
+
+                                    let mut state_guard = state.lock().unwrap();
+                                    state_guard.nodes = nodes;
+                                    state_guard.node_count = registered_set.len();
+                                    state_guard.token_balance = token_balance;
+                                    state_guard.eth_balance = eth_balance;
+                                    state_guard.token_holders = token_holders;
+                                    state_guard.status_message = "Refreshed!".to_string();
                                 }
-                                continue;
-                            }
-                            KeyCode::Tab => {
-                                state_guard.current_tab = state_guard.current_tab.next();
-                                state_guard.selected_node_index = None;
-                                if state_guard.current_tab == Tab::Staking && state_guard.staking_active_input == StakingInputField::None {
-                                    state_guard.staking_active_input = StakingInputField::TargetAddress;
-                                    state_guard.status_message = "Fill in the form and press Enter to stake".to_string();
-                                }
-                                if state_guard.current_tab == Tab::Minting && state_guard.minting_active_input == MintingInputField::None {
-                                    state_guard.minting_active_input = MintingInputField::TargetAddress;
-                                    state_guard.status_message = "Fill in the form and press Enter to mint".to_string();
-                                }
-                                if state_guard.current_tab == Tab::TransferETH && state_guard.transfer_active_input == TransferInputField::None {
-                                    state_guard.transfer_active_input = TransferInputField::TargetAddress;
-                                    state_guard.status_message = "Fill in the form and press Enter to transfer ETH".to_string();
+                                (Err(e), _) | (_, Err(e)) => {
+                                    let mut state_guard = state.lock().unwrap();
+                                    state_guard.status_message = format!("Error: {}", e);
                                 }
                             }
-                            KeyCode::BackTab => {
-                                state_guard.current_tab = state_guard.current_tab.prev();
-                                state_guard.selected_node_index = None;
-                                if state_guard.current_tab == Tab::Staking && state_guard.staking_active_input == StakingInputField::None {
-                                    state_guard.staking_active_input = StakingInputField::TargetAddress;
-                                    state_guard.status_message = "Fill in the form and press Enter to stake".to_string();
-                                }
-                                if state_guard.current_tab == Tab::Minting && state_guard.minting_active_input == MintingInputField::None {
-                                    state_guard.minting_active_input = MintingInputField::TargetAddress;
-                                    state_guard.status_message = "Fill in the form and press Enter to mint".to_string();
-                                }
-                                if state_guard.current_tab == Tab::TransferETH && state_guard.transfer_active_input == TransferInputField::None {
-                                    state_guard.transfer_active_input = TransferInputField::TargetAddress;
-                                    state_guard.status_message = "Fill in the form and press Enter to transfer ETH".to_string();
-                                }
+                            continue;
+                        }
+                        KeyCode::Tab => {
+                            state_guard.current_tab = state_guard.current_tab.next();
+                            state_guard.selected_node_index = None;
+                            if state_guard.current_tab == Tab::Staking
+                                && state_guard.staking_active_input == StakingInputField::None
+                            {
+                                state_guard.staking_active_input = StakingInputField::TargetAddress;
+                                state_guard.status_message =
+                                    "Fill in the form and press Enter to stake".to_string();
                             }
-                            KeyCode::Right => {
-                                state_guard.current_tab = state_guard.current_tab.next();
-                                state_guard.selected_node_index = None;
-                                if state_guard.current_tab == Tab::Staking && state_guard.staking_active_input == StakingInputField::None {
-                                    state_guard.staking_active_input = StakingInputField::TargetAddress;
-                                    state_guard.status_message = "Fill in the form and press Enter to stake".to_string();
-                                }
-                                if state_guard.current_tab == Tab::Minting && state_guard.minting_active_input == MintingInputField::None {
-                                    state_guard.minting_active_input = MintingInputField::TargetAddress;
-                                    state_guard.status_message = "Fill in the form and press Enter to mint".to_string();
-                                }
-                                if state_guard.current_tab == Tab::TransferETH && state_guard.transfer_active_input == TransferInputField::None {
-                                    state_guard.transfer_active_input = TransferInputField::TargetAddress;
-                                    state_guard.status_message = "Fill in the form and press Enter to transfer ETH".to_string();
-                                }
+                            if state_guard.current_tab == Tab::Minting
+                                && state_guard.minting_active_input == MintingInputField::None
+                            {
+                                state_guard.minting_active_input = MintingInputField::TargetAddress;
+                                state_guard.status_message =
+                                    "Fill in the form and press Enter to mint".to_string();
                             }
-                            KeyCode::Left => {
-                                state_guard.current_tab = state_guard.current_tab.prev();
-                                state_guard.selected_node_index = None;
-                                if state_guard.current_tab == Tab::Staking && state_guard.staking_active_input == StakingInputField::None {
-                                    state_guard.staking_active_input = StakingInputField::TargetAddress;
-                                    state_guard.status_message = "Fill in the form and press Enter to stake".to_string();
-                                }
-                                if state_guard.current_tab == Tab::Minting && state_guard.minting_active_input == MintingInputField::None {
-                                    state_guard.minting_active_input = MintingInputField::TargetAddress;
-                                    state_guard.status_message = "Fill in the form and press Enter to mint".to_string();
-                                }
-                                if state_guard.current_tab == Tab::TransferETH && state_guard.transfer_active_input == TransferInputField::None {
-                                    state_guard.transfer_active_input = TransferInputField::TargetAddress;
-                                    state_guard.status_message = "Fill in the form and press Enter to transfer ETH".to_string();
-                                }
+                            if state_guard.current_tab == Tab::TransferETH
+                                && state_guard.transfer_active_input == TransferInputField::None
+                            {
+                                state_guard.transfer_active_input =
+                                    TransferInputField::TargetAddress;
+                                state_guard.status_message =
+                                    "Fill in the form and press Enter to transfer ETH".to_string();
                             }
-                            KeyCode::Down => match state_guard.current_tab {
-                                Tab::Nodes if !state_guard.nodes.is_empty() => {
-                                    state_guard.selected_node_index = Some(
-                                        state_guard
-                                            .selected_node_index
-                                            .map(|idx| (idx + 1).min(state_guard.nodes.len() - 1))
-                                            .unwrap_or(0),
-                                    );
-                                }
-                                Tab::HTXTracking if !state_guard.htx_tracking.is_empty() => {
-                                    let i = state_guard.htx_tracking_state.selected().unwrap_or(0);
-                                    let next = (i + 1).min(state_guard.htx_tracking.len() - 1);
-                                    state_guard.htx_tracking_state.select(Some(next));
-                                }
-                                Tab::Staking => {
-                                    state_guard.staking_active_input = match state_guard.staking_active_input {
-                                        StakingInputField::None | StakingInputField::PrivateKey => StakingInputField::TargetAddress,
-                                        StakingInputField::TargetAddress => StakingInputField::Amount,
-                                        StakingInputField::Amount => StakingInputField::Amount,
-                                    };
-                                }
-                                Tab::Minting => {
-                                    state_guard.minting_active_input = match state_guard.minting_active_input {
-                                        MintingInputField::None | MintingInputField::PrivateKey => MintingInputField::TargetAddress,
-                                        MintingInputField::TargetAddress => MintingInputField::Amount,
-                                        MintingInputField::Amount => MintingInputField::Amount,
-                                    };
-                                }
-                                Tab::TransferETH => {
-                                    state_guard.transfer_active_input = match state_guard.transfer_active_input {
-                                        TransferInputField::None | TransferInputField::PrivateKey => TransferInputField::TargetAddress,
-                                        TransferInputField::TargetAddress => TransferInputField::Amount,
-                                        TransferInputField::Amount => TransferInputField::Amount,
-                                    };
-                                }
-                                Tab::TokenHolders if !state_guard.token_holders.is_empty() => {
-                                    let i = state_guard.token_holders_state.selected().unwrap_or(0);
-                                    let next = (i + 1).min(state_guard.token_holders.len() - 1);
-                                    state_guard.token_holders_state.select(Some(next));
-                                }
-                                _ => {}
-                            },
-                            KeyCode::Up => match state_guard.current_tab {
-                                Tab::Nodes if !state_guard.nodes.is_empty() => {
-                                    state_guard.selected_node_index = Some(
-                                        state_guard
-                                            .selected_node_index
-                                            .map(|idx| idx.saturating_sub(1))
-                                            .unwrap_or(0),
-                                    );
-                                }
-                                Tab::HTXTracking if !state_guard.htx_tracking.is_empty() => {
-                                    let i = state_guard.htx_tracking_state.selected().unwrap_or(0);
+                        }
+                        KeyCode::BackTab => {
+                            state_guard.current_tab = state_guard.current_tab.prev();
+                            state_guard.selected_node_index = None;
+                            if state_guard.current_tab == Tab::Staking
+                                && state_guard.staking_active_input == StakingInputField::None
+                            {
+                                state_guard.staking_active_input = StakingInputField::TargetAddress;
+                                state_guard.status_message =
+                                    "Fill in the form and press Enter to stake".to_string();
+                            }
+                            if state_guard.current_tab == Tab::Minting
+                                && state_guard.minting_active_input == MintingInputField::None
+                            {
+                                state_guard.minting_active_input = MintingInputField::TargetAddress;
+                                state_guard.status_message =
+                                    "Fill in the form and press Enter to mint".to_string();
+                            }
+                            if state_guard.current_tab == Tab::TransferETH
+                                && state_guard.transfer_active_input == TransferInputField::None
+                            {
+                                state_guard.transfer_active_input =
+                                    TransferInputField::TargetAddress;
+                                state_guard.status_message =
+                                    "Fill in the form and press Enter to transfer ETH".to_string();
+                            }
+                        }
+                        KeyCode::Right => {
+                            state_guard.current_tab = state_guard.current_tab.next();
+                            state_guard.selected_node_index = None;
+                            if state_guard.current_tab == Tab::Staking
+                                && state_guard.staking_active_input == StakingInputField::None
+                            {
+                                state_guard.staking_active_input = StakingInputField::TargetAddress;
+                                state_guard.status_message =
+                                    "Fill in the form and press Enter to stake".to_string();
+                            }
+                            if state_guard.current_tab == Tab::Minting
+                                && state_guard.minting_active_input == MintingInputField::None
+                            {
+                                state_guard.minting_active_input = MintingInputField::TargetAddress;
+                                state_guard.status_message =
+                                    "Fill in the form and press Enter to mint".to_string();
+                            }
+                            if state_guard.current_tab == Tab::TransferETH
+                                && state_guard.transfer_active_input == TransferInputField::None
+                            {
+                                state_guard.transfer_active_input =
+                                    TransferInputField::TargetAddress;
+                                state_guard.status_message =
+                                    "Fill in the form and press Enter to transfer ETH".to_string();
+                            }
+                        }
+                        KeyCode::Left => {
+                            state_guard.current_tab = state_guard.current_tab.prev();
+                            state_guard.selected_node_index = None;
+                            if state_guard.current_tab == Tab::Staking
+                                && state_guard.staking_active_input == StakingInputField::None
+                            {
+                                state_guard.staking_active_input = StakingInputField::TargetAddress;
+                                state_guard.status_message =
+                                    "Fill in the form and press Enter to stake".to_string();
+                            }
+                            if state_guard.current_tab == Tab::Minting
+                                && state_guard.minting_active_input == MintingInputField::None
+                            {
+                                state_guard.minting_active_input = MintingInputField::TargetAddress;
+                                state_guard.status_message =
+                                    "Fill in the form and press Enter to mint".to_string();
+                            }
+                            if state_guard.current_tab == Tab::TransferETH
+                                && state_guard.transfer_active_input == TransferInputField::None
+                            {
+                                state_guard.transfer_active_input =
+                                    TransferInputField::TargetAddress;
+                                state_guard.status_message =
+                                    "Fill in the form and press Enter to transfer ETH".to_string();
+                            }
+                        }
+                        KeyCode::Down => match state_guard.current_tab {
+                            Tab::Nodes if !state_guard.nodes.is_empty() => {
+                                state_guard.selected_node_index = Some(
                                     state_guard
-                                        .htx_tracking_state
-                                        .select(Some(i.saturating_sub(1)));
-                                }
-                                Tab::Staking => {
-                                    state_guard.staking_active_input = match state_guard.staking_active_input {
-                                        StakingInputField::None | StakingInputField::Amount => StakingInputField::TargetAddress,
-                                        StakingInputField::TargetAddress => StakingInputField::PrivateKey,
-                                        StakingInputField::PrivateKey => StakingInputField::PrivateKey,
-                                    };
-                                }
-                                Tab::Minting => {
-                                    state_guard.minting_active_input = match state_guard.minting_active_input {
-                                        MintingInputField::None | MintingInputField::Amount => MintingInputField::TargetAddress,
-                                        MintingInputField::TargetAddress => MintingInputField::PrivateKey,
-                                        MintingInputField::PrivateKey => MintingInputField::PrivateKey,
-                                    };
-                                }
-                                Tab::TransferETH => {
-                                    state_guard.transfer_active_input = match state_guard.transfer_active_input {
-                                        TransferInputField::None | TransferInputField::Amount => TransferInputField::TargetAddress,
-                                        TransferInputField::TargetAddress => TransferInputField::PrivateKey,
-                                        TransferInputField::PrivateKey => TransferInputField::PrivateKey,
-                                    };
-                                }
-                                Tab::TokenHolders if !state_guard.token_holders.is_empty() => {
-                                    let i = state_guard.token_holders_state.selected().unwrap_or(0);
-                                    state_guard
-                                        .token_holders_state
-                                        .select(Some(i.saturating_sub(1)));
-                                }
-                                _ => {}
-                            },
-                            KeyCode::Char('d') | KeyCode::Char('D') => {
-                                // Check if we're actively typing in an input field (Staking or Minting tabs)
-                                let is_typing_staking = state_guard.current_tab == Tab::Staking
-                                    && state_guard.staking_active_input != StakingInputField::None;
-                                let is_typing_minting = state_guard.current_tab == Tab::Minting
-                                    && state_guard.minting_active_input != MintingInputField::None;
-
-                                if is_typing_staking {
-                                    // Add 'd' to the active staking input field
-                                    match state_guard.staking_active_input {
-                                        StakingInputField::PrivateKey => state_guard.staking_private_key.push('d'),
-                                        StakingInputField::TargetAddress => state_guard.staking_target_address.push('d'),
-                                        StakingInputField::Amount => state_guard.staking_amount.push('d'),
-                                        _ => {}
-                                    }
-                                } else if is_typing_minting {
-                                    // Add 'd' to the active minting input field
-                                    match state_guard.minting_active_input {
-                                        MintingInputField::PrivateKey => state_guard.minting_private_key.push('d'),
-                                        MintingInputField::TargetAddress => state_guard.minting_target_address.push('d'),
-                                        MintingInputField::Amount => state_guard.minting_amount.push('d'),
-                                        _ => {}
-                                    }
-                                }
+                                        .selected_node_index
+                                        .map(|idx| (idx + 1).min(state_guard.nodes.len() - 1))
+                                        .unwrap_or(0),
+                                );
                             }
-                            // Staking Tab Input Handling
-                            code if state_guard.current_tab == Tab::Staking => {
-                                match code {
-                                    KeyCode::Enter => {
-                                        // Submit Staking Transaction
-                                        let private_key = state_guard.staking_private_key.trim().to_string();
-                                        let target_addr_str = state_guard.staking_target_address.trim().to_string();
-                                        let amount_str = state_guard.staking_amount.trim().to_string();
-
-                                        // Validate inputs
-                                        if target_addr_str.is_empty() {
-                                            state_guard.status_message = "Error: Target address is required".to_string();
-                                        } else if amount_str.is_empty() {
-                                            state_guard.status_message = "Error: Amount is required".to_string();
-                                        } else {
-                                            // Validate amount first
-                                            let amount_eth = match amount_str.parse::<f64>() {
-                                                Ok(a) if a > 0.0 => a,
-                                                Ok(_) => {
-                                                    state_guard.status_message = "Error: Amount must be greater than 0".to_string();
-                                                    continue;
-                                                }
-                                                Err(_) => {
-                                                    state_guard.status_message = format!("Error: Invalid amount format: {}", amount_str).to_string();
-                                                    continue;
-                                                }
-                                            };
-
-                                            // Validate address (show length for debugging)
-                                            let target_addr = match target_addr_str.parse::<Address>() {
-                                                Ok(addr) => addr,
-                                                Err(e) => {
-                                                    state_guard.status_message = format!(
-                                                        "Error: Invalid address '{}' (len: {}) - {}",
-                                                        target_addr_str,
-                                                        target_addr_str.len(),
-                                                        e
-                                                    );
-                                                    continue;
-                                                }
-                                            };
-
-                                            state_guard.status_message = "Approving tokens and submitting stake...".to_string();
-
-                                            // Clone necessary data to drop lock
-                                            let rpc_url = state_guard.rpc_url.clone();
-                                            let router_addr = state_guard.contract_address;
-                                            let staking_addr = state_guard.staking_contract_address;
-                                            let token_addr = state_guard.token_contract_address;
-
-                                            let use_custom_key = !private_key.is_empty();
-
-                                            drop(state_guard); // Drop lock
-
-                                            let result = async {
-                                                let (staking_client, token_client) = if use_custom_key {
-                                                    // Create a new client with the provided private key
-                                                    let config = ContractConfig::new(
-                                                        rpc_url,
-                                                        router_addr,
-                                                        staking_addr,
-                                                        token_addr
-                                                    );
-
-                                                    let new_client = NilAVClient::new(config, private_key).await?;
-                                                    (new_client.staking.clone(), new_client.token.clone())
-                                                } else {
-                                                    // Use the existing client's staking and token contracts
-                                                    (client.staking.clone(), client.token.clone())
-                                                };
-                                                let amount_wei = U256::from((amount_eth * 1e18) as u128);
-                                                // First, approve the staking contract to spend tokens
-                                                token_client.approve(staking_addr, amount_wei).await?;
-
-                                                // Then stake
-                                                staking_client.stake_to(target_addr, amount_wei).await
-                                            }.await;
-
-                                            match result {
-                                                Ok(tx) => {
-                                                    let mut state_guard = state.lock().unwrap();
-                                                    state_guard.status_message = format!("Stake submitted! TX: {:?}", tx);
-                                                    state_guard.staking_amount = String::new(); // Clear amount
-                                                }
-                                                Err(e) => {
-                                                    let mut state_guard = state.lock().unwrap();
-                                                    state_guard.status_message = format!("Error staking: {}", e);
-                                                }
-                                            }
-                                            continue;
-                                        }
-                                    }
-                                    KeyCode::Char(c) => {
-                                        match state_guard.staking_active_input {
-                                            StakingInputField::PrivateKey => state_guard.staking_private_key.push(c),
-                                            StakingInputField::TargetAddress => state_guard.staking_target_address.push(c),
-                                            StakingInputField::Amount => state_guard.staking_amount.push(c),
-                                            _ => {}
-                                        }
-                                    }
-                                    KeyCode::Backspace => {
-                                        match state_guard.staking_active_input {
-                                            StakingInputField::PrivateKey => { state_guard.staking_private_key.pop(); }
-                                            StakingInputField::TargetAddress => { state_guard.staking_target_address.pop(); }
-                                            StakingInputField::Amount => { state_guard.staking_amount.pop(); }
-                                            _ => {}
-                                        }
-                                    }
-                                    _ => {}
-                                }
+                            Tab::HTXTracking if !state_guard.htx_tracking.is_empty() => {
+                                let i = state_guard.htx_tracking_state.selected().unwrap_or(0);
+                                let next = (i + 1).min(state_guard.htx_tracking.len() - 1);
+                                state_guard.htx_tracking_state.select(Some(next));
                             }
-                            // Minting Tab Input Handling
-                            code if state_guard.current_tab == Tab::Minting => {
-                                match code {
-                                    KeyCode::Enter => {
-                                        // Submit Minting Transaction
-                                        let private_key = state_guard.minting_private_key.trim().to_string();
-                                        let target_addr_str = state_guard.minting_target_address.trim().to_string();
-                                        let amount_str = state_guard.minting_amount.trim().to_string();
-
-                                        // Validate inputs
-                                        if target_addr_str.is_empty() {
-                                            state_guard.status_message = "Error: Target address is required".to_string();
-                                        } else if amount_str.is_empty() {
-                                            state_guard.status_message = "Error: Amount is required".to_string();
-                                        } else {
-                                            // Validate amount first
-                                            let amount_eth = match amount_str.parse::<f64>() {
-                                                Ok(a) if a > 0.0 => a,
-                                                Ok(_) => {
-                                                    state_guard.status_message = "Error: Amount must be greater than 0".to_string();
-                                                    continue;
-                                                }
-                                                Err(_) => {
-                                                    state_guard.status_message = format!("Error: Invalid amount format: {}", amount_str).to_string();
-                                                    continue;
-                                                }
-                                            };
-
-                                            // Validate address (show length for debugging)
-                                            let target_addr = match target_addr_str.parse::<Address>() {
-                                                Ok(addr) => addr,
-                                                Err(e) => {
-                                                    state_guard.status_message = format!(
-                                                        "Error: Invalid address '{}' (len: {}) - {}",
-                                                        target_addr_str,
-                                                        target_addr_str.len(),
-                                                        e
-                                                    );
-                                                    continue;
-                                                }
-                                            };
-
-                                            state_guard.status_message = "Minting tokens...".to_string();
-
-                                            // Clone necessary data to drop lock
-                                            let rpc_url = state_guard.rpc_url.clone();
-                                            let router_addr = state_guard.contract_address;
-                                            let staking_addr = state_guard.staking_contract_address;
-                                            let token_addr = state_guard.token_contract_address;
-
-                                            let use_custom_key = !private_key.is_empty();
-
-                                            drop(state_guard); // Drop lock
-
-                                            let result = async {
-                                                let token_client = if use_custom_key {
-                                                    // Create a new client with the provided private key
-                                                    let config = ContractConfig::new(
-                                                        rpc_url,
-                                                        router_addr,
-                                                        staking_addr,
-                                                        token_addr
-                                                    );
-
-                                                    let new_client = NilAVClient::new(config, private_key).await?;
-                                                    new_client.token
-                                                } else {
-                                                    // Use the existing client's token contract
-                                                    client.token.clone()
-                                                };
-                                                let amount_wei = U256::from((amount_eth * 1e18) as u128);
-
-                                                token_client.mint(target_addr, amount_wei).await
-                                            }.await;
-
-                                            match result {
-                                                Ok(tx) => {
-                                                    let mut state_guard = state.lock().unwrap();
-                                                    state_guard.status_message = format!("Tokens minted! TX: {:?}", tx);
-                                                    state_guard.minting_amount = String::new(); // Clear amount
-                                                }
-                                                Err(e) => {
-                                                    let mut state_guard = state.lock().unwrap();
-                                                    state_guard.status_message = format!("Error minting: {}", e);
-                                                }
-                                            }
-                                            continue;
-                                        }
+                            Tab::Staking => {
+                                state_guard.staking_active_input = match state_guard
+                                    .staking_active_input
+                                {
+                                    StakingInputField::None | StakingInputField::PrivateKey => {
+                                        StakingInputField::TargetAddress
                                     }
-                                    KeyCode::Char(c) => {
-                                        match state_guard.minting_active_input {
-                                            MintingInputField::PrivateKey => state_guard.minting_private_key.push(c),
-                                            MintingInputField::TargetAddress => state_guard.minting_target_address.push(c),
-                                            MintingInputField::Amount => state_guard.minting_amount.push(c),
-                                            _ => {}
-                                        }
-                                    }
-                                    KeyCode::Backspace => {
-                                        match state_guard.minting_active_input {
-                                            MintingInputField::PrivateKey => { state_guard.minting_private_key.pop(); }
-                                            MintingInputField::TargetAddress => { state_guard.minting_target_address.pop(); }
-                                            MintingInputField::Amount => { state_guard.minting_amount.pop(); }
-                                            _ => {}
-                                        }
-                                    }
-                                    _ => {}
-                                }
+                                    StakingInputField::TargetAddress => StakingInputField::Amount,
+                                    StakingInputField::Amount => StakingInputField::Amount,
+                                };
                             }
-                            // Transfer ETH Tab Input Handling
-                            code if state_guard.current_tab == Tab::TransferETH => {
-                                match code {
-                                    KeyCode::Enter => {
-                                        // Submit ETH Transfer Transaction
-                                        let private_key = state_guard.transfer_private_key.trim().to_string();
-                                        let target_addr_str = state_guard.transfer_target_address.trim().to_string();
-                                        let amount_str = state_guard.transfer_amount.trim().to_string();
-
-                                        // Validate inputs
-                                        if target_addr_str.is_empty() {
-                                            state_guard.status_message = "Error: Target address is required".to_string();
-                                        } else if amount_str.is_empty() {
-                                            state_guard.status_message = "Error: Amount is required".to_string();
-                                        } else {
-                                            // Validate amount (ETH amount as decimal string)
-                                            let amount_eth: f64 = match amount_str.parse() {
-                                                Ok(a) if a > 0.0 => a,
-                                                Ok(_) => {
-                                                    state_guard.status_message = "Error: Amount must be greater than 0".to_string();
-                                                    continue;
-                                                }
-                                                Err(_) => {
-                                                    state_guard.status_message = format!("Error: Invalid amount format: {}", amount_str).to_string();
-                                                    continue;
-                                                }
-                                            };
-
-                                            // Convert ETH to Wei (1 ETH = 10^18 Wei)
-                                            let amount_wei = U256::from((amount_eth * 1e18) as u128);
-
-                                            // Validate address
-                                            let target_addr = match target_addr_str.parse::<Address>() {
-                                                Ok(addr) => addr,
-                                                Err(e) => {
-                                                    state_guard.status_message = format!(
-                                                        "Error: Invalid address '{}' (len: {}) - {}",
-                                                        target_addr_str,
-                                                        target_addr_str.len(),
-                                                        e
-                                                    );
-                                                    continue;
-                                                }
-                                            };
-
-                                            state_guard.status_message = "Transferring ETH...".to_string();
-
-                                            // Clone necessary data to drop lock
-                                            let rpc_url = state_guard.rpc_url.clone();
-                                            let router_addr = state_guard.contract_address;
-                                            let staking_addr = state_guard.staking_contract_address;
-                                            let token_addr = state_guard.token_contract_address;
-
-                                            let use_custom_key = !private_key.is_empty();
-
-                                            drop(state_guard); // Drop lock
-
-                                            let result = async {
-                                                if use_custom_key {
-                                                    // Create a new client with the provided private key
-                                                    let config = ContractConfig::new(
-                                                        rpc_url,
-                                                        router_addr,
-                                                        staking_addr,
-                                                        token_addr
-                                                    );
-
-                                                    let new_client = NilAVClient::new(config, private_key).await?;
-                                                    new_client.send_eth(target_addr, amount_wei).await
-                                                } else {
-                                                    // Use the existing client
-                                                    client.send_eth(target_addr, amount_wei).await
-                                                }
-                                            }.await;
-
-                                            match result {
-                                                Ok(tx) => {
-                                                    let mut state_guard = state.lock().unwrap();
-                                                    state_guard.status_message = format!("ETH transferred! TX: {:?}", tx);
-                                                    state_guard.transfer_amount = String::new(); // Clear amount
-                                                }
-                                                Err(e) => {
-                                                    let mut state_guard = state.lock().unwrap();
-                                                    state_guard.status_message = format!("Error transferring: {}", e);
-                                                }
-                                            }
-                                            continue;
-                                        }
+                            Tab::Minting => {
+                                state_guard.minting_active_input = match state_guard
+                                    .minting_active_input
+                                {
+                                    MintingInputField::None | MintingInputField::PrivateKey => {
+                                        MintingInputField::TargetAddress
                                     }
-                                    KeyCode::Char(c) => {
-                                        match state_guard.transfer_active_input {
-                                            TransferInputField::PrivateKey => state_guard.transfer_private_key.push(c),
-                                            TransferInputField::TargetAddress => state_guard.transfer_target_address.push(c),
-                                            TransferInputField::Amount => state_guard.transfer_amount.push(c),
-                                            _ => {}
-                                        }
+                                    MintingInputField::TargetAddress => MintingInputField::Amount,
+                                    MintingInputField::Amount => MintingInputField::Amount,
+                                };
+                            }
+                            Tab::TransferETH => {
+                                state_guard.transfer_active_input = match state_guard
+                                    .transfer_active_input
+                                {
+                                    TransferInputField::None | TransferInputField::PrivateKey => {
+                                        TransferInputField::TargetAddress
                                     }
-                                    KeyCode::Backspace => {
-                                        match state_guard.transfer_active_input {
-                                            TransferInputField::PrivateKey => { state_guard.transfer_private_key.pop(); }
-                                            TransferInputField::TargetAddress => { state_guard.transfer_target_address.pop(); }
-                                            TransferInputField::Amount => { state_guard.transfer_amount.pop(); }
-                                            _ => {}
-                                        }
-                                    }
-                                    _ => {}
-                                }
+                                    TransferInputField::TargetAddress => TransferInputField::Amount,
+                                    TransferInputField::Amount => TransferInputField::Amount,
+                                };
+                            }
+                            Tab::TokenHolders if !state_guard.token_holders.is_empty() => {
+                                let i = state_guard.token_holders_state.selected().unwrap_or(0);
+                                let next = (i + 1).min(state_guard.token_holders.len() - 1);
+                                state_guard.token_holders_state.select(Some(next));
                             }
                             _ => {}
+                        },
+                        KeyCode::Up => match state_guard.current_tab {
+                            Tab::Nodes if !state_guard.nodes.is_empty() => {
+                                state_guard.selected_node_index = Some(
+                                    state_guard
+                                        .selected_node_index
+                                        .map(|idx| idx.saturating_sub(1))
+                                        .unwrap_or(0),
+                                );
+                            }
+                            Tab::HTXTracking if !state_guard.htx_tracking.is_empty() => {
+                                let i = state_guard.htx_tracking_state.selected().unwrap_or(0);
+                                state_guard
+                                    .htx_tracking_state
+                                    .select(Some(i.saturating_sub(1)));
+                            }
+                            Tab::Staking => {
+                                state_guard.staking_active_input = match state_guard
+                                    .staking_active_input
+                                {
+                                    StakingInputField::None | StakingInputField::Amount => {
+                                        StakingInputField::TargetAddress
+                                    }
+                                    StakingInputField::TargetAddress => {
+                                        StakingInputField::PrivateKey
+                                    }
+                                    StakingInputField::PrivateKey => StakingInputField::PrivateKey,
+                                };
+                            }
+                            Tab::Minting => {
+                                state_guard.minting_active_input = match state_guard
+                                    .minting_active_input
+                                {
+                                    MintingInputField::None | MintingInputField::Amount => {
+                                        MintingInputField::TargetAddress
+                                    }
+                                    MintingInputField::TargetAddress => {
+                                        MintingInputField::PrivateKey
+                                    }
+                                    MintingInputField::PrivateKey => MintingInputField::PrivateKey,
+                                };
+                            }
+                            Tab::TransferETH => {
+                                state_guard.transfer_active_input =
+                                    match state_guard.transfer_active_input {
+                                        TransferInputField::None | TransferInputField::Amount => {
+                                            TransferInputField::TargetAddress
+                                        }
+                                        TransferInputField::TargetAddress => {
+                                            TransferInputField::PrivateKey
+                                        }
+                                        TransferInputField::PrivateKey => {
+                                            TransferInputField::PrivateKey
+                                        }
+                                    };
+                            }
+                            Tab::TokenHolders if !state_guard.token_holders.is_empty() => {
+                                let i = state_guard.token_holders_state.selected().unwrap_or(0);
+                                state_guard
+                                    .token_holders_state
+                                    .select(Some(i.saturating_sub(1)));
+                            }
+                            _ => {}
+                        },
+                        KeyCode::Char('d') | KeyCode::Char('D') => {
+                            // Check if we're actively typing in an input field (Staking or Minting tabs)
+                            let is_typing_staking = state_guard.current_tab == Tab::Staking
+                                && state_guard.staking_active_input != StakingInputField::None;
+                            let is_typing_minting = state_guard.current_tab == Tab::Minting
+                                && state_guard.minting_active_input != MintingInputField::None;
+
+                            if is_typing_staking {
+                                // Add 'd' to the active staking input field
+                                match state_guard.staking_active_input {
+                                    StakingInputField::PrivateKey => {
+                                        state_guard.staking_private_key.push('d')
+                                    }
+                                    StakingInputField::TargetAddress => {
+                                        state_guard.staking_target_address.push('d')
+                                    }
+                                    StakingInputField::Amount => {
+                                        state_guard.staking_amount.push('d')
+                                    }
+                                    _ => {}
+                                }
+                            } else if is_typing_minting {
+                                // Add 'd' to the active minting input field
+                                match state_guard.minting_active_input {
+                                    MintingInputField::PrivateKey => {
+                                        state_guard.minting_private_key.push('d')
+                                    }
+                                    MintingInputField::TargetAddress => {
+                                        state_guard.minting_target_address.push('d')
+                                    }
+                                    MintingInputField::Amount => {
+                                        state_guard.minting_amount.push('d')
+                                    }
+                                    _ => {}
+                                }
+                            }
                         }
+                        // Staking Tab Input Handling
+                        code if state_guard.current_tab == Tab::Staking => {
+                            match code {
+                                KeyCode::Enter => {
+                                    // Submit Staking Transaction
+                                    let private_key =
+                                        state_guard.staking_private_key.trim().to_string();
+                                    let target_addr_str =
+                                        state_guard.staking_target_address.trim().to_string();
+                                    let amount_str = state_guard.staking_amount.trim().to_string();
+
+                                    // Validate inputs
+                                    if target_addr_str.is_empty() {
+                                        state_guard.status_message =
+                                            "Error: Target address is required".to_string();
+                                    } else if amount_str.is_empty() {
+                                        state_guard.status_message =
+                                            "Error: Amount is required".to_string();
+                                    } else {
+                                        // Validate amount first
+                                        let amount_eth = match amount_str.parse::<f64>() {
+                                            Ok(a) if a > 0.0 => a,
+                                            Ok(_) => {
+                                                state_guard.status_message =
+                                                    "Error: Amount must be greater than 0"
+                                                        .to_string();
+                                                continue;
+                                            }
+                                            Err(_) => {
+                                                state_guard.status_message = format!(
+                                                    "Error: Invalid amount format: {}",
+                                                    amount_str
+                                                )
+                                                .to_string();
+                                                continue;
+                                            }
+                                        };
+
+                                        // Validate address (show length for debugging)
+                                        let target_addr = match target_addr_str.parse::<Address>() {
+                                            Ok(addr) => addr,
+                                            Err(e) => {
+                                                state_guard.status_message = format!(
+                                                    "Error: Invalid address '{}' (len: {}) - {}",
+                                                    target_addr_str,
+                                                    target_addr_str.len(),
+                                                    e
+                                                );
+                                                continue;
+                                            }
+                                        };
+
+                                        state_guard.status_message =
+                                            "Approving tokens and submitting stake...".to_string();
+
+                                        // Clone necessary data to drop lock
+                                        let rpc_url = state_guard.rpc_url.clone();
+                                        let router_addr = state_guard.router_contract_address;
+                                        let staking_addr = state_guard.staking_contract_address;
+                                        let token_addr = state_guard.token_contract_address;
+
+                                        let use_custom_key = !private_key.is_empty();
+
+                                        drop(state_guard); // Drop lock
+
+                                        let result = async {
+                                            let (staking_client, token_client) = if use_custom_key {
+                                                // Create a new client with the provided private key
+                                                let config = ContractConfig::new(
+                                                    rpc_url,
+                                                    router_addr,
+                                                    staking_addr,
+                                                    token_addr,
+                                                );
+
+                                                let new_client =
+                                                    NilAVClient::new(config, private_key).await?;
+                                                (
+                                                    new_client.staking.clone(),
+                                                    new_client.token.clone(),
+                                                )
+                                            } else {
+                                                // Use the existing client's staking and token contracts
+                                                (client.staking.clone(), client.token.clone())
+                                            };
+                                            let amount_wei =
+                                                U256::from((amount_eth * 1e18) as u128);
+                                            // First, approve the staking contract to spend tokens
+                                            token_client.approve(staking_addr, amount_wei).await?;
+
+                                            // Then stake
+                                            staking_client.stake_to(target_addr, amount_wei).await
+                                        }
+                                        .await;
+
+                                        match result {
+                                            Ok(tx) => {
+                                                let mut state_guard = state.lock().unwrap();
+                                                state_guard.status_message =
+                                                    format!("Stake submitted! TX: {:?}", tx);
+                                                state_guard.staking_amount = String::new();
+                                                // Clear amount
+                                            }
+                                            Err(e) => {
+                                                let mut state_guard = state.lock().unwrap();
+                                                state_guard.status_message =
+                                                    format!("Error staking: {}", e);
+                                            }
+                                        }
+                                        continue;
+                                    }
+                                }
+                                KeyCode::Char(c) => match state_guard.staking_active_input {
+                                    StakingInputField::PrivateKey => {
+                                        state_guard.staking_private_key.push(c)
+                                    }
+                                    StakingInputField::TargetAddress => {
+                                        state_guard.staking_target_address.push(c)
+                                    }
+                                    StakingInputField::Amount => state_guard.staking_amount.push(c),
+                                    _ => {}
+                                },
+                                KeyCode::Backspace => match state_guard.staking_active_input {
+                                    StakingInputField::PrivateKey => {
+                                        state_guard.staking_private_key.pop();
+                                    }
+                                    StakingInputField::TargetAddress => {
+                                        state_guard.staking_target_address.pop();
+                                    }
+                                    StakingInputField::Amount => {
+                                        state_guard.staking_amount.pop();
+                                    }
+                                    _ => {}
+                                },
+                                _ => {}
+                            }
+                        }
+                        // Minting Tab Input Handling
+                        code if state_guard.current_tab == Tab::Minting => {
+                            match code {
+                                KeyCode::Enter => {
+                                    // Submit Minting Transaction
+                                    let private_key =
+                                        state_guard.minting_private_key.trim().to_string();
+                                    let target_addr_str =
+                                        state_guard.minting_target_address.trim().to_string();
+                                    let amount_str = state_guard.minting_amount.trim().to_string();
+
+                                    // Validate inputs
+                                    if target_addr_str.is_empty() {
+                                        state_guard.status_message =
+                                            "Error: Target address is required".to_string();
+                                    } else if amount_str.is_empty() {
+                                        state_guard.status_message =
+                                            "Error: Amount is required".to_string();
+                                    } else {
+                                        // Validate amount first
+                                        let amount_eth = match amount_str.parse::<f64>() {
+                                            Ok(a) if a > 0.0 => a,
+                                            Ok(_) => {
+                                                state_guard.status_message =
+                                                    "Error: Amount must be greater than 0"
+                                                        .to_string();
+                                                continue;
+                                            }
+                                            Err(_) => {
+                                                state_guard.status_message = format!(
+                                                    "Error: Invalid amount format: {}",
+                                                    amount_str
+                                                )
+                                                .to_string();
+                                                continue;
+                                            }
+                                        };
+
+                                        // Validate address (show length for debugging)
+                                        let target_addr = match target_addr_str.parse::<Address>() {
+                                            Ok(addr) => addr,
+                                            Err(e) => {
+                                                state_guard.status_message = format!(
+                                                    "Error: Invalid address '{}' (len: {}) - {}",
+                                                    target_addr_str,
+                                                    target_addr_str.len(),
+                                                    e
+                                                );
+                                                continue;
+                                            }
+                                        };
+
+                                        state_guard.status_message =
+                                            "Minting tokens...".to_string();
+
+                                        // Clone necessary data to drop lock
+                                        let rpc_url = state_guard.rpc_url.clone();
+                                        let router_addr = state_guard.router_contract_address;
+                                        let staking_addr = state_guard.staking_contract_address;
+                                        let token_addr = state_guard.token_contract_address;
+
+                                        let use_custom_key = !private_key.is_empty();
+
+                                        drop(state_guard); // Drop lock
+
+                                        let result = async {
+                                            let token_client = if use_custom_key {
+                                                // Create a new client with the provided private key
+                                                let config = ContractConfig::new(
+                                                    rpc_url,
+                                                    router_addr,
+                                                    staking_addr,
+                                                    token_addr,
+                                                );
+
+                                                let new_client =
+                                                    NilAVClient::new(config, private_key).await?;
+                                                new_client.token
+                                            } else {
+                                                // Use the existing client's token contract
+                                                client.token.clone()
+                                            };
+                                            let amount_wei =
+                                                U256::from((amount_eth * 1e18) as u128);
+
+                                            token_client.mint(target_addr, amount_wei).await
+                                        }
+                                        .await;
+
+                                        match result {
+                                            Ok(tx) => {
+                                                let mut state_guard = state.lock().unwrap();
+                                                state_guard.status_message =
+                                                    format!("Tokens minted! TX: {:?}", tx);
+                                                state_guard.minting_amount = String::new();
+                                                // Clear amount
+                                            }
+                                            Err(e) => {
+                                                let mut state_guard = state.lock().unwrap();
+                                                state_guard.status_message =
+                                                    format!("Error minting: {}", e);
+                                            }
+                                        }
+                                        continue;
+                                    }
+                                }
+                                KeyCode::Char(c) => match state_guard.minting_active_input {
+                                    MintingInputField::PrivateKey => {
+                                        state_guard.minting_private_key.push(c)
+                                    }
+                                    MintingInputField::TargetAddress => {
+                                        state_guard.minting_target_address.push(c)
+                                    }
+                                    MintingInputField::Amount => state_guard.minting_amount.push(c),
+                                    _ => {}
+                                },
+                                KeyCode::Backspace => match state_guard.minting_active_input {
+                                    MintingInputField::PrivateKey => {
+                                        state_guard.minting_private_key.pop();
+                                    }
+                                    MintingInputField::TargetAddress => {
+                                        state_guard.minting_target_address.pop();
+                                    }
+                                    MintingInputField::Amount => {
+                                        state_guard.minting_amount.pop();
+                                    }
+                                    _ => {}
+                                },
+                                _ => {}
+                            }
+                        }
+                        // Transfer ETH Tab Input Handling
+                        code if state_guard.current_tab == Tab::TransferETH => {
+                            match code {
+                                KeyCode::Enter => {
+                                    // Submit ETH Transfer Transaction
+                                    let private_key =
+                                        state_guard.transfer_private_key.trim().to_string();
+                                    let target_addr_str =
+                                        state_guard.transfer_target_address.trim().to_string();
+                                    let amount_str = state_guard.transfer_amount.trim().to_string();
+
+                                    // Validate inputs
+                                    if target_addr_str.is_empty() {
+                                        state_guard.status_message =
+                                            "Error: Target address is required".to_string();
+                                    } else if amount_str.is_empty() {
+                                        state_guard.status_message =
+                                            "Error: Amount is required".to_string();
+                                    } else {
+                                        // Validate amount (ETH amount as decimal string)
+                                        let amount_eth: f64 = match amount_str.parse() {
+                                            Ok(a) if a > 0.0 => a,
+                                            Ok(_) => {
+                                                state_guard.status_message =
+                                                    "Error: Amount must be greater than 0"
+                                                        .to_string();
+                                                continue;
+                                            }
+                                            Err(_) => {
+                                                state_guard.status_message = format!(
+                                                    "Error: Invalid amount format: {}",
+                                                    amount_str
+                                                )
+                                                .to_string();
+                                                continue;
+                                            }
+                                        };
+
+                                        // Convert ETH to Wei (1 ETH = 10^18 Wei)
+                                        let amount_wei = U256::from((amount_eth * 1e18) as u128);
+
+                                        // Validate address
+                                        let target_addr = match target_addr_str.parse::<Address>() {
+                                            Ok(addr) => addr,
+                                            Err(e) => {
+                                                state_guard.status_message = format!(
+                                                    "Error: Invalid address '{}' (len: {}) - {}",
+                                                    target_addr_str,
+                                                    target_addr_str.len(),
+                                                    e
+                                                );
+                                                continue;
+                                            }
+                                        };
+
+                                        state_guard.status_message =
+                                            "Transferring ETH...".to_string();
+
+                                        // Clone necessary data to drop lock
+                                        let rpc_url = state_guard.rpc_url.clone();
+                                        let router_addr = state_guard.router_contract_address;
+                                        let staking_addr = state_guard.staking_contract_address;
+                                        let token_addr = state_guard.token_contract_address;
+
+                                        let use_custom_key = !private_key.is_empty();
+
+                                        drop(state_guard); // Drop lock
+
+                                        let result = async {
+                                            if use_custom_key {
+                                                // Create a new client with the provided private key
+                                                let config = ContractConfig::new(
+                                                    rpc_url,
+                                                    router_addr,
+                                                    staking_addr,
+                                                    token_addr,
+                                                );
+
+                                                let new_client =
+                                                    NilAVClient::new(config, private_key).await?;
+                                                new_client.send_eth(target_addr, amount_wei).await
+                                            } else {
+                                                // Use the existing client
+                                                client.send_eth(target_addr, amount_wei).await
+                                            }
+                                        }
+                                        .await;
+
+                                        match result {
+                                            Ok(tx) => {
+                                                let mut state_guard = state.lock().unwrap();
+                                                state_guard.status_message =
+                                                    format!("ETH transferred! TX: {:?}", tx);
+                                                state_guard.transfer_amount = String::new();
+                                                // Clear amount
+                                            }
+                                            Err(e) => {
+                                                let mut state_guard = state.lock().unwrap();
+                                                state_guard.status_message =
+                                                    format!("Error transferring: {}", e);
+                                            }
+                                        }
+                                        continue;
+                                    }
+                                }
+                                KeyCode::Char(c) => match state_guard.transfer_active_input {
+                                    TransferInputField::PrivateKey => {
+                                        state_guard.transfer_private_key.push(c)
+                                    }
+                                    TransferInputField::TargetAddress => {
+                                        state_guard.transfer_target_address.push(c)
+                                    }
+                                    TransferInputField::Amount => {
+                                        state_guard.transfer_amount.push(c)
+                                    }
+                                    _ => {}
+                                },
+                                KeyCode::Backspace => match state_guard.transfer_active_input {
+                                    TransferInputField::PrivateKey => {
+                                        state_guard.transfer_private_key.pop();
+                                    }
+                                    TransferInputField::TargetAddress => {
+                                        state_guard.transfer_target_address.pop();
+                                    }
+                                    TransferInputField::Amount => {
+                                        state_guard.transfer_amount.pop();
+                                    }
+                                    _ => {}
+                                },
+                                _ => {}
+                            }
+                        }
+                        _ => {}
+                    }
                 }
                 _ => {} // Ignore other events
             }
@@ -1274,9 +1479,9 @@ fn render_overview(f: &mut Frame, area: Rect, state: &MonitorState) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(6), // Connection info
-            Constraint::Length(9), // Stats (includes ETH and TEST balances)
-            Constraint::Min(0),    // Details
+            Constraint::Length(7), // Connection info
+            Constraint::Length(8), // Stats (includes ETH and TEST balances)
+            Constraint::Min(5),    // Details
         ])
         .split(area);
 
@@ -1287,9 +1492,29 @@ fn render_overview(f: &mut Frame, area: Rect, state: &MonitorState) {
             Span::styled(state.rpc_url.clone(), Style::default().fg(Color::White)),
         ]),
         Line::from(vec![
-            Span::styled("Contract: ", Style::default().fg(Color::Cyan)),
             Span::styled(
-                format!("{:?}", state.contract_address),
+                "Router Contract Address: ",
+                Style::default().fg(Color::Cyan),
+            ),
+            Span::styled(
+                format!("{:?}", state.router_contract_address),
+                Style::default().fg(Color::White),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled(
+                "Staking Contract Address: ",
+                Style::default().fg(Color::Cyan),
+            ),
+            Span::styled(
+                format!("{:?}", state.staking_contract_address),
+                Style::default().fg(Color::White),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("Token Contract Address: ", Style::default().fg(Color::Cyan)),
+            Span::styled(
+                format!("{:?}", state.token_contract_address),
                 Style::default().fg(Color::White),
             ),
         ]),
@@ -1309,13 +1534,27 @@ fn render_overview(f: &mut Frame, area: Rect, state: &MonitorState) {
     f.render_widget(info, chunks[0]);
 
     // Calculate stats from htx_tracking
-    let htx_submitted_count = state.htx_tracking.values().filter(|tx| tx.submitted_sender.is_some()).count();
-    let htx_assigned_count = state.htx_tracking.values().filter(|tx| !tx.assigned_nodes.is_empty()).count();
-    let htx_responded_count = state.htx_tracking.values().filter(|tx| !tx.responded_nodes.is_empty()).count();
+    let htx_submitted_count = state
+        .htx_tracking
+        .values()
+        .filter(|tx| tx.submitted_sender.is_some())
+        .count();
+    let htx_assigned_count = state
+        .htx_tracking
+        .values()
+        .filter(|tx| !tx.assigned_nodes.is_empty())
+        .count();
+    let htx_responded_count = state
+        .htx_tracking
+        .values()
+        .filter(|tx| !tx.responded_nodes.is_empty())
+        .count();
 
     // Format balances
-    let token_balance_formatted = format_units(state.token_balance, 18).unwrap_or_else(|_| "0".to_string());
-    let eth_balance_formatted = format_units(state.eth_balance, 18).unwrap_or_else(|_| "0".to_string());
+    let token_balance_formatted =
+        format_units(state.token_balance, 18).unwrap_or_else(|_| "0".to_string());
+    let eth_balance_formatted =
+        format_units(state.eth_balance, 18).unwrap_or_else(|_| "0".to_string());
 
     // Stats
     let stats_text = vec![
@@ -1402,7 +1641,11 @@ fn render_overview(f: &mut Frame, area: Rect, state: &MonitorState) {
         for tx in recent_htxs.iter().take(5) {
             let htx_short = format_short_hex(&tx.htx_id);
             let status = if !tx.responded_nodes.is_empty() {
-                format!("✓ Responded ({}/{})", tx.responded_nodes.len(), tx.assigned_nodes.len())
+                format!(
+                    "✓ Responded ({}/{})",
+                    tx.responded_nodes.len(),
+                    tx.assigned_nodes.len()
+                )
             } else if !tx.assigned_nodes.is_empty() {
                 format!("⧗ Assigned ({})", tx.assigned_nodes.len())
             } else if tx.submitted_sender.is_some() {
@@ -1441,8 +1684,10 @@ fn render_nodes(f: &mut Frame, area: Rect, state: &MonitorState) {
         .iter()
         .enumerate()
         .map(|(idx, node_info)| {
-            let stake_formatted = format_units(node_info.stake, 18).unwrap_or_else(|_| "0".to_string());
-            let eth_balance_formatted = format_units(node_info.eth_balance, 18).unwrap_or_else(|_| "0".to_string());
+            let stake_formatted =
+                format_units(node_info.stake, 18).unwrap_or_else(|_| "0".to_string());
+            let eth_balance_formatted =
+                format_units(node_info.eth_balance, 18).unwrap_or_else(|_| "0".to_string());
             let status = if node_info.is_registered {
                 "✓ Registered"
             } else {
@@ -1460,9 +1705,12 @@ fn render_nodes(f: &mut Frame, area: Rect, state: &MonitorState) {
                     status,
                     Style::default()
                         .fg(status_color)
-                        .add_modifier(Modifier::BOLD)
+                        .add_modifier(Modifier::BOLD),
                 ),
-                Span::raw(format!(" | {:?} | Stake: {} TEST | ETH: {}", node_info.address, stake_formatted, eth_balance_formatted)),
+                Span::raw(format!(
+                    " | {:?} | Stake: {} TEST | ETH: {}",
+                    node_info.address, stake_formatted, eth_balance_formatted
+                )),
             ];
 
             let style = if Some(idx) == state.selected_node_index {
@@ -1479,8 +1727,7 @@ fn render_nodes(f: &mut Frame, area: Rect, state: &MonitorState) {
 
     let title = format!(
         "Nodes with Stake ({} total, {} registered) - Use ↑↓ to select",
-        total_count,
-        registered_count
+        total_count, registered_count
     );
 
     let list = List::new(items).block(
@@ -1586,7 +1833,6 @@ fn render_htx_tracking(f: &mut Frame, area: Rect, state: &mut MonitorState) {
     f.render_stateful_widget(table, area, &mut state.htx_tracking_state);
 }
 
-
 fn render_footer(f: &mut Frame, area: Rect, state: &MonitorState) {
     let mut help_spans = vec![
         Span::styled(
@@ -1649,8 +1895,6 @@ fn render_footer(f: &mut Frame, area: Rect, state: &MonitorState) {
     f.render_widget(footer, area);
 }
 
-
-
 fn render_staking(f: &mut Frame, area: Rect, state: &MonitorState) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -1664,30 +1908,43 @@ fn render_staking(f: &mut Frame, area: Rect, state: &MonitorState) {
         .split(area);
 
     let pk_style = if state.staking_active_input == StakingInputField::PrivateKey {
-        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(Color::White)
     };
 
     let target_style = if state.staking_active_input == StakingInputField::TargetAddress {
-        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(Color::White)
     };
 
     let amount_style = if state.staking_active_input == StakingInputField::Amount {
-        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(Color::White)
     };
 
     let pk_input = Paragraph::new(state.staking_private_key.as_str())
-        .block(Block::default().borders(Borders::ALL).title("Private Key (Optional - leave empty to use default)"))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Private Key (Optional - leave empty to use default)"),
+        )
         .style(pk_style)
         .scroll((0, state.staking_private_key.len().saturating_sub(50) as u16));
 
     // Add character counter to help user see if full address is entered
-    let target_title = format!("Target Operator Address (entered: {} chars, need: 42)", state.staking_target_address.len());
+    let target_title = format!(
+        "Target Operator Address (entered: {} chars, need: 42)",
+        state.staking_target_address.len()
+    );
     // Auto-scroll to show the end of the address as user types
     let target_scroll_offset = state.staking_target_address.len().saturating_sub(50) as u16;
     let target_input = Paragraph::new(state.staking_target_address.as_str())
@@ -1696,7 +1953,11 @@ fn render_staking(f: &mut Frame, area: Rect, state: &MonitorState) {
         .scroll((0, target_scroll_offset));
 
     let amount_input = Paragraph::new(state.staking_amount.as_str())
-        .block(Block::default().borders(Borders::ALL).title("Amount (TEST)"))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Amount (TEST)"),
+        )
         .style(amount_style)
         .scroll((0, 0));
 
@@ -1707,9 +1968,13 @@ fn render_staking(f: &mut Frame, area: Rect, state: &MonitorState) {
     // Status feedback box - always show status
     let status_color = if state.status_message.contains("Error") {
         Color::Red
-    } else if state.status_message.contains("submitted") || state.status_message.contains("Stake submitted") {
+    } else if state.status_message.contains("submitted")
+        || state.status_message.contains("Stake submitted")
+    {
         Color::Green
-    } else if state.status_message.contains("Submitting") || state.status_message.contains("stake...") {
+    } else if state.status_message.contains("Submitting")
+        || state.status_message.contains("stake...")
+    {
         Color::Yellow
     } else {
         Color::Cyan
@@ -1719,7 +1984,9 @@ fn render_staking(f: &mut Frame, area: Rect, state: &MonitorState) {
         Line::from(""),
         Line::from(vec![Span::styled(
             &state.status_message,
-            Style::default().fg(status_color).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(status_color)
+                .add_modifier(Modifier::BOLD),
         )]),
     ];
 
@@ -1732,13 +1999,14 @@ fn render_staking(f: &mut Frame, area: Rect, state: &MonitorState) {
     let help_text = vec![
         Line::from(vec![Span::styled(
             "Press Enter to Submit Stake",
-            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
         )]),
         Line::from("Use Up/Down to navigate fields"),
     ];
 
-    let help = Paragraph::new(help_text)
-        .block(Block::default().borders(Borders::NONE));
+    let help = Paragraph::new(help_text).block(Block::default().borders(Borders::NONE));
 
     f.render_widget(help, chunks[4]);
 }
@@ -1754,7 +2022,8 @@ fn render_token_holders(f: &mut Frame, area: Rect, state: &mut MonitorState) {
         .iter()
         .enumerate()
         .map(|(idx, holder)| {
-            let balance_formatted = format_units(holder.balance, 18).unwrap_or_else(|_| "0".to_string());
+            let balance_formatted =
+                format_units(holder.balance, 18).unwrap_or_else(|_| "0".to_string());
 
             let content = vec![
                 Span::raw(format!("{}. ", idx + 1)),
@@ -1762,7 +2031,7 @@ fn render_token_holders(f: &mut Frame, area: Rect, state: &mut MonitorState) {
                     format!("{:?}", holder.address),
                     Style::default()
                         .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD)
+                        .add_modifier(Modifier::BOLD),
                 ),
                 Span::raw(format!(" | Balance: {} TEST", balance_formatted)),
             ];
@@ -1782,7 +2051,7 @@ fn render_token_holders(f: &mut Frame, area: Rect, state: &mut MonitorState) {
             Block::default()
                 .borders(Borders::ALL)
                 .title(format!(
-                    "TEST Token Holders ({}){}",
+                    "TEST Token Holders - Nodes & Operators ({}){}",
                     state.token_holders.len(),
                     scroll_help
                 ))
@@ -1811,30 +2080,43 @@ fn render_minting(f: &mut Frame, area: Rect, state: &MonitorState) {
         .split(area);
 
     let pk_style = if state.minting_active_input == MintingInputField::PrivateKey {
-        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(Color::White)
     };
 
     let target_style = if state.minting_active_input == MintingInputField::TargetAddress {
-        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(Color::White)
     };
 
     let amount_style = if state.minting_active_input == MintingInputField::Amount {
-        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(Color::White)
     };
 
     let pk_input = Paragraph::new(state.minting_private_key.as_str())
-        .block(Block::default().borders(Borders::ALL).title("Private Key (Optional - leave empty to use default)"))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Private Key (Optional - leave empty to use default)"),
+        )
         .style(pk_style)
         .scroll((0, state.minting_private_key.len().saturating_sub(50) as u16));
 
     // Add character counter to help user see if full address is entered
-    let target_title = format!("Target Address (entered: {} chars, need: 42)", state.minting_target_address.len());
+    let target_title = format!(
+        "Target Address (entered: {} chars, need: 42)",
+        state.minting_target_address.len()
+    );
     // Auto-scroll to show the end of the address as user types
     let target_scroll_offset = state.minting_target_address.len().saturating_sub(50) as u16;
     let target_input = Paragraph::new(state.minting_target_address.as_str())
@@ -1843,7 +2125,11 @@ fn render_minting(f: &mut Frame, area: Rect, state: &MonitorState) {
         .scroll((0, target_scroll_offset));
 
     let amount_input = Paragraph::new(state.minting_amount.as_str())
-        .block(Block::default().borders(Borders::ALL).title("Amount (TEST tokens)"))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Amount (TEST tokens)"),
+        )
         .style(amount_style)
         .scroll((0, 0));
 
@@ -1854,7 +2140,9 @@ fn render_minting(f: &mut Frame, area: Rect, state: &MonitorState) {
     // Status feedback box - always show status
     let status_color = if state.status_message.contains("Error") {
         Color::Red
-    } else if state.status_message.contains("minted") || state.status_message.contains("Tokens minted") {
+    } else if state.status_message.contains("minted")
+        || state.status_message.contains("Tokens minted")
+    {
         Color::Green
     } else if state.status_message.contains("Minting") {
         Color::Yellow
@@ -1866,7 +2154,9 @@ fn render_minting(f: &mut Frame, area: Rect, state: &MonitorState) {
         Line::from(""),
         Line::from(vec![Span::styled(
             &state.status_message,
-            Style::default().fg(status_color).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(status_color)
+                .add_modifier(Modifier::BOLD),
         )]),
     ];
 
@@ -1879,13 +2169,14 @@ fn render_minting(f: &mut Frame, area: Rect, state: &MonitorState) {
     let help_text = vec![
         Line::from(vec![Span::styled(
             "Press Enter to Mint Tokens",
-            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
         )]),
         Line::from("Use Up/Down to navigate fields"),
     ];
 
-    let help = Paragraph::new(help_text)
-        .block(Block::default().borders(Borders::NONE));
+    let help = Paragraph::new(help_text).block(Block::default().borders(Borders::NONE));
 
     f.render_widget(help, chunks[4]);
 }
@@ -1903,29 +2194,45 @@ fn render_transfer_eth(f: &mut Frame, area: Rect, state: &MonitorState) {
         .split(area);
 
     let pk_style = if state.transfer_active_input == TransferInputField::PrivateKey {
-        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(Color::White)
     };
 
     let target_style = if state.transfer_active_input == TransferInputField::TargetAddress {
-        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(Color::White)
     };
 
     let amount_style = if state.transfer_active_input == TransferInputField::Amount {
-        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(Color::White)
     };
 
     let pk_input = Paragraph::new(state.transfer_private_key.as_str())
-        .block(Block::default().borders(Borders::ALL).title("Private Key (Optional - leave empty to use default)"))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Private Key (Optional - leave empty to use default)"),
+        )
         .style(pk_style)
-        .scroll((0, state.transfer_private_key.len().saturating_sub(50) as u16));
+        .scroll((
+            0,
+            state.transfer_private_key.len().saturating_sub(50) as u16,
+        ));
 
-    let target_title = format!("Target Address (entered: {} chars, need: 42)", state.transfer_target_address.len());
+    let target_title = format!(
+        "Target Address (entered: {} chars, need: 42)",
+        state.transfer_target_address.len()
+    );
     let target_scroll_offset = state.transfer_target_address.len().saturating_sub(50) as u16;
     let target_input = Paragraph::new(state.transfer_target_address.as_str())
         .block(Block::default().borders(Borders::ALL).title(target_title))
@@ -1944,7 +2251,9 @@ fn render_transfer_eth(f: &mut Frame, area: Rect, state: &MonitorState) {
     // Status feedback box
     let status_color = if state.status_message.contains("Error") {
         Color::Red
-    } else if state.status_message.contains("transferred") || state.status_message.contains("ETH transferred") {
+    } else if state.status_message.contains("transferred")
+        || state.status_message.contains("ETH transferred")
+    {
         Color::Green
     } else if state.status_message.contains("Transferring") {
         Color::Yellow
@@ -1956,7 +2265,9 @@ fn render_transfer_eth(f: &mut Frame, area: Rect, state: &MonitorState) {
         Line::from(""),
         Line::from(vec![Span::styled(
             &state.status_message,
-            Style::default().fg(status_color).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(status_color)
+                .add_modifier(Modifier::BOLD),
         )]),
     ];
 
@@ -1969,19 +2280,20 @@ fn render_transfer_eth(f: &mut Frame, area: Rect, state: &MonitorState) {
     let help_text = vec![
         Line::from(vec![Span::styled(
             "Press Enter to Transfer ETH",
-            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
         )]),
         Line::from("Use Up/Down to navigate fields"),
     ];
 
-    let help = Paragraph::new(help_text)
-        .block(Block::default().borders(Borders::NONE));
+    let help = Paragraph::new(help_text).block(Block::default().borders(Borders::NONE));
 
     f.render_widget(help, chunks[4]);
 }
 
-
-// WebSocket event listener for Transfer events (tracking mints)
+// WebSocket event listener for Transfer events
+// Refreshes token balances for all system addresses (nodes and operators)
 async fn listen_token_transfers(
     client: Arc<NilAVClient>,
     state: Arc<Mutex<MonitorState>>,
@@ -1989,36 +2301,36 @@ async fn listen_token_transfers(
     client
         .token
         .clone()
-        .listen_transfer_events(move |event| {
+        .listen_transfer_events(move |_event| {
             let state = state.clone();
             let client = client.clone();
             async move {
-                let zero_address = Address::zero();
+                // Collect system addresses: registered nodes + staked operators
+                let mut system_addresses = HashSet::new();
 
-                // Track all addresses involved in transfers (excluding zero address for from)
-                let mut addresses_to_track = Vec::new();
-
-                if event.from != zero_address {
-                    addresses_to_track.push(event.from);
-                }
-                addresses_to_track.push(event.to);
-
-                // Add addresses to tracked set and refresh their balances
-                {
-                    let mut state_guard = state.lock().unwrap();
-                    for addr in &addresses_to_track {
-                        state_guard.token_holder_addresses.insert(*addr);
+                // Add all registered nodes
+                if let Ok(registered_nodes) = client.router.get_nodes().await {
+                    for addr in registered_nodes {
+                        system_addresses.insert(addr);
                     }
                 }
 
-                // Fetch updated balances for all tracked addresses
-                let all_addresses: Vec<Address> = {
-                    let state_guard = state.lock().unwrap();
-                    state_guard.token_holder_addresses.iter().copied().collect()
-                };
+                // Add all operators with stake (efficient: direct contract query)
+                if let Ok(staked_operators) = client.staking.get_operators_with_stake().await {
+                    for operator in staked_operators {
+                        system_addresses.insert(operator);
+                    }
+                }
 
+                // Update tracked addresses in state
+                {
+                    let mut state_guard = state.lock().unwrap();
+                    state_guard.token_holder_addresses = system_addresses.clone();
+                }
+
+                // Fetch updated balances for all system addresses
                 let mut holders = Vec::new();
-                for addr in all_addresses {
+                for addr in system_addresses {
                     if let Ok(balance) = client.token.balance_of(addr).await {
                         if balance > U256::zero() {
                             holders.push(TokenHolder {

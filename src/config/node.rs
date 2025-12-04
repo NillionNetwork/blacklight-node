@@ -8,8 +8,8 @@ use crate::config::consts::{
     DEFAULT_ROUTER_CONTRACT_ADDRESS, DEFAULT_RPC_URL, DEFAULT_STAKING_CONTRACT_ADDRESS,
     DEFAULT_TOKEN_CONTRACT_ADDRESS, STATE_FILE_NODE,
 };
-use crate::state::StateFile;
 use crate::contract_client::NilAVClient;
+use crate::state::StateFile;
 use crate::wallet::{display_wallet_status, generate_wallet, WalletStatus};
 use tracing::info;
 
@@ -129,16 +129,14 @@ impl NodeConfig {
             "Loaded NodeConfig: rpc_url={}, router_contract_address={} staking_contract_address={} token_contract_address={}",
             rpc_url, router_contract_address, staking_contract_address, token_contract_address
         );
-        Ok(
-            NodeConfig {
-                rpc_url,
-                router_contract_address,
-                staking_contract_address,
-                token_contract_address,
-                private_key,
-                was_wallet_created,
-            }
-        )
+        Ok(NodeConfig {
+            rpc_url,
+            router_contract_address,
+            staking_contract_address,
+            token_contract_address,
+            private_key,
+            was_wallet_created,
+        })
     }
 }
 
@@ -152,15 +150,19 @@ pub async fn validate_node_requirements(
     let address = client.signer_address();
 
     info!("Checking ETH balance for address: {:?}", address);
-    let eth_balance = client.get_balance().await
+    let eth_balance = client
+        .get_balance()
+        .await
         .context("Failed to check ETH balance")?;
 
-    info!("Checking staked TEST token balance for address: {:?}", address);
-    let staked_balance = client.staking.stake_of(address).await
-        .unwrap_or_else(|e| {
-            info!("Could not fetch staked balance: {}", e);
-            U256::zero()
-        });
+    info!(
+        "Checking staked TEST token balance for address: {:?}",
+        address
+    );
+    let staked_balance = client.staking.stake_of(address).await.unwrap_or_else(|e| {
+        info!("Could not fetch staked balance: {}", e);
+        U256::zero()
+    });
 
     // Determine wallet status and display unified banner
     let status = if was_wallet_created {

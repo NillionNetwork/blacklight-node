@@ -23,12 +23,12 @@ async fn setup_shutdown_handler(shutdown_notify: Arc<Notify>) {
     #[cfg(unix)]
     {
         use tokio::signal::unix::{signal, SignalKind};
-        
-        let mut sigterm = signal(SignalKind::terminate())
-            .expect("Failed to register SIGTERM handler");
-        let mut sigint = signal(SignalKind::interrupt())
-            .expect("Failed to register SIGINT handler");
-        
+
+        let mut sigterm =
+            signal(SignalKind::terminate()).expect("Failed to register SIGTERM handler");
+        let mut sigint =
+            signal(SignalKind::interrupt()).expect("Failed to register SIGINT handler");
+
         tokio::select! {
             _ = sigterm.recv() => {
                 info!("Shutdown signal received (SIGTERM)");
@@ -37,10 +37,10 @@ async fn setup_shutdown_handler(shutdown_notify: Arc<Notify>) {
                 info!("Shutdown signal received (SIGINT/Ctrl+C)");
             }
         }
-        
+
         shutdown_notify.notify_waiters();
     }
-    
+
     #[cfg(not(unix))]
     {
         match tokio::signal::ctrl_c().await {
@@ -102,12 +102,9 @@ async fn process_htx_assignment(client: Arc<NilAVClient>, htx_id: H256) -> Resul
 }
 
 /// Process backlog of historical assignments
-async fn process_assignment_backlog(
-    client: Arc<NilAVClient>,
-    node_address: Address,
-) -> Result<()> {
+async fn process_assignment_backlog(client: Arc<NilAVClient>, node_address: Address) -> Result<()> {
     info!("Checking for pending assignments from before connection");
-    
+
     let assigned_events = client.router.get_htx_assigned_events().await?;
     let pending: Vec<_> = assigned_events
         .iter()
@@ -119,7 +116,10 @@ async fn process_assignment_backlog(
         return Ok(());
     }
 
-    info!(count = pending.len(), "Found historical assignments, processing backlog");
+    info!(
+        count = pending.len(),
+        "Found historical assignments, processing backlog"
+    );
 
     for event in pending {
         let htx_id = H256::from(event.htx_id);
@@ -153,14 +153,11 @@ async fn process_assignment_backlog(
 // ============================================================================
 
 /// Register node with the contract if not already registered
-async fn register_node_if_needed(
-    client: &NilAVClient,
-    node_address: Address,
-) -> Result<()> {
+async fn register_node_if_needed(client: &NilAVClient, node_address: Address) -> Result<()> {
     info!(node_address = %node_address, "Checking node registration");
 
     let is_registered = client.staking.is_active_operator(node_address).await?;
-    
+
     if is_registered {
         info!("Node already registered");
         return Ok(());
@@ -169,7 +166,7 @@ async fn register_node_if_needed(
     info!("Registering node with contract");
     let tx_hash = client.staking.register_operator("".to_string()).await?;
     info!(tx_hash = ?tx_hash, "Node registered successfully");
-    
+
     Ok(())
 }
 
@@ -193,9 +190,9 @@ async fn create_client_with_retry(
     );
 
     loop {
+        let client_result =
+            NilAVClient::new(contract_config.clone(), config.private_key.clone()).await;
 
-        let client_result = NilAVClient::new(contract_config.clone(), config.private_key.clone()).await;
-        
         match client_result {
             Ok(client) => {
                 let balance = client.get_balance().await?;
@@ -204,7 +201,7 @@ async fn create_client_with_retry(
             }
             Err(e) => {
                 error!(error = %e, reconnect_delay = ?reconnect_delay, "Failed to connect WebSocket. Retrying...");
-                
+
                 // Sleep with ability to be interrupted by shutdown
                 tokio::select! {
                     _ = tokio::time::sleep(reconnect_delay) => {
@@ -230,7 +227,7 @@ async fn run_event_listener(
     shutdown_notify: Arc<Notify>,
 ) -> Result<()> {
     let client_for_callback = client.clone();
-    
+
     let listen_future = client
         .router
         .clone()
@@ -240,7 +237,6 @@ async fn run_event_listener(
             async move {
                 let htx_id = H256::from(event.htx_id);
                 let node_addr = client.signer_address();
-                
                 tokio::spawn(async move {
                     // Check if already responded
                     match client.router.has_node_responded(htx_id, node_addr).await {
@@ -263,7 +259,7 @@ async fn run_event_listener(
                 Ok(())
             }
         });
-    
+
     // Listen for either events or shutdown signal
     tokio::select! {
         result = listen_future => {
@@ -287,25 +283,25 @@ async fn deactivate_node_on_shutdown(
     node_address: Option<Address>,
 ) -> Result<()> {
     info!("Initiating graceful shutdown");
-    
+
     let Some(addr) = node_address else {
         warn!("Node was never registered, skipping deactivation");
         return Ok(());
     };
 
     info!(node_address = %addr, "Deactivating node from contract");
-    
+
     let contract_config = ContractConfig::new(
         config.rpc_url.clone(),
         config.router_contract_address,
         config.staking_contract_address,
         config.token_contract_address,
     );
-    
+
     let client = NilAVClient::new(contract_config, config.private_key.clone()).await?;
     let tx_hash = client.staking.deactivate_operator().await?;
     info!(tx_hash = ?tx_hash, "Node deactivated successfully");
-    
+
     Ok(())
 }
 
@@ -335,7 +331,12 @@ async fn main() -> Result<()> {
     let validation_client = NilAVClient::new(contract_config, config.private_key.clone()).await?;
 
     // Validate node has sufficient ETH and staked TEST tokens
-    validate_node_requirements(&validation_client, &config.rpc_url, config.was_wallet_created).await?;
+    validate_node_requirements(
+        &validation_client,
+        &config.rpc_url,
+        config.was_wallet_created,
+    )
+    .await?;
 
     info!("Node initialized");
     info!("Press Ctrl+C to gracefully shutdown and deactivate");
@@ -367,7 +368,7 @@ async fn main() -> Result<()> {
         // Register node if needed
         if let Err(e) = register_node_if_needed(&client, current_address).await {
             error!(error = %e, reconnect_delay = ?reconnect_delay, "Failed to register node. Retrying...");
-            
+
             // Exit the loop
             std::process::exit(1);
         }
@@ -407,7 +408,7 @@ async fn main() -> Result<()> {
     if let Err(e) = deactivate_node_on_shutdown(&config, node_address).await {
         error!(error = %e, "Failed to deactivate node gracefully");
     }
-    
+
     info!("Shutdown complete");
     Ok(())
 }

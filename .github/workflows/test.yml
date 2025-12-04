@@ -34,7 +34,7 @@ jobs:
 
       - name: Build smart contract
         run: |
-          cd contracts/nilav-router
+          cd contracts
           forge build
 
       - name: Run tests

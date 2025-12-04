@@ -44,7 +44,10 @@ impl NilAVClient {
 
         let router = Arc::new(NilAVRouterClient::new(provider.clone(), config.clone()));
         let token = Arc::new(TESTTokenClient::new(provider.clone(), config.clone()));
-        let staking = Arc::new(StakingOperatorsClient::new(provider.clone(), config.clone()));
+        let staking = Arc::new(StakingOperatorsClient::new(
+            provider.clone(),
+            config.clone(),
+        ));
 
         Ok(Self {
             provider,
@@ -75,9 +78,7 @@ impl NilAVClient {
         use ethers::providers::Middleware;
         use ethers::types::TransactionRequest;
 
-        let tx = TransactionRequest::new()
-            .to(to)
-            .value(amount);
+        let tx = TransactionRequest::new().to(to).value(amount);
 
         let pending_tx = self.provider.send_transaction(tx, None).await?;
         let receipt = pending_tx.await?;

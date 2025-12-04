@@ -1,11 +1,10 @@
 use ethers::{
     contract::abigen,
     core::types::{Address, U256},
-    middleware::{NonceManagerMiddleware, SignerMiddleware},
-    providers::{Provider, Ws},
-    signers::LocalWallet,
 };
 use std::sync::Arc;
+
+use crate::contract_client::SignedWsProvider;
 
 // Generate type-safe contract bindings from ABI
 abigen!(
@@ -13,8 +12,6 @@ abigen!(
     "./contracts/out/StakingOperators.sol/StakingOperators.json",
     event_derives(serde::Deserialize, serde::Serialize)
 );
-
-pub type SignedWsProvider = NonceManagerMiddleware<SignerMiddleware<Provider<Ws>, LocalWallet>>;
 
 /// WebSocket-based client for interacting with the StakingOperators contract
 pub struct StakingOperatorsClient {
@@ -61,30 +58,27 @@ impl StakingOperatorsClient {
         Ok(self.contract.get_active_operators().call().await?)
     }
 
-    // ------------------------------------------------------------------------
-    // Event Query Functions
-    // ------------------------------------------------------------------------
+    /// Returns a list of all registered operators (active and inactive)
+    /// This is much more efficient than querying historical events
+    pub async fn get_all_operators(&self) -> anyhow::Result<Vec<Address>> {
+        Ok(self.contract.get_all_operators().call().await?)
+    }
 
-    /// Get historical Staked events
-    /// Set lookback_blocks to u64::MAX to search entire history
-    pub async fn get_staked_events(&self, lookback_blocks: u64) -> anyhow::Result<Vec<StakedToFilter>> {
-        use ethers::providers::Middleware;
+    /// Get all operators who currently have stake > 0
+    /// This is the efficient way to discover staked operators without querying events
+    pub async fn get_operators_with_stake(&self) -> anyhow::Result<Vec<Address>> {
+        // TODO: Use all operators instead of active operators
+        let all_operators = self.get_active_operators().await?;
+        let mut operators_with_stake = Vec::new();
 
-        let from_block = if lookback_blocks == u64::MAX {
-            0
-        } else {
-            let provider = self.contract.client();
-            let current_block = provider.get_block_number().await?.as_u64();
-            current_block.saturating_sub(lookback_blocks)
-        };
+        for operator in all_operators {
+            let stake = self.stake_of(operator).await?;
+            if stake > U256::zero() {
+                operators_with_stake.push(operator);
+            }
+        }
 
-        let events = self
-            .contract
-            .event::<StakedToFilter>()
-            .from_block(from_block)
-            .query()
-            .await?;
-        Ok(events)
+        Ok(operators_with_stake)
     }
 
     // ------------------------------------------------------------------------

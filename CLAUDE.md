@@ -8,7 +8,7 @@ NilAV (Nillion Auditor-Verifier) is a Rust-based HTX (Hash Transaction) verifica
 
 **Key Architecture:**
 - **Smart Contract** (Solidity): NilAVRouter manages node registration, HTX submission, and verification assignment
-- **Rust Binaries**: Four independent executables that interact with the contract or simulate the network
+- **Rust Binaries**: Three independent executables that interact with the contract or simulate the network
 - **Event-Driven**: WebSocket streaming replaces polling for real-time responsiveness
 
 ## Build & Test Commands
@@ -26,7 +26,6 @@ cargo build --release
 cargo build --bin nilav_node
 cargo build --bin nilcc_simulator
 cargo build --bin monitor
-cargo build --bin contract_cli
 
 # Run tests
 cargo test
@@ -89,7 +88,6 @@ docker compose down
 docker pull ghcr.io/nillionnetwork/nilav/nilav_node:latest
 docker pull ghcr.io/nillionnetwork/nilav/nilcc_simulator:latest
 docker pull ghcr.io/nillionnetwork/nilav/monitor:latest
-docker pull ghcr.io/nillionnetwork/nilav/contract_cli:latest
 ```
 
 ## Binaries & Their Purposes
@@ -147,27 +145,6 @@ Interactive TUI for monitoring contract activity in real-time.
 cargo run --release --bin monitor
 ```
 
-### 4. `contract_cli` (src/bin/contract_cli.rs)
-Command-line interface for direct contract interaction.
-
-**Commands:**
-```bash
-# Register a node
-cargo run --bin contract_cli -- register-node 0xNodeAddress
-
-# Deregister a node
-cargo run --bin contract_cli -- deregister-node 0xNodeAddress
-
-# List registered nodes
-cargo run --bin contract_cli -- list-nodes
-
-# Submit HTX from JSON file
-cargo run --bin contract_cli -- submit-htx data/htxs.json
-
-# Get assignment info
-cargo run --bin contract_cli -- get-assignment 0xHtxId
-```
-
 ## Architecture Patterns
 
 ### Smart Contract Flow
@@ -222,6 +199,16 @@ pub struct Htx {
     pub builder_measurement: BuilderMeasurement,  // Contains URL to fetch
 }
 ```
+
+**Critical: JSON Canonicalization**
+
+HTX serialization uses `stable_stringify` (from `src/json.rs`) which canonicalizes JSON by sorting all object keys recursively. This ensures:
+
+1. **Deterministic hashing**: Same HTX always produces the same on-chain hash
+2. **Consistent HTX IDs**: Since `htxId = keccak256(abi.encode(rawHTXHash, msg.sender, block.number))`, the raw HTX hash must be deterministic
+3. **Verification correctness**: Nodes can reliably match assignments
+
+Without canonicalization, the same HTX could serialize with different key orderings, producing different hashes and breaking the entire verification flow.
 
 ### Smart Contract Assignment (NilAVRouter.sol)
 ```solidity
@@ -356,9 +343,9 @@ git push origin v1.0.0
 
 #### 2. Docker Build & Push (`.github/workflows/docker.yml`)
 
-Triggers on version tags or manual dispatch. Builds and pushes four Docker images to GHCR:
+Triggers on version tags or manual dispatch. Builds and pushes three Docker images to GHCR:
 
-- **Images**: `nilav_node`, `nilcc_simulator`, `monitor`, `contract_cli`
+- **Images**: `nilav_node`, `nilcc_simulator`, `monitor`
 - **Registry**: `ghcr.io/nillionnetwork/nilav/<image-name>`
 - **Tags**: 
   - `latest` - most recent release

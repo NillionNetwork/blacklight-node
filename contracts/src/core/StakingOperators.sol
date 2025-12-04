@@ -339,6 +339,14 @@ contract StakingOperators is IStakingOperators, AccessControl, ReentrancyGuard {
         return active;
     }
 
+    /// @notice Returns a list of all registered operators (active and inactive).
+    /// @dev Returns the complete list of operators who have ever registered.
+    ///      Warning: This function may be gas-intensive if there are many operators.
+    /// @return An array of addresses of all registered operators.
+    function getAllOperators() external view returns (address[] memory) {
+        return _allOperators;
+    }
+
     // Slashing / jailing
 
     /// @notice Slashes an operator's stake.

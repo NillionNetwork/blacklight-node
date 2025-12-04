@@ -1,19 +1,62 @@
-# Multi-stage Dockerfile for nilAV project
-# Builds all binaries: nilav_node, nilcc_simulator, contract_cli, monitor
+# Multi-stage Dockerfile for nilAV project with cross-compilation support
+# Builds all binaries: nilav_node, nilcc_simulator, monitor
 
-FROM rust:1.85-slim-bookworm AS builder
+FROM --platform=$BUILDPLATFORM rust:1.85-slim-bookworm AS builder
+
+ARG TARGETPLATFORM
+ARG BUILDPLATFORM
+
 WORKDIR /app
 
-# Install build dependencies
+# Install base build dependencies
 RUN apt-get update && apt-get install -y \
     pkg-config \
-    libssl-dev \
-    curl git \
+    curl \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Foundry toolchain
+# Set up cross-compilation based on target platform
+RUN case "$TARGETPLATFORM" in \
+    "linux/amd64") \
+        apt-get update && apt-get install -y libssl-dev && \
+        echo "x86_64-unknown-linux-gnu" > /rust-target.txt && \
+        echo "x86_64-linux-gnu" > /gcc-prefix.txt \
+        ;; \
+    "linux/arm64") \
+        dpkg --add-architecture arm64 && \
+        apt-get update && apt-get install -y \
+            gcc-aarch64-linux-gnu \
+            g++-aarch64-linux-gnu \
+            libssl-dev:arm64 \
+        && echo "aarch64-unknown-linux-gnu" > /rust-target.txt && \
+        echo "aarch64-linux-gnu" > /gcc-prefix.txt \
+        ;; \
+    *) echo "Unsupported platform: $TARGETPLATFORM" && exit 1 ;; \
+    esac && rm -rf /var/lib/apt/lists/*
+
+# Install Rust target
+RUN rustup target add $(cat /rust-target.txt)
+
+# Configure cargo for cross-compilation
+RUN mkdir -p ~/.cargo && \
+    RUST_TARGET=$(cat /rust-target.txt) && \
+    GCC_PREFIX=$(cat /gcc-prefix.txt) && \
+    if [ "$RUST_TARGET" = "aarch64-unknown-linux-gnu" ]; then \
+        printf "[target.aarch64-unknown-linux-gnu]\n" > ~/.cargo/config.toml && \
+        printf "linker = \"${GCC_PREFIX}-gcc\"\n" >> ~/.cargo/config.toml && \
+        printf "\n[env]\n" >> ~/.cargo/config.toml && \
+        printf "PKG_CONFIG_ALLOW_CROSS = \"1\"\n" >> ~/.cargo/config.toml && \
+        printf "PKG_CONFIG_PATH = \"/usr/lib/aarch64-linux-gnu/pkgconfig\"\n" >> ~/.cargo/config.toml && \
+        printf "OPENSSL_DIR = \"/usr\"\n" >> ~/.cargo/config.toml && \
+        printf "OPENSSL_LIB_DIR = \"/usr/lib/aarch64-linux-gnu\"\n" >> ~/.cargo/config.toml && \
+        printf "OPENSSL_INCLUDE_DIR = \"/usr/include\"\n" >> ~/.cargo/config.toml && \
+        cat ~/.cargo/config.toml; \
+    fi
+
+# Install Foundry (Solidity compilation is arch-independent)
 RUN curl -L https://foundry.paradigm.xyz | bash && \
     /root/.foundry/bin/foundryup
+
 ENV PATH="/root/.foundry/bin:${PATH}"
 
 # Copy project files
@@ -25,23 +68,40 @@ COPY ./contracts/ ./contracts/
 
 WORKDIR /app/contracts/
 
+# Build Solidity contracts (arch-independent)
 RUN forge build 
 
 WORKDIR /app
-# Build all binaries with caching
+
+# Build Rust binaries for target platform
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/app/target \
-    cargo build --release --bins && \
+    RUST_TARGET=$(cat /rust-target.txt) && \
+    if [ "$RUST_TARGET" = "aarch64-unknown-linux-gnu" ]; then \
+        export PKG_CONFIG_ALLOW_CROSS=1 && \
+        export PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig && \
+        export PKG_CONFIG_SYSROOT_DIR=/ && \
+        export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc && \
+        export CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc && \
+        export AR_aarch64_unknown_linux_gnu=aarch64-linux-gnu-ar && \
+        export OPENSSL_DIR=/usr && \
+        export OPENSSL_LIB_DIR=/usr/lib/aarch64-linux-gnu && \
+        export OPENSSL_INCLUDE_DIR=/usr/include; \
+    fi && \
+    cargo build --release --target $RUST_TARGET --bins && \
     mkdir -p /out/bin && \
-    cp target/release/nilav_node /out/bin/ && \
-    cp target/release/nilcc_simulator /out/bin/ && \
-    cp target/release/contract_cli /out/bin/ && \
-    cp target/release/monitor /out/bin/
+    cp target/$RUST_TARGET/release/nilav_node /out/bin/ && \
+    cp target/$RUST_TARGET/release/nilcc_simulator /out/bin/ && \
+    cp target/$RUST_TARGET/release/monitor /out/bin/
 
 
-FROM debian:bookworm-slim AS base_release
+FROM --platform=$TARGETPLATFORM debian:bookworm-slim AS base_release
+
+ARG TARGETPLATFORM
+
 WORKDIR /app
-RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/* && useradd -u 10001 -m appuser
+RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/* && useradd -u 10001 -m appuser && \
+    touch /app/nilav_node.env /app/nilav_monitor.env /app/nilcc_simulator.env
 USER appuser
 
 # Runtime stage for nilav_node
@@ -57,11 +117,6 @@ COPY --from=builder /app/data /app/data
 ENV CONFIG_PATH=/app/config/config.toml
 ENV HTXS_PATH=/app/data/htxs.json
 ENTRYPOINT ["/usr/local/bin/nilcc_simulator"]
-
-# Runtime stage for contract_cli (used for deployment)
-FROM base_release AS contract_cli
-COPY --from=builder /out/bin/contract_cli /usr/local/bin/contract_cli
-ENTRYPOINT ["/usr/local/bin/contract_cli"]
 
 # Runtime stage for monitor
 FROM base_release AS monitor

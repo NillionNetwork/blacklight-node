@@ -59,6 +59,17 @@ pub fn display_wallet_status(
     let has_eth = eth_balance > U256::zero();
     let has_stake = staked_balance > U256::zero();
 
+    let eth_balance_str = if has_eth {
+        format!("{} ETH ✅", eth_formatted)
+    } else {
+        format!("{} ETH ❌", eth_formatted)
+    };
+    let staked_balance_str = if has_stake {
+        format!("{} TEST ✅", staked_formatted)
+    } else {
+        format!("{} TEST ❌", staked_formatted)
+    };
+
     let mut table = Table::new();
     table.style = TableStyle::extended();
 
@@ -88,7 +99,7 @@ pub fn display_wallet_status(
         TableCell::builder("ETH Balance")
             .alignment(CellAlignment::Right)
             .build(),
-        TableCell::builder(format!("{} ETH", eth_formatted))
+        TableCell::builder(eth_balance_str)
             .alignment(CellAlignment::Left)
             .build(),
     ]));
@@ -98,7 +109,7 @@ pub fn display_wallet_status(
         TableCell::builder("TEST Staked")
             .alignment(CellAlignment::Right)
             .build(),
-        TableCell::builder(format!("{} TEST", staked_formatted))
+        TableCell::builder(staked_balance_str)
             .alignment(CellAlignment::Left)
             .build(),
     ]));
@@ -127,9 +138,7 @@ pub fn display_wallet_status(
                 "⚠️  Please fund this address with ETH for gas transactions"
             }
         }
-        WalletStatus::Ready => {
-            "✅ Ready to operate"
-        }
+        WalletStatus::Ready => "✅ Ready to operate",
     };
     table.add_row(Row::new(vec![TableCell::builder(status_message)
         .col_span(2)
