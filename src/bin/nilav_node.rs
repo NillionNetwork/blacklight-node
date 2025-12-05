@@ -253,10 +253,7 @@ async fn run_event_listener(
                 tokio::spawn(async move {
                     // Check if already responded
                     match client.router.has_node_responded(htx_id, node_addr).await {
-                        Ok((responded, _result)) if responded => {
-                            // Already responded, skip
-                            return;
-                        }
+                        Ok((responded, _result)) if responded => (),
                         Ok(_) => {
                             info!(htx_id = ?htx_id, "Processing HTX");
                             if let Err(e) = process_htx_assignment(client, htx_id, &verifier).await {

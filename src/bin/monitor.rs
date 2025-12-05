@@ -22,8 +22,9 @@ use ratatui::{
 };
 use std::collections::{HashMap, HashSet};
 use std::io;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime};
+use tokio::sync::Mutex;
 
 /// Convert a byte array to a 0x-prefixed hex string
 fn bytes_to_hex(bytes: &[u8]) -> String {
@@ -448,7 +449,7 @@ async fn run_monitor_loop(
     loop {
         // Draw UI with current state
         {
-            let mut state_guard = state.lock().unwrap();
+            let mut state_guard = state.lock().await;
             terminal.draw(|f| {
                 ui(f, &mut state_guard);
             })?;
@@ -459,7 +460,7 @@ async fn run_monitor_loop(
             match event::read()? {
                 Event::Paste(pasted_text) => {
                     // Handle paste events (CMD+V)
-                    let mut state_guard = state.lock().unwrap();
+                    let mut state_guard = state.lock().await;
 
                     // Add pasted text to the active input field
                     if state_guard.current_tab == Tab::Staking
@@ -510,7 +511,7 @@ async fn run_monitor_loop(
                     }
                 }
                 Event::Key(key) if key.kind == KeyEventKind::Press => {
-                    let mut state_guard = state.lock().unwrap();
+                    let mut state_guard = state.lock().await;
 
                     // Normal key handling
                     match key.code {
@@ -598,7 +599,7 @@ async fn run_monitor_loop(
                                     }
                                     token_holders.sort_by(|a, b| b.balance.cmp(&a.balance));
 
-                                    let mut state_guard = state.lock().unwrap();
+                                    let mut state_guard = state.lock().await;
                                     state_guard.nodes = nodes;
                                     state_guard.node_count = registered_set.len();
                                     state_guard.token_balance = token_balance;
@@ -607,7 +608,7 @@ async fn run_monitor_loop(
                                     state_guard.status_message = "Refreshed!".to_string();
                                 }
                                 (Err(e), _) | (_, Err(e)) => {
-                                    let mut state_guard = state.lock().unwrap();
+                                    let mut state_guard = state.lock().await;
                                     state_guard.status_message = format!("Error: {}", e);
                                 }
                             }
@@ -968,14 +969,14 @@ async fn run_monitor_loop(
 
                                         match result {
                                             Ok(tx) => {
-                                                let mut state_guard = state.lock().unwrap();
+                                                let mut state_guard = state.lock().await;
                                                 state_guard.status_message =
                                                     format!("Stake submitted! TX: {:?}", tx);
                                                 state_guard.staking_amount = String::new();
                                                 // Clear amount
                                             }
                                             Err(e) => {
-                                                let mut state_guard = state.lock().unwrap();
+                                                let mut state_guard = state.lock().await;
                                                 state_guard.status_message =
                                                     format!("Error staking: {}", e);
                                             }
@@ -1099,14 +1100,14 @@ async fn run_monitor_loop(
 
                                         match result {
                                             Ok(tx) => {
-                                                let mut state_guard = state.lock().unwrap();
+                                                let mut state_guard = state.lock().await;
                                                 state_guard.status_message =
                                                     format!("Tokens minted! TX: {:?}", tx);
                                                 state_guard.minting_amount = String::new();
                                                 // Clear amount
                                             }
                                             Err(e) => {
-                                                let mut state_guard = state.lock().unwrap();
+                                                let mut state_guard = state.lock().await;
                                                 state_guard.status_message =
                                                     format!("Error minting: {}", e);
                                             }
@@ -1229,14 +1230,14 @@ async fn run_monitor_loop(
 
                                         match result {
                                             Ok(tx) => {
-                                                let mut state_guard = state.lock().unwrap();
+                                                let mut state_guard = state.lock().await;
                                                 state_guard.status_message =
                                                     format!("ETH transferred! TX: {:?}", tx);
                                                 state_guard.transfer_amount = String::new();
                                                 // Clear amount
                                             }
                                             Err(e) => {
-                                                let mut state_guard = state.lock().unwrap();
+                                                let mut state_guard = state.lock().await;
                                                 state_guard.status_message =
                                                     format!("Error transferring: {}", e);
                                             }
@@ -1296,7 +1297,7 @@ async fn listen_htx_submitted(
                 let htx_id = bytes_to_hex(&event.htx_id);
                 let sender = format!("{:?}", event.sender);
 
-                let mut state_guard = state.lock().unwrap();
+                let mut state_guard = state.lock().await;
 
                 // Update tracking map
                 state_guard
@@ -1332,7 +1333,7 @@ async fn listen_htx_assigned(
                 let htx_id = bytes_to_hex(&event.htx_id);
                 let node = format!("{:?}", event.node);
 
-                let mut state_guard = state.lock().unwrap();
+                let mut state_guard = state.lock().await;
 
                 // Update tracking map
                 state_guard
@@ -1374,7 +1375,7 @@ async fn listen_htx_responded(
                 let htx_id = bytes_to_hex(&event.htx_id);
                 let node = format!("{:?}", event.node);
 
-                let mut state_guard = state.lock().unwrap();
+                let mut state_guard = state.lock().await;
 
                 // Update tracking map
                 state_guard
@@ -2324,7 +2325,7 @@ async fn listen_token_transfers(
 
                 // Update tracked addresses in state
                 {
-                    let mut state_guard = state.lock().unwrap();
+                    let mut state_guard = state.lock().await;
                     state_guard.token_holder_addresses = system_addresses.clone();
                 }
 
@@ -2346,7 +2347,7 @@ async fn listen_token_transfers(
 
                 // Update state
                 {
-                    let mut state_guard = state.lock().unwrap();
+                    let mut state_guard = state.lock().await;
                     state_guard.token_holders = holders;
                     state_guard.last_update = std::time::Instant::now();
                 }

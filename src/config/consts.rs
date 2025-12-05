@@ -1,7 +1,7 @@
-/// Centralized constants with different values for debug and release builds
-///
-/// This module provides all CLI and configuration constants used throughout the application.
-/// Values are conditionally compiled based on the build profile (debug vs release).
+//!  Centralized constants with different values for debug and release builds
+//!
+//! This module provides all CLI and configuration constants used throughout the application.
+//! Values are conditionally compiled based on the build profile (debug vs release).
 
 // =============================================================================
 // State File Names
