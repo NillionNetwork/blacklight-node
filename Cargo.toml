@@ -2,10 +2,39 @@
 name = "nilav"
 version = "0.1.0"
 edition = "2021"
-authors = ["NilAV Contributors"]
-license = "MIT OR Apache-2.0"
+authors = ["Nillion"]
+license = "MIT"
 
-# Binary targets
+
+[dependencies]
+anyhow = "1.0"
+attestation-verification = { git = "https://github.com/NillionNetwork/nilcc", branch = "main", package = "attestation-verification" }
+base64 = "0.22"
+clap = { version = "4.5", features = ["derive", "env"] }
+crossterm = "0.29.0"
+ethers = { version = "2.0", features = ["rustls", "ws"] }
+ethers-contract = "2.0"
+futures-util = "0.3"
+getrandom = "0.3"
+hex = "0.4"
+rand = "0.9"
+ratatui = "0.29"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sev = { version = "7.1", default-features = false }
+term-table = "1.4"
+tokio = { version = "1.40", features = ["full"] }
+toml = "0.9"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "ansi"] }
+
+
+[dev-dependencies]
+httpmock = "0.8"
+tokio = { version = "1.40", features = ["macros", "rt-multi-thread"] }
+
+
 [[bin]]
 name = "nilcc_simulator"
 path = "src/bin/nilcc_simulator.rs"
@@ -17,42 +46,3 @@ path = "src/bin/nilav_node.rs"
 [[bin]]
 name = "monitor"
 path = "src/bin/monitor.rs"
-
-[dependencies]
-# Async runtime
-tokio = { version = "1.40", features = ["full"] }
-
-# Blockchain & Ethereum
-ethers = { version = "2.0", features = ["rustls", "ws"] }
-ethers-contract = "2.0"
-
-# Serialization
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-toml = "0.9"
-
-# Cryptography
-hex = "0.4"
-getrandom = "0.3"
-
-# HTTP Client
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-
-# CLI & TUI
-clap = { version = "4.5", features = ["derive", "env"] }
-ratatui = "0.29"
-crossterm = "0.29.0"
-term-table = "1.4"
-
-# Logging
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "ansi"] }
-
-# Utilities
-anyhow = "1.0"
-rand = "0.9"
-futures-util = "0.3"
-
-[dev-dependencies]
-httpmock = "0.8"
-tokio = { version = "1.40", features = ["macros", "rt-multi-thread"] }

@@ -1,11 +1,16 @@
 use crate::types::Htx;
 use reqwest::Client;
+use sev::parser::ByteParser;
 
 #[derive(Debug)]
 pub enum VerificationError {
     NilccUrl(String),
     NilccJson(String),
     MissingMeasurement,
+    MissingRawReport,
+    MalformedReport,
+    RawReportEncoding(String),
+    SignatureVerification(String),
     BuilderUrl(String),
     BuilderJson(String),
     NotInBuilderIndex,
@@ -18,6 +23,21 @@ impl VerificationError {
             VerificationError::NilccJson(e) => format!("invalid nilcc_measurement JSON: {}", e),
             VerificationError::MissingMeasurement => {
                 "missing `measurement` field (looked at root and report.measurement)".to_string()
+            }
+            VerificationError::MissingRawReport => {
+                "missing `raw_report` field at the top level of nilcc_measurement JSON".to_string()
+            }
+            VerificationError::MalformedReport => {
+                "malformed SEV-SNP attestation report".to_string()
+            }
+            VerificationError::RawReportEncoding(e) => {
+                format!(
+                    "invalid raw_report encoding (expected hex or base64): {}",
+                    e
+                )
+            }
+            VerificationError::SignatureVerification(e) => {
+                format!("attestation signature verification failed: {}", e)
             }
             VerificationError::BuilderUrl(e) => format!("invalid builder_measurement URL: {}", e),
             VerificationError::BuilderJson(e) => {
@@ -79,6 +99,38 @@ pub async fn verify_htx(htx: &Htx) -> Result<(), VerificationError> {
         Some(s) => s.to_string(),
         None => return Err(VerificationError::MissingMeasurement),
     };
+
+    // Additionally verify the SEV-SNP attestation signature from `raw_report`.
+    if let Some(raw_report_str) = meas_json.get("raw_report").and_then(|v| v.as_str()) {
+        // Try hex first, then base64
+        let raw_report_bytes = match hex::decode(raw_report_str) {
+            Ok(b) => b,
+            Err(_) => match base64::decode(raw_report_str) {
+                Ok(b) => b,
+                Err(e) => return Err(VerificationError::RawReportEncoding(e.to_string())),
+            },
+        };
+
+        // Parse SEV-SNP attestation report
+        let report = match sev::firmware::guest::AttestationReport::from_bytes(&raw_report_bytes) {
+            Ok(r) => r,
+            Err(_) => return Err(VerificationError::MalformedReport),
+        };
+
+        // Convert measurement hex -> bytes (expected 48 bytes for SNP)
+        let meas_bytes = hex::decode(&measurement).map_err(|e| {
+            VerificationError::SignatureVerification(format!("invalid measurement hex: {}", e))
+        })?;
+        // Use the verifier to validate the report signature and measurement binding
+        if let Err(e) = attestation_verification::ReportVerifier::default()
+            .verify_report(&report, &meas_bytes)
+            .await
+        {
+            return Err(VerificationError::SignatureVerification(e.to_string()));
+        }
+    } else {
+        return Err(VerificationError::MissingRawReport);
+    }
 
     // Fetch builder measurement index
     let builder_resp = client.get(&htx.builder_measurement.url).send().await;
