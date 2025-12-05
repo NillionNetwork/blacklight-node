@@ -1,3 +1,6 @@
+use std::env::temp_dir;
+use std::path::PathBuf;
+
 use anyhow::{Context, Result};
 use clap::Parser;
 use ethers::core::types::Address;
@@ -37,6 +40,14 @@ pub struct CliArgs {
     /// Private key for contract interactions
     #[arg(long, env = "PRIVATE_KEY")]
     pub private_key: Option<String>,
+
+    /// The path where nilcc artifacts will be cached.
+    #[clap(short, long, default_value = default_artifact_cache_path().into_os_string(), env = "ARTIFACT_CACHE")]
+    pub artifact_cache: PathBuf,
+
+    /// The path where AMD certificates will be cached.
+    #[clap(short, long, default_value = default_cert_cache_path().into_os_string(), env = "CERT_CACHE")]
+    pub cert_cache: PathBuf,
 }
 
 /// Node configuration with all required values resolved
@@ -188,4 +199,16 @@ pub async fn validate_node_requirements(
         }
         WalletStatus::Ready => Ok(()),
     }
+}
+
+fn default_cache_path() -> PathBuf {
+    temp_dir().join("nilav-cache")
+}
+
+fn default_cert_cache_path() -> PathBuf {
+    default_cache_path().join("certs")
+}
+
+fn default_artifact_cache_path() -> PathBuf {
+    default_cache_path().join("artifacts")
 }

@@ -2,11 +2,13 @@ use anyhow::Result;
 use clap::Parser;
 use ethers::core::types::{Address, H256};
 use nilav::{
-    config::consts::{INITIAL_RECONNECT_DELAY_SECS, MAX_RECONNECT_DELAY_SECS},
-    config::{validate_node_requirements, NodeCliArgs, NodeConfig},
+    config::{
+        consts::{INITIAL_RECONNECT_DELAY_SECS, MAX_RECONNECT_DELAY_SECS},
+        validate_node_requirements, NodeCliArgs, NodeConfig,
+    },
     contract_client::{ContractConfig, NilAVClient},
     types::Htx,
-    verification::verify_htx,
+    verification::HtxVerifier,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -60,7 +62,11 @@ async fn setup_shutdown_handler(shutdown_notify: Arc<Notify>) {
 // ============================================================================
 
 /// Process a single HTX assignment - verifies and submits result
-async fn process_htx_assignment(client: Arc<NilAVClient>, htx_id: H256) -> Result<()> {
+async fn process_htx_assignment(
+    client: Arc<NilAVClient>,
+    htx_id: H256,
+    verifier: &HtxVerifier,
+) -> Result<()> {
     // Retrieve the HTX data from the contract
     let htx_bytes = client.router.get_htx(htx_id).await.map_err(|e| {
         error!(htx_id = ?htx_id, error = %e, "Failed to get HTX data");
@@ -80,7 +86,7 @@ async fn process_htx_assignment(client: Arc<NilAVClient>, htx_id: H256) -> Resul
     };
 
     // Verify the HTX
-    let verification_result = verify_htx(&htx).await;
+    let verification_result = verifier.verify_htx(&htx).await;
     let result = verification_result.is_ok();
 
     if let Err(ref e) = verification_result {
@@ -102,7 +108,11 @@ async fn process_htx_assignment(client: Arc<NilAVClient>, htx_id: H256) -> Resul
 }
 
 /// Process backlog of historical assignments
-async fn process_assignment_backlog(client: Arc<NilAVClient>, node_address: Address) -> Result<()> {
+async fn process_assignment_backlog(
+    client: Arc<NilAVClient>,
+    node_address: Address,
+    verifier: &HtxVerifier,
+) -> Result<()> {
     info!("Checking for pending assignments from before connection");
 
     let assigned_events = client.router.get_htx_assigned_events().await?;
@@ -132,8 +142,9 @@ async fn process_assignment_backlog(client: Arc<NilAVClient>, node_address: Addr
             Ok(_) => {
                 info!(htx_id = ?htx_id, "Processing pending HTX");
                 let client_clone = client.clone();
+                let verifier = verifier.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = process_htx_assignment(client_clone, htx_id).await {
+                    if let Err(e) = process_htx_assignment(client_clone, htx_id, &verifier).await {
                         error!(htx_id = ?htx_id, error = %e, "Failed to process pending HTX");
                     }
                 });
@@ -225,6 +236,7 @@ async fn run_event_listener(
     client: Arc<NilAVClient>,
     node_address: Address,
     shutdown_notify: Arc<Notify>,
+    verifier: &HtxVerifier,
 ) -> Result<()> {
     let client_for_callback = client.clone();
 
@@ -237,6 +249,7 @@ async fn run_event_listener(
             async move {
                 let htx_id = H256::from(event.htx_id);
                 let node_addr = client.signer_address();
+                let verifier = verifier.clone();
                 tokio::spawn(async move {
                     // Check if already responded
                     match client.router.has_node_responded(htx_id, node_addr).await {
@@ -246,7 +259,7 @@ async fn run_event_listener(
                         }
                         Ok(_) => {
                             info!(htx_id = ?htx_id, "Processing HTX");
-                            if let Err(e) = process_htx_assignment(client, htx_id).await {
+                            if let Err(e) = process_htx_assignment(client, htx_id, &verifier).await {
                                 error!(htx_id = ?htx_id, error = %e, "Failed to process real-time HTX");
                             }
                         }
@@ -319,6 +332,7 @@ async fn main() -> Result<()> {
 
     // Load configuration
     let cli_args = NodeCliArgs::parse();
+    let verifier = HtxVerifier::new(cli_args.artifact_cache.clone(), cli_args.cert_cache.clone())?;
     let config = NodeConfig::load(cli_args).await?;
 
     // Create initial client to validate requirements
@@ -376,12 +390,21 @@ async fn main() -> Result<()> {
         let client_arc = Arc::new(client);
 
         // Process any backlog of assignments
-        if let Err(e) = process_assignment_backlog(client_arc.clone(), current_address).await {
+        if let Err(e) =
+            process_assignment_backlog(client_arc.clone(), current_address, &verifier).await
+        {
             error!(error = %e, "Failed to query historical assignments");
         }
 
         // Start listening for events
-        match run_event_listener(client_arc, current_address, shutdown_notify.clone()).await {
+        match run_event_listener(
+            client_arc,
+            current_address,
+            shutdown_notify.clone(),
+            &verifier,
+        )
+        .await
+        {
             Ok(_) => {
                 warn!(reconnect_delay = ?reconnect_delay, "WebSocket listener exited normally. Reconnecting...");
             }

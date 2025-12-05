@@ -338,6 +338,7 @@ mod tests {
                 nilcc_version: "0.0.0".into(),
                 cpu_count: 1,
                 gpus: 0,
+                docker_compose_hash: [0; 32],
             },
             builder_measurement: BuilderMeasurement {
                 url: "https://test.com".into(),
