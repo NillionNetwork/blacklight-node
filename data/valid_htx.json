@@ -6,7 +6,8 @@
       "url": "https://nilgpt.xyz/nilcc/api/v2/report",
       "nilcc_version": "0.2.1",
       "cpu_count": 4,
-      "GPUs": 1
+      "GPUs": 1,
+      "docker_compose_hash": "724ad766d1dc767394b842fdf319e89fcf2d1b462939070f5651ab54f97ce259"
     },
     "builder_measurement": {
       "url": "https://raw.githubusercontent.com/NillionNetwork/nilgpt/main/measurement-hash-index.json"
