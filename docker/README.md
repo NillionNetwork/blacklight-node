@@ -170,16 +170,6 @@ docker-compose logs -f simulator
 docker-compose logs -f
 ```
 
-### Check node registration:
-
-```bash
-# Using contract_cli from inside a container
-docker-compose exec simulator /usr/local/bin/contract_cli \
-  --rpc-url http://anvil:8545 \
-  --contract-address $(cat /shared/contract_address.txt) \
-  list-nodes
-```
-
 ## Troubleshooting
 
 ### Container won't start:

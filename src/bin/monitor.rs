@@ -1,26 +1,29 @@
 use anyhow::Result;
 use clap::Parser;
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind},
+    event::{
+        self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+        Event, KeyCode, KeyEventKind,
+    },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use ethers::core::types::Address;
+use ethers::core::types::{Address, U256};
+use ethers::utils::format_units;
 use nilav::config::{MonitorCliArgs, MonitorConfig};
-use nilav::contract_client::{ContractConfig, NilAVWsClient};
+use nilav::contract_client::{ContractConfig, NilAVClient};
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, TableState, Wrap},
+    widgets::{Block, Borders, List, ListItem, Paragraph, TableState, Wrap},
     Frame, Terminal,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
-use tracing::error;
 
 /// Convert a byte array to a 0x-prefixed hex string
 fn bytes_to_hex(bytes: &[u8]) -> String {
@@ -47,9 +50,47 @@ fn format_short_hex(hex: &str) -> String {
 struct HTXTransaction {
     htx_id: String,
     submitted_sender: Option<String>,
-    assigned_node: Option<String>,
-    responded: Option<bool>,
+    assigned_nodes: HashSet<String>,
+    responded_nodes: HashSet<String>,
     timestamp: SystemTime,
+}
+
+#[derive(Debug, Clone)]
+struct NodeInfo {
+    address: Address,
+    stake: U256,
+    is_registered: bool,
+    eth_balance: U256,
+}
+
+#[derive(Debug, Clone)]
+struct TokenHolder {
+    address: Address,
+    balance: U256,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum StakingInputField {
+    PrivateKey,
+    TargetAddress,
+    Amount,
+    None,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum MintingInputField {
+    PrivateKey,
+    TargetAddress,
+    Amount,
+    None,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum TransferInputField {
+    PrivateKey,
+    TargetAddress,
+    Amount,
+    None,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,9 +98,10 @@ enum Tab {
     Overview,
     Nodes,
     HTXTracking,
-    HTXSubmitted,
-    HTXAssigned,
-    HTXResponded,
+    Staking,
+    Minting,
+    TokenHolders,
+    TransferETH,
 }
 
 impl Tab {
@@ -68,9 +110,10 @@ impl Tab {
             Tab::Overview => "Overview",
             Tab::Nodes => "Nodes",
             Tab::HTXTracking => "HTX Tracking",
-            Tab::HTXSubmitted => "HTX Submitted",
-            Tab::HTXAssigned => "HTX Assigned",
-            Tab::HTXResponded => "HTX Responded",
+            Tab::Staking => "Staking",
+            Tab::Minting => "Mint Tokens",
+            Tab::TokenHolders => "Token Holders",
+            Tab::TransferETH => "Transfer ETH",
         }
     }
 
@@ -78,21 +121,23 @@ impl Tab {
         match self {
             Tab::Overview => Tab::Nodes,
             Tab::Nodes => Tab::HTXTracking,
-            Tab::HTXTracking => Tab::HTXSubmitted,
-            Tab::HTXSubmitted => Tab::HTXAssigned,
-            Tab::HTXAssigned => Tab::HTXResponded,
-            Tab::HTXResponded => Tab::Overview,
+            Tab::HTXTracking => Tab::Staking,
+            Tab::Staking => Tab::Minting,
+            Tab::Minting => Tab::TokenHolders,
+            Tab::TokenHolders => Tab::TransferETH,
+            Tab::TransferETH => Tab::Overview,
         }
     }
 
     fn prev(&self) -> Self {
         match self {
-            Tab::Overview => Tab::HTXResponded,
+            Tab::Overview => Tab::TransferETH,
             Tab::Nodes => Tab::Overview,
             Tab::HTXTracking => Tab::Nodes,
-            Tab::HTXSubmitted => Tab::HTXTracking,
-            Tab::HTXAssigned => Tab::HTXSubmitted,
-            Tab::HTXResponded => Tab::HTXAssigned,
+            Tab::Staking => Tab::HTXTracking,
+            Tab::Minting => Tab::Staking,
+            Tab::TokenHolders => Tab::Minting,
+            Tab::TransferETH => Tab::TokenHolders,
         }
     }
 }
@@ -102,21 +147,37 @@ struct MonitorState {
     should_quit: bool,
     last_update: std::time::Instant,
     node_count: usize,
-    nodes: Vec<Address>,
-    htx_submitted: Vec<String>,
-    htx_assigned: Vec<String>,
-    htx_responded: Vec<String>,
+    nodes: Vec<NodeInfo>,
     htx_tracking: HashMap<String, HTXTransaction>,
     status_message: String,
     selected_node_index: Option<usize>,
-    show_confirm_deregister: bool,
-    htx_submitted_state: ListState,
-    htx_assigned_state: ListState,
-    htx_responded_state: ListState,
     htx_tracking_state: TableState,
     rpc_url: String,
-    contract_address: Address,
+    router_contract_address: Address,
+    staking_contract_address: Address,
+    token_contract_address: Address,
     public_key: String,
+    token_balance: U256,
+    eth_balance: U256,
+    // Staking Tab State
+    staking_private_key: String,
+    staking_target_address: String,
+    staking_amount: String,
+    staking_active_input: StakingInputField,
+    // Minting Tab State
+    minting_private_key: String,
+    minting_target_address: String,
+    minting_amount: String,
+    minting_active_input: MintingInputField,
+    // Token Holders Tab State
+    token_holders: Vec<TokenHolder>,
+    token_holder_addresses: HashSet<Address>, // Track all addresses that have interacted with the token
+    token_holders_state: ratatui::widgets::ListState,
+    // Transfer ETH Tab State
+    transfer_private_key: String,
+    transfer_target_address: String,
+    transfer_amount: String,
+    transfer_active_input: TransferInputField,
 }
 
 #[tokio::main]
@@ -126,94 +187,95 @@ async fn main() -> Result<()> {
 
     // Store values before they're moved
     let rpc_url = config.rpc_url.clone();
-    let contract_address = config.contract_address;
+    let router_contract_address = config.router_contract_address;
+    let staking_contract_address = config.staking_contract_address;
+    let token_contract_address = config.token_contract_address;
 
-    let contract_config = ContractConfig::new(config.rpc_url, config.contract_address);
-    let client = NilAVWsClient::new(contract_config, config.private_key).await?;
+    let contract_config = ContractConfig::new(
+        config.rpc_url,
+        config.router_contract_address,
+        config.staking_contract_address,
+        config.token_contract_address,
+    );
+    let client = NilAVClient::new(contract_config, config.private_key).await?;
 
     // Initial data fetch for node count and list
-    let node_count = client.node_count().await?.as_usize();
-    let nodes = client.get_nodes().await?;
+    let node_count = client.router.node_count().await?.as_usize();
 
-    // Fetch historical events to populate initial state
-    let htx_submitted = if config.all_htxs {
-        match client.get_htx_submitted_events().await {
-            Ok(events) => events
-                .iter()
-                .map(|e| {
-                    let htx_id = bytes_to_hex(&e.htx_id);
-                    let sender = format!("{:?}", e.sender);
-                    format!(
-                        "HTX: {} | Sender: {}",
-                        format_short_hex(&htx_id),
-                        format_short_hex(&sender)
-                    )
-                })
-                .collect(),
-            Err(e) => {
-                error!("Failed to fetch historical HTX submitted events: {}", e);
-                Vec::new()
+    // Get all registered nodes from router
+    let registered_nodes = client.router.get_nodes().await?;
+    let registered_set: HashSet<Address> = registered_nodes.into_iter().collect();
+
+    // Get all operators with stake (efficient: queries contract state directly)
+    let mut nodes = Vec::new();
+    if let Ok(staked_operators) = client.staking.get_operators_with_stake().await {
+        for addr in staked_operators {
+            if let Ok(stake) = client.staking.stake_of(addr).await {
+                let is_registered = registered_set.contains(&addr);
+                let eth_balance = client.get_balance_of(addr).await.unwrap_or(U256::zero());
+                nodes.push(NodeInfo {
+                    address: addr,
+                    stake,
+                    is_registered,
+                    eth_balance,
+                });
             }
         }
-    } else {
-        Vec::new()
-    };
+    }
 
-    let htx_assigned = if config.all_htxs {
-        match client.get_htx_assigned_events().await {
-            Ok(events) => events
-                .iter()
-                .map(|e| {
-                    let htx_id = bytes_to_hex(&e.htx_id);
-                    let node = format!("{:?}", e.node);
-                    format!(
-                        "HTX: {} | Node: {}",
-                        format_short_hex(&htx_id),
-                        format_short_hex(&node)
-                    )
-                })
-                .collect(),
-            Err(e) => {
-                error!("Failed to fetch historical HTX assigned events: {}", e);
-                Vec::new()
+    // Sort by stake descending
+    nodes.sort_by(|a, b| b.stake.cmp(&a.stake));
+
+    // Fetch initial token balance and ETH balance
+    let signer_address = client.signer_address();
+    let token_balance = client
+        .token
+        .balance_of(signer_address)
+        .await
+        .unwrap_or(U256::zero());
+    let eth_balance = client.get_balance().await.unwrap_or(U256::zero());
+
+    // Build token holders list from system addresses (nodes and operators)
+    // Collect all relevant addresses: registered nodes + all staked operators
+    let mut token_holder_addresses = HashSet::new();
+
+    // Add all registered nodes
+    if let Ok(registered_nodes) = client.router.get_nodes().await {
+        for addr in registered_nodes {
+            token_holder_addresses.insert(addr);
+        }
+    }
+
+    // Add all operators with stake (efficient: direct contract query)
+    if let Ok(staked_operators) = client.staking.get_operators_with_stake().await {
+        for operator in staked_operators {
+            token_holder_addresses.insert(operator);
+        }
+    }
+
+    // Fetch current token balances for all system addresses
+    let mut token_holders = Vec::new();
+    for addr in &token_holder_addresses {
+        if let Ok(balance) = client.token.balance_of(*addr).await {
+            if balance > U256::zero() {
+                token_holders.push(TokenHolder {
+                    address: *addr,
+                    balance,
+                });
             }
         }
-    } else {
-        Vec::new()
-    };
-
-    let htx_responded = if config.all_htxs {
-        match client.get_htx_responded_events().await {
-            Ok(events) => events
-                .iter()
-                .map(|e| {
-                    let htx_id = bytes_to_hex(&e.htx_id);
-                    let node = format!("{:?}", e.node);
-                    format!(
-                        "HTX: {} | Node: {} | Result: {}",
-                        format_short_hex(&htx_id),
-                        format_short_hex(&node),
-                        e.result
-                    )
-                })
-                .collect(),
-            Err(e) => {
-                error!("Failed to fetch historical HTX responded events: {}", e);
-                Vec::new()
-            }
-        }
-    } else {
-        Vec::new()
-    };
-
-    let total_events = htx_submitted.len() + htx_assigned.len() + htx_responded.len();
+    }
+    // Sort by balance descending
+    token_holders.sort_by(|a, b| b.balance.cmp(&a.balance));
 
     // Build HTX tracking map from historical events
     let mut htx_tracking: HashMap<String, HTXTransaction> = HashMap::new();
+    let mut total_events = 0;
 
     // Add submitted events
     if config.all_htxs {
-        if let Ok(events) = client.get_htx_submitted_events().await {
+        if let Ok(events) = client.router.get_htx_submitted_events().await {
+            total_events += events.len();
             for e in events {
                 let htx_id = bytes_to_hex(&e.htx_id);
                 let sender = format!("{:?}", e.sender);
@@ -222,8 +284,8 @@ async fn main() -> Result<()> {
                     HTXTransaction {
                         htx_id,
                         submitted_sender: Some(sender),
-                        assigned_node: None,
-                        responded: None,
+                        assigned_nodes: HashSet::new(),
+                        responded_nodes: HashSet::new(),
                         timestamp: SystemTime::now(),
                     },
                 );
@@ -231,36 +293,51 @@ async fn main() -> Result<()> {
         }
 
         // Add assigned events
-        if let Ok(events) = client.get_htx_assigned_events().await {
+        if let Ok(events) = client.router.get_htx_assigned_events().await {
+            total_events += events.len();
             for e in events {
                 let htx_id = bytes_to_hex(&e.htx_id);
                 let node = format!("{:?}", e.node);
                 htx_tracking
                     .entry(htx_id.clone())
-                    .and_modify(|tx| tx.assigned_node = Some(node.clone()))
-                    .or_insert(HTXTransaction {
-                        htx_id,
-                        submitted_sender: None,
-                        assigned_node: Some(node),
-                        responded: None,
-                        timestamp: SystemTime::now(),
+                    .and_modify(|tx| {
+                        tx.assigned_nodes.insert(node.clone());
+                    })
+                    .or_insert_with(|| {
+                        let mut assigned = HashSet::new();
+                        assigned.insert(node.clone());
+                        HTXTransaction {
+                            htx_id,
+                            submitted_sender: None,
+                            assigned_nodes: assigned,
+                            responded_nodes: HashSet::new(),
+                            timestamp: SystemTime::now(),
+                        }
                     });
             }
         }
 
         // Add responded events
-        if let Ok(events) = client.get_htx_responded_events().await {
+        if let Ok(events) = client.router.get_htx_responded_events().await {
+            total_events += events.len();
             for e in events {
                 let htx_id = bytes_to_hex(&e.htx_id);
+                let node = format!("{:?}", e.node);
                 htx_tracking
                     .entry(htx_id.clone())
-                    .and_modify(|tx| tx.responded = Some(e.result))
-                    .or_insert(HTXTransaction {
-                        htx_id,
-                        submitted_sender: None,
-                        assigned_node: None,
-                        responded: Some(e.result),
-                        timestamp: SystemTime::now(),
+                    .and_modify(|tx| {
+                        tx.responded_nodes.insert(node.clone());
+                    })
+                    .or_insert_with(|| {
+                        let mut responded = HashSet::new();
+                        responded.insert(node.clone());
+                        HTXTransaction {
+                            htx_id,
+                            submitted_sender: None,
+                            assigned_nodes: HashSet::new(),
+                            responded_nodes: responded,
+                            timestamp: SystemTime::now(),
+                        }
                     });
             }
         }
@@ -272,33 +349,50 @@ async fn main() -> Result<()> {
         last_update: std::time::Instant::now(),
         node_count,
         nodes,
-        htx_submitted,
-        htx_assigned,
-        htx_responded,
         htx_tracking,
         status_message: format!(
             "Press 'q' to quit, 'r' to refresh, Tab/Shift+Tab to navigate - Live WebSocket mode (Loaded {} historical events)",
             total_events
         ),
         selected_node_index: None,
-        show_confirm_deregister: false,
-        htx_submitted_state: ListState::default(),
-        htx_assigned_state: ListState::default(),
-        htx_responded_state: ListState::default(),
         htx_tracking_state: TableState::default(),
         rpc_url,
-        contract_address,
+        router_contract_address,
+        staking_contract_address,
+        token_contract_address,
         public_key: format!("{:?}", client.signer_address()),
+        token_balance,
+        eth_balance,
+        staking_private_key: String::new(),
+        staking_target_address: String::new(),
+        staking_amount: String::new(),
+        staking_active_input: StakingInputField::None,
+        minting_private_key: String::new(),
+        minting_target_address: String::new(),
+        minting_amount: String::new(),
+        minting_active_input: MintingInputField::None,
+        token_holders,
+        token_holder_addresses,
+        token_holders_state: ratatui::widgets::ListState::default(),
+        transfer_private_key: String::new(),
+        transfer_target_address: String::new(),
+        transfer_amount: String::new(),
+        transfer_active_input: TransferInputField::None,
     };
 
     run_monitor(client, initial_state).await
 }
 
-async fn run_monitor(client: NilAVWsClient, initial_state: MonitorState) -> Result<()> {
+async fn run_monitor(client: NilAVClient, initial_state: MonitorState) -> Result<()> {
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    execute!(
+        stdout,
+        EnterAlternateScreen,
+        EnableMouseCapture,
+        EnableBracketedPaste
+    )?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
@@ -325,6 +419,12 @@ async fn run_monitor(client: NilAVWsClient, initial_state: MonitorState) -> Resu
         let _ = listen_htx_responded(client_clone, state_clone).await;
     });
 
+    let state_clone = state.clone();
+    let client_clone = client_arc.clone();
+    tokio::spawn(async move {
+        let _ = listen_token_transfers(client_clone, state_clone).await;
+    });
+
     let result = run_monitor_loop(&mut terminal, client_arc, state).await;
 
     // Restore terminal
@@ -332,7 +432,8 @@ async fn run_monitor(client: NilAVWsClient, initial_state: MonitorState) -> Resu
     execute!(
         terminal.backend_mut(),
         LeaveAlternateScreen,
-        DisableMouseCapture
+        DisableMouseCapture,
+        DisableBracketedPaste
     )?;
     terminal.show_cursor()?;
 
@@ -341,7 +442,7 @@ async fn run_monitor(client: NilAVWsClient, initial_state: MonitorState) -> Resu
 
 async fn run_monitor_loop(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    client: Arc<NilAVWsClient>,
+    client: Arc<NilAVClient>,
     state: Arc<Mutex<MonitorState>>,
 ) -> Result<()> {
     loop {
@@ -350,184 +451,830 @@ async fn run_monitor_loop(
             let mut state_guard = state.lock().unwrap();
             terminal.draw(|f| {
                 ui(f, &mut state_guard);
-                if state_guard.show_confirm_deregister {
-                    render_confirm_dialog(f, &state_guard);
-                }
             })?;
         }
 
         // Handle input with timeout
         if event::poll(Duration::from_millis(100))? {
-            if let Event::Key(key) = event::read()? {
-                if key.kind == KeyEventKind::Press {
+            match event::read()? {
+                Event::Paste(pasted_text) => {
+                    // Handle paste events (CMD+V)
                     let mut state_guard = state.lock().unwrap();
 
-                    // Handle confirmation dialog first
-                    if state_guard.show_confirm_deregister {
-                        match key.code {
-                            KeyCode::Char('y') | KeyCode::Char('Y') => {
-                                if let Some(idx) = state_guard.selected_node_index {
-                                    if idx < state_guard.nodes.len() {
-                                        let node_addr = state_guard.nodes[idx];
-                                        state_guard.status_message =
-                                            format!("Deregistering node {:?}...", node_addr);
-                                        drop(state_guard); // Release lock before async call
-
-                                        match client.deregister_node(node_addr).await {
-                                            Ok(tx_hash) => {
-                                                let mut state_guard = state.lock().unwrap();
-                                                state_guard.status_message =
-                                                    format!("Node deregistered! TX: {:?}", tx_hash);
-                                                // Refresh node list
-                                                match client.get_nodes().await {
-                                                    Ok(nodes) => {
-                                                        state_guard.nodes = nodes;
-                                                        state_guard.node_count =
-                                                            state_guard.nodes.len();
-                                                    }
-                                                    Err(e) => {
-                                                        state_guard.status_message =
-                                                            format!("Error refreshing: {}", e);
-                                                    }
-                                                }
-                                                state_guard.selected_node_index = None;
-                                            }
-                                            Err(e) => {
-                                                let mut state_guard = state.lock().unwrap();
-                                                state_guard.status_message =
-                                                    format!("Error: {}", e);
-                                            }
-                                        }
-                                        continue; // Skip to next iteration since we dropped the lock
-                                    }
-                                }
-                                state_guard.show_confirm_deregister = false;
+                    // Add pasted text to the active input field
+                    if state_guard.current_tab == Tab::Staking
+                        && state_guard.staking_active_input != StakingInputField::None
+                    {
+                        match state_guard.staking_active_input {
+                            StakingInputField::PrivateKey => {
+                                state_guard.staking_private_key.push_str(&pasted_text)
                             }
-                            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-                                state_guard.show_confirm_deregister = false;
+                            StakingInputField::TargetAddress => {
+                                state_guard.staking_target_address.push_str(&pasted_text)
+                            }
+                            StakingInputField::Amount => {
+                                state_guard.staking_amount.push_str(&pasted_text)
                             }
                             _ => {}
                         }
-                    } else {
-                        // Normal key handling
-                        match key.code {
-                            KeyCode::Char('q') => {
-                                state_guard.should_quit = true;
-                                break;
+                    } else if state_guard.current_tab == Tab::Minting
+                        && state_guard.minting_active_input != MintingInputField::None
+                    {
+                        match state_guard.minting_active_input {
+                            MintingInputField::PrivateKey => {
+                                state_guard.minting_private_key.push_str(&pasted_text)
                             }
-                            KeyCode::Char('r') => {
-                                // Manual refresh - update node list
-                                state_guard.status_message = "Refreshing...".to_string();
-                                drop(state_guard);
-
-                                match client.get_nodes().await {
-                                    Ok(nodes) => {
-                                        let mut state_guard = state.lock().unwrap();
-                                        state_guard.nodes = nodes;
-                                        state_guard.node_count = state_guard.nodes.len();
-                                        state_guard.status_message = "Refreshed!".to_string();
-                                    }
-                                    Err(e) => {
-                                        let mut state_guard = state.lock().unwrap();
-                                        state_guard.status_message = format!("Error: {}", e);
-                                    }
-                                }
-                                continue;
+                            MintingInputField::TargetAddress => {
+                                state_guard.minting_target_address.push_str(&pasted_text)
                             }
-                            KeyCode::Tab => {
-                                state_guard.current_tab = state_guard.current_tab.next();
-                                state_guard.selected_node_index = None;
+                            MintingInputField::Amount => {
+                                state_guard.minting_amount.push_str(&pasted_text)
                             }
-                            KeyCode::BackTab => {
-                                state_guard.current_tab = state_guard.current_tab.prev();
-                                state_guard.selected_node_index = None;
+                            _ => {}
+                        }
+                    } else if state_guard.current_tab == Tab::TransferETH
+                        && state_guard.transfer_active_input != TransferInputField::None
+                    {
+                        match state_guard.transfer_active_input {
+                            TransferInputField::PrivateKey => {
+                                state_guard.transfer_private_key.push_str(&pasted_text)
                             }
-                            KeyCode::Right => {
-                                state_guard.current_tab = state_guard.current_tab.next();
-                                state_guard.selected_node_index = None;
+                            TransferInputField::TargetAddress => {
+                                state_guard.transfer_target_address.push_str(&pasted_text)
                             }
-                            KeyCode::Left => {
-                                state_guard.current_tab = state_guard.current_tab.prev();
-                                state_guard.selected_node_index = None;
-                            }
-                            KeyCode::Down => match state_guard.current_tab {
-                                Tab::Nodes if !state_guard.nodes.is_empty() => {
-                                    state_guard.selected_node_index = Some(
-                                        state_guard
-                                            .selected_node_index
-                                            .map(|idx| (idx + 1).min(state_guard.nodes.len() - 1))
-                                            .unwrap_or(0),
-                                    );
-                                }
-                                Tab::HTXTracking if !state_guard.htx_tracking.is_empty() => {
-                                    let i = state_guard.htx_tracking_state.selected().unwrap_or(0);
-                                    let next = (i + 1).min(state_guard.htx_tracking.len() - 1);
-                                    state_guard.htx_tracking_state.select(Some(next));
-                                }
-                                Tab::HTXSubmitted if !state_guard.htx_submitted.is_empty() => {
-                                    let i = state_guard.htx_submitted_state.selected().unwrap_or(0);
-                                    let next = (i + 1).min(state_guard.htx_submitted.len() - 1);
-                                    state_guard.htx_submitted_state.select(Some(next));
-                                }
-                                Tab::HTXAssigned if !state_guard.htx_assigned.is_empty() => {
-                                    let i = state_guard.htx_assigned_state.selected().unwrap_or(0);
-                                    let next = (i + 1).min(state_guard.htx_assigned.len() - 1);
-                                    state_guard.htx_assigned_state.select(Some(next));
-                                }
-                                Tab::HTXResponded if !state_guard.htx_responded.is_empty() => {
-                                    let i = state_guard.htx_responded_state.selected().unwrap_or(0);
-                                    let next = (i + 1).min(state_guard.htx_responded.len() - 1);
-                                    state_guard.htx_responded_state.select(Some(next));
-                                }
-                                _ => {}
-                            },
-                            KeyCode::Up => match state_guard.current_tab {
-                                Tab::Nodes if !state_guard.nodes.is_empty() => {
-                                    state_guard.selected_node_index = Some(
-                                        state_guard
-                                            .selected_node_index
-                                            .map(|idx| idx.saturating_sub(1))
-                                            .unwrap_or(0),
-                                    );
-                                }
-                                Tab::HTXTracking if !state_guard.htx_tracking.is_empty() => {
-                                    let i = state_guard.htx_tracking_state.selected().unwrap_or(0);
-                                    state_guard
-                                        .htx_tracking_state
-                                        .select(Some(i.saturating_sub(1)));
-                                }
-                                Tab::HTXSubmitted if !state_guard.htx_submitted.is_empty() => {
-                                    let i = state_guard.htx_submitted_state.selected().unwrap_or(0);
-                                    state_guard
-                                        .htx_submitted_state
-                                        .select(Some(i.saturating_sub(1)));
-                                }
-                                Tab::HTXAssigned if !state_guard.htx_assigned.is_empty() => {
-                                    let i = state_guard.htx_assigned_state.selected().unwrap_or(0);
-                                    state_guard
-                                        .htx_assigned_state
-                                        .select(Some(i.saturating_sub(1)));
-                                }
-                                Tab::HTXResponded if !state_guard.htx_responded.is_empty() => {
-                                    let i = state_guard.htx_responded_state.selected().unwrap_or(0);
-                                    state_guard
-                                        .htx_responded_state
-                                        .select(Some(i.saturating_sub(1)));
-                                }
-                                _ => {}
-                            },
-                            KeyCode::Char('d') | KeyCode::Char('D') => {
-                                // Only allow deregistration in Nodes tab with selection
-                                if state_guard.current_tab == Tab::Nodes
-                                    && state_guard.selected_node_index.is_some()
-                                {
-                                    state_guard.show_confirm_deregister = true;
-                                }
+                            TransferInputField::Amount => {
+                                state_guard.transfer_amount.push_str(&pasted_text)
                             }
                             _ => {}
                         }
                     }
                 }
+                Event::Key(key) if key.kind == KeyEventKind::Press => {
+                    let mut state_guard = state.lock().unwrap();
+
+                    // Normal key handling
+                    match key.code {
+                        KeyCode::Char('q') => {
+                            state_guard.should_quit = true;
+                            break;
+                        }
+                        KeyCode::Char('r') => {
+                            // Manual refresh - update node list and balance
+                            state_guard.status_message = "Refreshing...".to_string();
+                            drop(state_guard);
+
+                            // Get all registered nodes from router
+                            let registered_result = client.router.get_nodes().await;
+                            // Get all operators with stake (efficient: direct contract query)
+                            let staked_operators_result =
+                                client.staking.get_operators_with_stake().await;
+
+                            match (registered_result, staked_operators_result) {
+                                (Ok(registered_nodes), Ok(staked_operators)) => {
+                                    let registered_set: HashSet<Address> =
+                                        registered_nodes.into_iter().collect();
+
+                                    // Fetch current stake for all operators with stake
+                                    let mut nodes = Vec::new();
+                                    for addr in staked_operators {
+                                        if let Ok(stake) = client.staking.stake_of(addr).await {
+                                            let is_registered = registered_set.contains(&addr);
+                                            let eth_balance = client
+                                                .get_balance_of(addr)
+                                                .await
+                                                .unwrap_or(U256::zero());
+                                            nodes.push(NodeInfo {
+                                                address: addr,
+                                                stake,
+                                                is_registered,
+                                                eth_balance,
+                                            });
+                                        }
+                                    }
+
+                                    // Sort by stake descending
+                                    nodes.sort_by(|a, b| b.stake.cmp(&a.stake));
+
+                                    // Fetch updated balances
+                                    let signer_address = client.signer_address();
+                                    let token_balance = client
+                                        .token
+                                        .balance_of(signer_address)
+                                        .await
+                                        .unwrap_or(U256::zero());
+                                    let eth_balance =
+                                        client.get_balance().await.unwrap_or(U256::zero());
+
+                                    // Fetch updated token holder balances from system addresses
+                                    // Collect addresses from registered nodes and staked operators
+                                    let mut token_holder_addresses = HashSet::new();
+
+                                    // Add all registered nodes
+                                    if let Ok(registered_nodes) = client.router.get_nodes().await {
+                                        for addr in registered_nodes {
+                                            token_holder_addresses.insert(addr);
+                                        }
+                                    }
+
+                                    // Add all operators with stake (efficient: direct contract query)
+                                    if let Ok(staked_operators) =
+                                        client.staking.get_operators_with_stake().await
+                                    {
+                                        for operator in staked_operators {
+                                            token_holder_addresses.insert(operator);
+                                        }
+                                    }
+
+                                    let mut token_holders = Vec::new();
+                                    for addr in token_holder_addresses.iter() {
+                                        if let Ok(balance) = client.token.balance_of(*addr).await {
+                                            if balance > U256::zero() {
+                                                token_holders.push(TokenHolder {
+                                                    address: *addr,
+                                                    balance,
+                                                });
+                                            }
+                                        }
+                                    }
+                                    token_holders.sort_by(|a, b| b.balance.cmp(&a.balance));
+
+                                    let mut state_guard = state.lock().unwrap();
+                                    state_guard.nodes = nodes;
+                                    state_guard.node_count = registered_set.len();
+                                    state_guard.token_balance = token_balance;
+                                    state_guard.eth_balance = eth_balance;
+                                    state_guard.token_holders = token_holders;
+                                    state_guard.status_message = "Refreshed!".to_string();
+                                }
+                                (Err(e), _) | (_, Err(e)) => {
+                                    let mut state_guard = state.lock().unwrap();
+                                    state_guard.status_message = format!("Error: {}", e);
+                                }
+                            }
+                            continue;
+                        }
+                        KeyCode::Tab => {
+                            state_guard.current_tab = state_guard.current_tab.next();
+                            state_guard.selected_node_index = None;
+                            if state_guard.current_tab == Tab::Staking
+                                && state_guard.staking_active_input == StakingInputField::None
+                            {
+                                state_guard.staking_active_input = StakingInputField::TargetAddress;
+                                state_guard.status_message =
+                                    "Fill in the form and press Enter to stake".to_string();
+                            }
+                            if state_guard.current_tab == Tab::Minting
+                                && state_guard.minting_active_input == MintingInputField::None
+                            {
+                                state_guard.minting_active_input = MintingInputField::TargetAddress;
+                                state_guard.status_message =
+                                    "Fill in the form and press Enter to mint".to_string();
+                            }
+                            if state_guard.current_tab == Tab::TransferETH
+                                && state_guard.transfer_active_input == TransferInputField::None
+                            {
+                                state_guard.transfer_active_input =
+                                    TransferInputField::TargetAddress;
+                                state_guard.status_message =
+                                    "Fill in the form and press Enter to transfer ETH".to_string();
+                            }
+                        }
+                        KeyCode::BackTab => {
+                            state_guard.current_tab = state_guard.current_tab.prev();
+                            state_guard.selected_node_index = None;
+                            if state_guard.current_tab == Tab::Staking
+                                && state_guard.staking_active_input == StakingInputField::None
+                            {
+                                state_guard.staking_active_input = StakingInputField::TargetAddress;
+                                state_guard.status_message =
+                                    "Fill in the form and press Enter to stake".to_string();
+                            }
+                            if state_guard.current_tab == Tab::Minting
+                                && state_guard.minting_active_input == MintingInputField::None
+                            {
+                                state_guard.minting_active_input = MintingInputField::TargetAddress;
+                                state_guard.status_message =
+                                    "Fill in the form and press Enter to mint".to_string();
+                            }
+                            if state_guard.current_tab == Tab::TransferETH
+                                && state_guard.transfer_active_input == TransferInputField::None
+                            {
+                                state_guard.transfer_active_input =
+                                    TransferInputField::TargetAddress;
+                                state_guard.status_message =
+                                    "Fill in the form and press Enter to transfer ETH".to_string();
+                            }
+                        }
+                        KeyCode::Right => {
+                            state_guard.current_tab = state_guard.current_tab.next();
+                            state_guard.selected_node_index = None;
+                            if state_guard.current_tab == Tab::Staking
+                                && state_guard.staking_active_input == StakingInputField::None
+                            {
+                                state_guard.staking_active_input = StakingInputField::TargetAddress;
+                                state_guard.status_message =
+                                    "Fill in the form and press Enter to stake".to_string();
+                            }
+                            if state_guard.current_tab == Tab::Minting
+                                && state_guard.minting_active_input == MintingInputField::None
+                            {
+                                state_guard.minting_active_input = MintingInputField::TargetAddress;
+                                state_guard.status_message =
+                                    "Fill in the form and press Enter to mint".to_string();
+                            }
+                            if state_guard.current_tab == Tab::TransferETH
+                                && state_guard.transfer_active_input == TransferInputField::None
+                            {
+                                state_guard.transfer_active_input =
+                                    TransferInputField::TargetAddress;
+                                state_guard.status_message =
+                                    "Fill in the form and press Enter to transfer ETH".to_string();
+                            }
+                        }
+                        KeyCode::Left => {
+                            state_guard.current_tab = state_guard.current_tab.prev();
+                            state_guard.selected_node_index = None;
+                            if state_guard.current_tab == Tab::Staking
+                                && state_guard.staking_active_input == StakingInputField::None
+                            {
+                                state_guard.staking_active_input = StakingInputField::TargetAddress;
+                                state_guard.status_message =
+                                    "Fill in the form and press Enter to stake".to_string();
+                            }
+                            if state_guard.current_tab == Tab::Minting
+                                && state_guard.minting_active_input == MintingInputField::None
+                            {
+                                state_guard.minting_active_input = MintingInputField::TargetAddress;
+                                state_guard.status_message =
+                                    "Fill in the form and press Enter to mint".to_string();
+                            }
+                            if state_guard.current_tab == Tab::TransferETH
+                                && state_guard.transfer_active_input == TransferInputField::None
+                            {
+                                state_guard.transfer_active_input =
+                                    TransferInputField::TargetAddress;
+                                state_guard.status_message =
+                                    "Fill in the form and press Enter to transfer ETH".to_string();
+                            }
+                        }
+                        KeyCode::Down => match state_guard.current_tab {
+                            Tab::Nodes if !state_guard.nodes.is_empty() => {
+                                state_guard.selected_node_index = Some(
+                                    state_guard
+                                        .selected_node_index
+                                        .map(|idx| (idx + 1).min(state_guard.nodes.len() - 1))
+                                        .unwrap_or(0),
+                                );
+                            }
+                            Tab::HTXTracking if !state_guard.htx_tracking.is_empty() => {
+                                let i = state_guard.htx_tracking_state.selected().unwrap_or(0);
+                                let next = (i + 1).min(state_guard.htx_tracking.len() - 1);
+                                state_guard.htx_tracking_state.select(Some(next));
+                            }
+                            Tab::Staking => {
+                                state_guard.staking_active_input = match state_guard
+                                    .staking_active_input
+                                {
+                                    StakingInputField::None | StakingInputField::PrivateKey => {
+                                        StakingInputField::TargetAddress
+                                    }
+                                    StakingInputField::TargetAddress => StakingInputField::Amount,
+                                    StakingInputField::Amount => StakingInputField::Amount,
+                                };
+                            }
+                            Tab::Minting => {
+                                state_guard.minting_active_input = match state_guard
+                                    .minting_active_input
+                                {
+                                    MintingInputField::None | MintingInputField::PrivateKey => {
+                                        MintingInputField::TargetAddress
+                                    }
+                                    MintingInputField::TargetAddress => MintingInputField::Amount,
+                                    MintingInputField::Amount => MintingInputField::Amount,
+                                };
+                            }
+                            Tab::TransferETH => {
+                                state_guard.transfer_active_input = match state_guard
+                                    .transfer_active_input
+                                {
+                                    TransferInputField::None | TransferInputField::PrivateKey => {
+                                        TransferInputField::TargetAddress
+                                    }
+                                    TransferInputField::TargetAddress => TransferInputField::Amount,
+                                    TransferInputField::Amount => TransferInputField::Amount,
+                                };
+                            }
+                            Tab::TokenHolders if !state_guard.token_holders.is_empty() => {
+                                let i = state_guard.token_holders_state.selected().unwrap_or(0);
+                                let next = (i + 1).min(state_guard.token_holders.len() - 1);
+                                state_guard.token_holders_state.select(Some(next));
+                            }
+                            _ => {}
+                        },
+                        KeyCode::Up => match state_guard.current_tab {
+                            Tab::Nodes if !state_guard.nodes.is_empty() => {
+                                state_guard.selected_node_index = Some(
+                                    state_guard
+                                        .selected_node_index
+                                        .map(|idx| idx.saturating_sub(1))
+                                        .unwrap_or(0),
+                                );
+                            }
+                            Tab::HTXTracking if !state_guard.htx_tracking.is_empty() => {
+                                let i = state_guard.htx_tracking_state.selected().unwrap_or(0);
+                                state_guard
+                                    .htx_tracking_state
+                                    .select(Some(i.saturating_sub(1)));
+                            }
+                            Tab::Staking => {
+                                state_guard.staking_active_input = match state_guard
+                                    .staking_active_input
+                                {
+                                    StakingInputField::None | StakingInputField::Amount => {
+                                        StakingInputField::TargetAddress
+                                    }
+                                    StakingInputField::TargetAddress => {
+                                        StakingInputField::PrivateKey
+                                    }
+                                    StakingInputField::PrivateKey => StakingInputField::PrivateKey,
+                                };
+                            }
+                            Tab::Minting => {
+                                state_guard.minting_active_input = match state_guard
+                                    .minting_active_input
+                                {
+                                    MintingInputField::None | MintingInputField::Amount => {
+                                        MintingInputField::TargetAddress
+                                    }
+                                    MintingInputField::TargetAddress => {
+                                        MintingInputField::PrivateKey
+                                    }
+                                    MintingInputField::PrivateKey => MintingInputField::PrivateKey,
+                                };
+                            }
+                            Tab::TransferETH => {
+                                state_guard.transfer_active_input =
+                                    match state_guard.transfer_active_input {
+                                        TransferInputField::None | TransferInputField::Amount => {
+                                            TransferInputField::TargetAddress
+                                        }
+                                        TransferInputField::TargetAddress => {
+                                            TransferInputField::PrivateKey
+                                        }
+                                        TransferInputField::PrivateKey => {
+                                            TransferInputField::PrivateKey
+                                        }
+                                    };
+                            }
+                            Tab::TokenHolders if !state_guard.token_holders.is_empty() => {
+                                let i = state_guard.token_holders_state.selected().unwrap_or(0);
+                                state_guard
+                                    .token_holders_state
+                                    .select(Some(i.saturating_sub(1)));
+                            }
+                            _ => {}
+                        },
+                        KeyCode::Char('d') | KeyCode::Char('D') => {
+                            // Check if we're actively typing in an input field (Staking or Minting tabs)
+                            let is_typing_staking = state_guard.current_tab == Tab::Staking
+                                && state_guard.staking_active_input != StakingInputField::None;
+                            let is_typing_minting = state_guard.current_tab == Tab::Minting
+                                && state_guard.minting_active_input != MintingInputField::None;
+
+                            if is_typing_staking {
+                                // Add 'd' to the active staking input field
+                                match state_guard.staking_active_input {
+                                    StakingInputField::PrivateKey => {
+                                        state_guard.staking_private_key.push('d')
+                                    }
+                                    StakingInputField::TargetAddress => {
+                                        state_guard.staking_target_address.push('d')
+                                    }
+                                    StakingInputField::Amount => {
+                                        state_guard.staking_amount.push('d')
+                                    }
+                                    _ => {}
+                                }
+                            } else if is_typing_minting {
+                                // Add 'd' to the active minting input field
+                                match state_guard.minting_active_input {
+                                    MintingInputField::PrivateKey => {
+                                        state_guard.minting_private_key.push('d')
+                                    }
+                                    MintingInputField::TargetAddress => {
+                                        state_guard.minting_target_address.push('d')
+                                    }
+                                    MintingInputField::Amount => {
+                                        state_guard.minting_amount.push('d')
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                        // Staking Tab Input Handling
+                        code if state_guard.current_tab == Tab::Staking => {
+                            match code {
+                                KeyCode::Enter => {
+                                    // Submit Staking Transaction
+                                    let private_key =
+                                        state_guard.staking_private_key.trim().to_string();
+                                    let target_addr_str =
+                                        state_guard.staking_target_address.trim().to_string();
+                                    let amount_str = state_guard.staking_amount.trim().to_string();
+
+                                    // Validate inputs
+                                    if target_addr_str.is_empty() {
+                                        state_guard.status_message =
+                                            "Error: Target address is required".to_string();
+                                    } else if amount_str.is_empty() {
+                                        state_guard.status_message =
+                                            "Error: Amount is required".to_string();
+                                    } else {
+                                        // Validate amount first
+                                        let amount_eth = match amount_str.parse::<f64>() {
+                                            Ok(a) if a > 0.0 => a,
+                                            Ok(_) => {
+                                                state_guard.status_message =
+                                                    "Error: Amount must be greater than 0"
+                                                        .to_string();
+                                                continue;
+                                            }
+                                            Err(_) => {
+                                                state_guard.status_message = format!(
+                                                    "Error: Invalid amount format: {}",
+                                                    amount_str
+                                                )
+                                                .to_string();
+                                                continue;
+                                            }
+                                        };
+
+                                        // Validate address (show length for debugging)
+                                        let target_addr = match target_addr_str.parse::<Address>() {
+                                            Ok(addr) => addr,
+                                            Err(e) => {
+                                                state_guard.status_message = format!(
+                                                    "Error: Invalid address '{}' (len: {}) - {}",
+                                                    target_addr_str,
+                                                    target_addr_str.len(),
+                                                    e
+                                                );
+                                                continue;
+                                            }
+                                        };
+
+                                        state_guard.status_message =
+                                            "Approving tokens and submitting stake...".to_string();
+
+                                        // Clone necessary data to drop lock
+                                        let rpc_url = state_guard.rpc_url.clone();
+                                        let router_addr = state_guard.router_contract_address;
+                                        let staking_addr = state_guard.staking_contract_address;
+                                        let token_addr = state_guard.token_contract_address;
+
+                                        let use_custom_key = !private_key.is_empty();
+
+                                        drop(state_guard); // Drop lock
+
+                                        let result = async {
+                                            let (staking_client, token_client) = if use_custom_key {
+                                                // Create a new client with the provided private key
+                                                let config = ContractConfig::new(
+                                                    rpc_url,
+                                                    router_addr,
+                                                    staking_addr,
+                                                    token_addr,
+                                                );
+
+                                                let new_client =
+                                                    NilAVClient::new(config, private_key).await?;
+                                                (
+                                                    new_client.staking.clone(),
+                                                    new_client.token.clone(),
+                                                )
+                                            } else {
+                                                // Use the existing client's staking and token contracts
+                                                (client.staking.clone(), client.token.clone())
+                                            };
+                                            let amount_wei =
+                                                U256::from((amount_eth * 1e18) as u128);
+                                            // First, approve the staking contract to spend tokens
+                                            token_client.approve(staking_addr, amount_wei).await?;
+
+                                            // Then stake
+                                            staking_client.stake_to(target_addr, amount_wei).await
+                                        }
+                                        .await;
+
+                                        match result {
+                                            Ok(tx) => {
+                                                let mut state_guard = state.lock().unwrap();
+                                                state_guard.status_message =
+                                                    format!("Stake submitted! TX: {:?}", tx);
+                                                state_guard.staking_amount = String::new();
+                                                // Clear amount
+                                            }
+                                            Err(e) => {
+                                                let mut state_guard = state.lock().unwrap();
+                                                state_guard.status_message =
+                                                    format!("Error staking: {}", e);
+                                            }
+                                        }
+                                        continue;
+                                    }
+                                }
+                                KeyCode::Char(c) => match state_guard.staking_active_input {
+                                    StakingInputField::PrivateKey => {
+                                        state_guard.staking_private_key.push(c)
+                                    }
+                                    StakingInputField::TargetAddress => {
+                                        state_guard.staking_target_address.push(c)
+                                    }
+                                    StakingInputField::Amount => state_guard.staking_amount.push(c),
+                                    _ => {}
+                                },
+                                KeyCode::Backspace => match state_guard.staking_active_input {
+                                    StakingInputField::PrivateKey => {
+                                        state_guard.staking_private_key.pop();
+                                    }
+                                    StakingInputField::TargetAddress => {
+                                        state_guard.staking_target_address.pop();
+                                    }
+                                    StakingInputField::Amount => {
+                                        state_guard.staking_amount.pop();
+                                    }
+                                    _ => {}
+                                },
+                                _ => {}
+                            }
+                        }
+                        // Minting Tab Input Handling
+                        code if state_guard.current_tab == Tab::Minting => {
+                            match code {
+                                KeyCode::Enter => {
+                                    // Submit Minting Transaction
+                                    let private_key =
+                                        state_guard.minting_private_key.trim().to_string();
+                                    let target_addr_str =
+                                        state_guard.minting_target_address.trim().to_string();
+                                    let amount_str = state_guard.minting_amount.trim().to_string();
+
+                                    // Validate inputs
+                                    if target_addr_str.is_empty() {
+                                        state_guard.status_message =
+                                            "Error: Target address is required".to_string();
+                                    } else if amount_str.is_empty() {
+                                        state_guard.status_message =
+                                            "Error: Amount is required".to_string();
+                                    } else {
+                                        // Validate amount first
+                                        let amount_eth = match amount_str.parse::<f64>() {
+                                            Ok(a) if a > 0.0 => a,
+                                            Ok(_) => {
+                                                state_guard.status_message =
+                                                    "Error: Amount must be greater than 0"
+                                                        .to_string();
+                                                continue;
+                                            }
+                                            Err(_) => {
+                                                state_guard.status_message = format!(
+                                                    "Error: Invalid amount format: {}",
+                                                    amount_str
+                                                )
+                                                .to_string();
+                                                continue;
+                                            }
+                                        };
+
+                                        // Validate address (show length for debugging)
+                                        let target_addr = match target_addr_str.parse::<Address>() {
+                                            Ok(addr) => addr,
+                                            Err(e) => {
+                                                state_guard.status_message = format!(
+                                                    "Error: Invalid address '{}' (len: {}) - {}",
+                                                    target_addr_str,
+                                                    target_addr_str.len(),
+                                                    e
+                                                );
+                                                continue;
+                                            }
+                                        };
+
+                                        state_guard.status_message =
+                                            "Minting tokens...".to_string();
+
+                                        // Clone necessary data to drop lock
+                                        let rpc_url = state_guard.rpc_url.clone();
+                                        let router_addr = state_guard.router_contract_address;
+                                        let staking_addr = state_guard.staking_contract_address;
+                                        let token_addr = state_guard.token_contract_address;
+
+                                        let use_custom_key = !private_key.is_empty();
+
+                                        drop(state_guard); // Drop lock
+
+                                        let result = async {
+                                            let token_client = if use_custom_key {
+                                                // Create a new client with the provided private key
+                                                let config = ContractConfig::new(
+                                                    rpc_url,
+                                                    router_addr,
+                                                    staking_addr,
+                                                    token_addr,
+                                                );
+
+                                                let new_client =
+                                                    NilAVClient::new(config, private_key).await?;
+                                                new_client.token
+                                            } else {
+                                                // Use the existing client's token contract
+                                                client.token.clone()
+                                            };
+                                            let amount_wei =
+                                                U256::from((amount_eth * 1e18) as u128);
+
+                                            token_client.mint(target_addr, amount_wei).await
+                                        }
+                                        .await;
+
+                                        match result {
+                                            Ok(tx) => {
+                                                let mut state_guard = state.lock().unwrap();
+                                                state_guard.status_message =
+                                                    format!("Tokens minted! TX: {:?}", tx);
+                                                state_guard.minting_amount = String::new();
+                                                // Clear amount
+                                            }
+                                            Err(e) => {
+                                                let mut state_guard = state.lock().unwrap();
+                                                state_guard.status_message =
+                                                    format!("Error minting: {}", e);
+                                            }
+                                        }
+                                        continue;
+                                    }
+                                }
+                                KeyCode::Char(c) => match state_guard.minting_active_input {
+                                    MintingInputField::PrivateKey => {
+                                        state_guard.minting_private_key.push(c)
+                                    }
+                                    MintingInputField::TargetAddress => {
+                                        state_guard.minting_target_address.push(c)
+                                    }
+                                    MintingInputField::Amount => state_guard.minting_amount.push(c),
+                                    _ => {}
+                                },
+                                KeyCode::Backspace => match state_guard.minting_active_input {
+                                    MintingInputField::PrivateKey => {
+                                        state_guard.minting_private_key.pop();
+                                    }
+                                    MintingInputField::TargetAddress => {
+                                        state_guard.minting_target_address.pop();
+                                    }
+                                    MintingInputField::Amount => {
+                                        state_guard.minting_amount.pop();
+                                    }
+                                    _ => {}
+                                },
+                                _ => {}
+                            }
+                        }
+                        // Transfer ETH Tab Input Handling
+                        code if state_guard.current_tab == Tab::TransferETH => {
+                            match code {
+                                KeyCode::Enter => {
+                                    // Submit ETH Transfer Transaction
+                                    let private_key =
+                                        state_guard.transfer_private_key.trim().to_string();
+                                    let target_addr_str =
+                                        state_guard.transfer_target_address.trim().to_string();
+                                    let amount_str = state_guard.transfer_amount.trim().to_string();
+
+                                    // Validate inputs
+                                    if target_addr_str.is_empty() {
+                                        state_guard.status_message =
+                                            "Error: Target address is required".to_string();
+                                    } else if amount_str.is_empty() {
+                                        state_guard.status_message =
+                                            "Error: Amount is required".to_string();
+                                    } else {
+                                        // Validate amount (ETH amount as decimal string)
+                                        let amount_eth: f64 = match amount_str.parse() {
+                                            Ok(a) if a > 0.0 => a,
+                                            Ok(_) => {
+                                                state_guard.status_message =
+                                                    "Error: Amount must be greater than 0"
+                                                        .to_string();
+                                                continue;
+                                            }
+                                            Err(_) => {
+                                                state_guard.status_message = format!(
+                                                    "Error: Invalid amount format: {}",
+                                                    amount_str
+                                                )
+                                                .to_string();
+                                                continue;
+                                            }
+                                        };
+
+                                        // Convert ETH to Wei (1 ETH = 10^18 Wei)
+                                        let amount_wei = U256::from((amount_eth * 1e18) as u128);
+
+                                        // Validate address
+                                        let target_addr = match target_addr_str.parse::<Address>() {
+                                            Ok(addr) => addr,
+                                            Err(e) => {
+                                                state_guard.status_message = format!(
+                                                    "Error: Invalid address '{}' (len: {}) - {}",
+                                                    target_addr_str,
+                                                    target_addr_str.len(),
+                                                    e
+                                                );
+                                                continue;
+                                            }
+                                        };
+
+                                        state_guard.status_message =
+                                            "Transferring ETH...".to_string();
+
+                                        // Clone necessary data to drop lock
+                                        let rpc_url = state_guard.rpc_url.clone();
+                                        let router_addr = state_guard.router_contract_address;
+                                        let staking_addr = state_guard.staking_contract_address;
+                                        let token_addr = state_guard.token_contract_address;
+
+                                        let use_custom_key = !private_key.is_empty();
+
+                                        drop(state_guard); // Drop lock
+
+                                        let result = async {
+                                            if use_custom_key {
+                                                // Create a new client with the provided private key
+                                                let config = ContractConfig::new(
+                                                    rpc_url,
+                                                    router_addr,
+                                                    staking_addr,
+                                                    token_addr,
+                                                );
+
+                                                let new_client =
+                                                    NilAVClient::new(config, private_key).await?;
+                                                new_client.send_eth(target_addr, amount_wei).await
+                                            } else {
+                                                // Use the existing client
+                                                client.send_eth(target_addr, amount_wei).await
+                                            }
+                                        }
+                                        .await;
+
+                                        match result {
+                                            Ok(tx) => {
+                                                let mut state_guard = state.lock().unwrap();
+                                                state_guard.status_message =
+                                                    format!("ETH transferred! TX: {:?}", tx);
+                                                state_guard.transfer_amount = String::new();
+                                                // Clear amount
+                                            }
+                                            Err(e) => {
+                                                let mut state_guard = state.lock().unwrap();
+                                                state_guard.status_message =
+                                                    format!("Error transferring: {}", e);
+                                            }
+                                        }
+                                        continue;
+                                    }
+                                }
+                                KeyCode::Char(c) => match state_guard.transfer_active_input {
+                                    TransferInputField::PrivateKey => {
+                                        state_guard.transfer_private_key.push(c)
+                                    }
+                                    TransferInputField::TargetAddress => {
+                                        state_guard.transfer_target_address.push(c)
+                                    }
+                                    TransferInputField::Amount => {
+                                        state_guard.transfer_amount.push(c)
+                                    }
+                                    _ => {}
+                                },
+                                KeyCode::Backspace => match state_guard.transfer_active_input {
+                                    TransferInputField::PrivateKey => {
+                                        state_guard.transfer_private_key.pop();
+                                    }
+                                    TransferInputField::TargetAddress => {
+                                        state_guard.transfer_target_address.pop();
+                                    }
+                                    TransferInputField::Amount => {
+                                        state_guard.transfer_amount.pop();
+                                    }
+                                    _ => {}
+                                },
+                                _ => {}
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                _ => {} // Ignore other events
             }
         }
     }
@@ -537,23 +1284,19 @@ async fn run_monitor_loop(
 
 // WebSocket event listener for HTX submitted events
 async fn listen_htx_submitted(
-    client: Arc<NilAVWsClient>,
+    client: Arc<NilAVClient>,
     state: Arc<Mutex<MonitorState>>,
 ) -> Result<()> {
     client
+        .router
+        .clone()
         .listen_htx_submitted_events(move |event| {
             let state = state.clone();
             async move {
                 let htx_id = bytes_to_hex(&event.htx_id);
                 let sender = format!("{:?}", event.sender);
-                let entry = format!(
-                    "HTX: {} | Sender: {}",
-                    format_short_hex(&htx_id),
-                    format_short_hex(&sender)
-                );
 
                 let mut state_guard = state.lock().unwrap();
-                state_guard.htx_submitted.push(entry);
 
                 // Update tracking map
                 state_guard
@@ -563,8 +1306,8 @@ async fn listen_htx_submitted(
                     .or_insert(HTXTransaction {
                         htx_id,
                         submitted_sender: Some(sender),
-                        assigned_node: None,
-                        responded: None,
+                        assigned_nodes: HashSet::new(),
+                        responded_nodes: HashSet::new(),
                         timestamp: SystemTime::now(),
                     });
 
@@ -577,35 +1320,37 @@ async fn listen_htx_submitted(
 
 // WebSocket event listener for HTX assigned events
 async fn listen_htx_assigned(
-    client: Arc<NilAVWsClient>,
+    client: Arc<NilAVClient>,
     state: Arc<Mutex<MonitorState>>,
 ) -> Result<()> {
     client
+        .router
+        .clone()
         .listen_htx_assigned_events(move |event| {
             let state = state.clone();
             async move {
                 let htx_id = bytes_to_hex(&event.htx_id);
                 let node = format!("{:?}", event.node);
-                let entry = format!(
-                    "HTX: {} | Node: {}",
-                    format_short_hex(&htx_id),
-                    format_short_hex(&node)
-                );
 
                 let mut state_guard = state.lock().unwrap();
-                state_guard.htx_assigned.push(entry);
 
                 // Update tracking map
                 state_guard
                     .htx_tracking
                     .entry(htx_id.clone())
-                    .and_modify(|tx| tx.assigned_node = Some(node.clone()))
-                    .or_insert(HTXTransaction {
-                        htx_id,
-                        submitted_sender: None,
-                        assigned_node: Some(node),
-                        responded: None,
-                        timestamp: SystemTime::now(),
+                    .and_modify(|tx| {
+                        tx.assigned_nodes.insert(node.clone());
+                    })
+                    .or_insert_with(|| {
+                        let mut assigned = HashSet::new();
+                        assigned.insert(node.clone());
+                        HTXTransaction {
+                            htx_id,
+                            submitted_sender: None,
+                            assigned_nodes: assigned,
+                            responded_nodes: HashSet::new(),
+                            timestamp: SystemTime::now(),
+                        }
                     });
 
                 state_guard.last_update = std::time::Instant::now();
@@ -617,36 +1362,37 @@ async fn listen_htx_assigned(
 
 // WebSocket event listener for HTX responded events
 async fn listen_htx_responded(
-    client: Arc<NilAVWsClient>,
+    client: Arc<NilAVClient>,
     state: Arc<Mutex<MonitorState>>,
 ) -> Result<()> {
     client
+        .router
+        .clone()
         .listen_htx_responded_events(move |event| {
             let state = state.clone();
             async move {
                 let htx_id = bytes_to_hex(&event.htx_id);
                 let node = format!("{:?}", event.node);
-                let entry = format!(
-                    "HTX: {} | Node: {} | Result: {}",
-                    format_short_hex(&htx_id),
-                    format_short_hex(&node),
-                    event.result
-                );
 
                 let mut state_guard = state.lock().unwrap();
-                state_guard.htx_responded.push(entry);
 
                 // Update tracking map
                 state_guard
                     .htx_tracking
                     .entry(htx_id.clone())
-                    .and_modify(|tx| tx.responded = Some(event.result))
-                    .or_insert(HTXTransaction {
-                        htx_id,
-                        submitted_sender: None,
-                        assigned_node: None,
-                        responded: Some(event.result),
-                        timestamp: SystemTime::now(),
+                    .and_modify(|tx| {
+                        tx.responded_nodes.insert(node.clone());
+                    })
+                    .or_insert_with(|| {
+                        let mut responded = HashSet::new();
+                        responded.insert(node.clone());
+                        HTXTransaction {
+                            htx_id,
+                            submitted_sender: None,
+                            assigned_nodes: HashSet::new(),
+                            responded_nodes: responded,
+                            timestamp: SystemTime::now(),
+                        }
                     });
 
                 state_guard.last_update = std::time::Instant::now();
@@ -681,9 +1427,10 @@ fn render_header(f: &mut Frame, area: Rect, state: &MonitorState) {
         Tab::Overview,
         Tab::Nodes,
         Tab::HTXTracking,
-        Tab::HTXSubmitted,
-        Tab::HTXAssigned,
-        Tab::HTXResponded,
+        Tab::Staking,
+        Tab::Minting,
+        Tab::TokenHolders,
+        Tab::TransferETH,
     ]
     .iter()
     .flat_map(|tab| {
@@ -721,27 +1468,10 @@ fn render_content(f: &mut Frame, area: Rect, state: &mut MonitorState) {
         Tab::Overview => render_overview(f, area, state),
         Tab::Nodes => render_nodes(f, area, state),
         Tab::HTXTracking => render_htx_tracking(f, area, state),
-        Tab::HTXSubmitted => render_htx_list(
-            f,
-            area,
-            &state.htx_submitted,
-            "HTX Submitted Events",
-            &mut state.htx_submitted_state,
-        ),
-        Tab::HTXAssigned => render_htx_list(
-            f,
-            area,
-            &state.htx_assigned,
-            "HTX Assigned Events",
-            &mut state.htx_assigned_state,
-        ),
-        Tab::HTXResponded => render_htx_list(
-            f,
-            area,
-            &state.htx_responded,
-            "HTX Responded Events",
-            &mut state.htx_responded_state,
-        ),
+        Tab::Staking => render_staking(f, area, state),
+        Tab::Minting => render_minting(f, area, state),
+        Tab::TokenHolders => render_token_holders(f, area, state),
+        Tab::TransferETH => render_transfer_eth(f, area, state),
     }
 }
 
@@ -749,9 +1479,9 @@ fn render_overview(f: &mut Frame, area: Rect, state: &MonitorState) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(6), // Connection info
-            Constraint::Length(7), // Stats
-            Constraint::Min(0),    // Details
+            Constraint::Length(7), // Connection info
+            Constraint::Length(8), // Stats (includes ETH and TEST balances)
+            Constraint::Min(5),    // Details
         ])
         .split(area);
 
@@ -762,9 +1492,29 @@ fn render_overview(f: &mut Frame, area: Rect, state: &MonitorState) {
             Span::styled(state.rpc_url.clone(), Style::default().fg(Color::White)),
         ]),
         Line::from(vec![
-            Span::styled("Contract: ", Style::default().fg(Color::Cyan)),
             Span::styled(
-                format!("{:?}", state.contract_address),
+                "Router Contract Address: ",
+                Style::default().fg(Color::Cyan),
+            ),
+            Span::styled(
+                format!("{:?}", state.router_contract_address),
+                Style::default().fg(Color::White),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled(
+                "Staking Contract Address: ",
+                Style::default().fg(Color::Cyan),
+            ),
+            Span::styled(
+                format!("{:?}", state.staking_contract_address),
+                Style::default().fg(Color::White),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("Token Contract Address: ", Style::default().fg(Color::Cyan)),
+            Span::styled(
+                format!("{:?}", state.token_contract_address),
                 Style::default().fg(Color::White),
             ),
         ]),
@@ -783,8 +1533,49 @@ fn render_overview(f: &mut Frame, area: Rect, state: &MonitorState) {
 
     f.render_widget(info, chunks[0]);
 
+    // Calculate stats from htx_tracking
+    let htx_submitted_count = state
+        .htx_tracking
+        .values()
+        .filter(|tx| tx.submitted_sender.is_some())
+        .count();
+    let htx_assigned_count = state
+        .htx_tracking
+        .values()
+        .filter(|tx| !tx.assigned_nodes.is_empty())
+        .count();
+    let htx_responded_count = state
+        .htx_tracking
+        .values()
+        .filter(|tx| !tx.responded_nodes.is_empty())
+        .count();
+
+    // Format balances
+    let token_balance_formatted =
+        format_units(state.token_balance, 18).unwrap_or_else(|_| "0".to_string());
+    let eth_balance_formatted =
+        format_units(state.eth_balance, 18).unwrap_or_else(|_| "0".to_string());
+
     // Stats
     let stats_text = vec![
+        Line::from(vec![
+            Span::styled("ETH Balance: ", Style::default().fg(Color::Cyan)),
+            Span::styled(
+                format!("{} ETH", eth_balance_formatted),
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("TEST Balance: ", Style::default().fg(Color::Cyan)),
+            Span::styled(
+                format!("{} TEST", token_balance_formatted),
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]),
         Line::from(vec![
             Span::styled("Total Nodes: ", Style::default().fg(Color::Cyan)),
             Span::styled(
@@ -797,21 +1588,21 @@ fn render_overview(f: &mut Frame, area: Rect, state: &MonitorState) {
         Line::from(vec![
             Span::styled("HTX Submitted: ", Style::default().fg(Color::Cyan)),
             Span::styled(
-                state.htx_submitted.len().to_string(),
+                htx_submitted_count.to_string(),
                 Style::default().fg(Color::Yellow),
             ),
         ]),
         Line::from(vec![
             Span::styled("HTX Assigned: ", Style::default().fg(Color::Cyan)),
             Span::styled(
-                state.htx_assigned.len().to_string(),
+                htx_assigned_count.to_string(),
                 Style::default().fg(Color::Yellow),
             ),
         ]),
         Line::from(vec![
             Span::styled("HTX Responded: ", Style::default().fg(Color::Cyan)),
             Span::styled(
-                state.htx_responded.len().to_string(),
+                htx_responded_count.to_string(),
                 Style::default().fg(Color::Yellow),
             ),
         ]),
@@ -837,25 +1628,38 @@ fn render_overview(f: &mut Frame, area: Rect, state: &MonitorState) {
     )]));
     activity_lines.push(Line::from(""));
 
-    // Show last 3 of each
-    if !state.htx_responded.is_empty() {
-        activity_lines.push(Line::from(vec![Span::styled(
-            "Latest Responses:",
-            Style::default().fg(Color::Yellow),
-        )]));
-        for item in state.htx_responded.iter().rev().take(3) {
-            activity_lines.push(Line::from(vec![Span::raw("  • "), Span::raw(item)]));
-        }
-        activity_lines.push(Line::from(""));
-    }
+    // Get most recent HTX transactions
+    let mut recent_htxs: Vec<&HTXTransaction> = state.htx_tracking.values().collect();
+    recent_htxs.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
 
-    if !state.htx_assigned.is_empty() {
+    if !recent_htxs.is_empty() {
         activity_lines.push(Line::from(vec![Span::styled(
-            "Latest Assignments:",
+            "Latest HTX Transactions:",
             Style::default().fg(Color::Yellow),
         )]));
-        for item in state.htx_assigned.iter().rev().take(3) {
-            activity_lines.push(Line::from(vec![Span::raw("  • "), Span::raw(item)]));
+
+        for tx in recent_htxs.iter().take(5) {
+            let htx_short = format_short_hex(&tx.htx_id);
+            let status = if !tx.responded_nodes.is_empty() {
+                format!(
+                    "✓ Responded ({}/{})",
+                    tx.responded_nodes.len(),
+                    tx.assigned_nodes.len()
+                )
+            } else if !tx.assigned_nodes.is_empty() {
+                format!("⧗ Assigned ({})", tx.assigned_nodes.len())
+            } else if tx.submitted_sender.is_some() {
+                "○ Submitted".to_string()
+            } else {
+                "? Unknown".to_string()
+            };
+
+            activity_lines.push(Line::from(vec![
+                Span::raw("  • "),
+                Span::raw(htx_short),
+                Span::raw(" - "),
+                Span::raw(status),
+            ]));
         }
     }
 
@@ -872,12 +1676,43 @@ fn render_overview(f: &mut Frame, area: Rect, state: &MonitorState) {
 }
 
 fn render_nodes(f: &mut Frame, area: Rect, state: &MonitorState) {
+    let registered_count = state.nodes.iter().filter(|n| n.is_registered).count();
+    let total_count = state.nodes.len();
+
     let items: Vec<ListItem> = state
         .nodes
         .iter()
         .enumerate()
-        .map(|(idx, addr)| {
-            let content = format!("{}. {:?}", idx + 1, addr);
+        .map(|(idx, node_info)| {
+            let stake_formatted =
+                format_units(node_info.stake, 18).unwrap_or_else(|_| "0".to_string());
+            let eth_balance_formatted =
+                format_units(node_info.eth_balance, 18).unwrap_or_else(|_| "0".to_string());
+            let status = if node_info.is_registered {
+                "✓ Registered"
+            } else {
+                "✗ Not Registered"
+            };
+            let status_color = if node_info.is_registered {
+                Color::Green
+            } else {
+                Color::Red
+            };
+
+            let content = vec![
+                Span::raw(format!("{}. ", idx + 1)),
+                Span::styled(
+                    status,
+                    Style::default()
+                        .fg(status_color)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(format!(
+                    " | {:?} | Stake: {} TEST | ETH: {}",
+                    node_info.address, stake_formatted, eth_balance_formatted
+                )),
+            ];
+
             let style = if Some(idx) == state.selected_node_index {
                 Style::default()
                     .fg(Color::Yellow)
@@ -885,21 +1720,15 @@ fn render_nodes(f: &mut Frame, area: Rect, state: &MonitorState) {
             } else {
                 Style::default().fg(Color::White)
             };
-            ListItem::new(content).style(style)
+
+            ListItem::new(Line::from(content)).style(style)
         })
         .collect();
 
-    let title = if state.selected_node_index.is_some() {
-        format!(
-            "Registered Nodes ({}) - Press 'd' to deregister",
-            state.nodes.len()
-        )
-    } else {
-        format!(
-            "Registered Nodes ({}) - Use ↑↓ to select",
-            state.nodes.len()
-        )
-    };
+    let title = format!(
+        "Nodes with Stake ({} total, {} registered) - Use ↑↓ to select",
+        total_count, registered_count
+    );
 
     let list = List::new(items).block(
         Block::default()
@@ -932,23 +1761,15 @@ fn render_htx_tracking(f: &mut Frame, area: Rect, state: &mut MonitorState) {
                 None => "-".to_string(),
             };
 
-            let assigned = match &tx.assigned_node {
-                Some(node) => format_short_hex(node),
-                None => "-".to_string(),
-            };
-
-            let responded = match tx.responded {
-                Some(true) => "✓ True",
-                Some(false) => "✗ False",
-                None => "-",
-            };
+            let assigned_count = tx.assigned_nodes.len();
+            let responded_count = tx.responded_nodes.len();
 
             Row::new(vec![
                 row_num.to_string(),
                 format_short_hex(&tx.htx_id),
                 submitted,
-                assigned,
-                responded.to_string(),
+                assigned_count.to_string(),
+                responded_count.to_string(),
             ])
             .style(Style::default().fg(Color::White))
         })
@@ -959,8 +1780,8 @@ fn render_htx_tracking(f: &mut Frame, area: Rect, state: &mut MonitorState) {
         "#",
         "HTX ID",
         "Submitted (Sender)",
-        "Assigned (Node)",
-        "Responded",
+        "Assigned (Count)",
+        "Responded (Count)",
     ])
     .style(
         Style::default()
@@ -1012,47 +1833,6 @@ fn render_htx_tracking(f: &mut Frame, area: Rect, state: &mut MonitorState) {
     f.render_stateful_widget(table, area, &mut state.htx_tracking_state);
 }
 
-fn render_htx_list(
-    f: &mut Frame,
-    area: Rect,
-    items: &[String],
-    title: &str,
-    list_state: &mut ListState,
-) {
-    // Initialize selection if not set and items exist
-    if list_state.selected().is_none() && !items.is_empty() {
-        list_state.select(Some(0));
-    }
-
-    let list_items: Vec<ListItem> = items
-        .iter()
-        .enumerate()
-        .map(|(_, item)| ListItem::new(item.clone()))
-        .collect();
-
-    let scroll_help = if !items.is_empty() {
-        " - Use ↑↓ to scroll"
-    } else {
-        ""
-    };
-
-    let list = List::new(list_items)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(format!("{} ({}){}", title, items.len(), scroll_help))
-                .title_style(Style::default().fg(Color::Green)),
-        )
-        .highlight_style(
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        )
-        .highlight_symbol("▶ ");
-
-    f.render_stateful_widget(list, area, list_state);
-}
-
 fn render_footer(f: &mut Frame, area: Rect, state: &MonitorState) {
     let mut help_spans = vec![
         Span::styled(
@@ -1095,13 +1875,6 @@ fn render_footer(f: &mut Frame, area: Rect, state: &MonitorState) {
                     .add_modifier(Modifier::BOLD),
             ),
             Span::raw(": Select  "),
-            Span::styled(
-                "d",
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw(": Deregister  "),
         ]);
     }
 
@@ -1122,75 +1895,464 @@ fn render_footer(f: &mut Frame, area: Rect, state: &MonitorState) {
     f.render_widget(footer, area);
 }
 
-fn render_confirm_dialog(f: &mut Frame, state: &MonitorState) {
-    // Create a centered popup area
-    let area = f.area();
-    let popup_width = 60.min(area.width - 4);
-    let popup_height = 12.min(area.height - 4);
-    let popup_x = (area.width.saturating_sub(popup_width)) / 2;
-    let popup_y = (area.height.saturating_sub(popup_height)) / 2;
+fn render_staking(f: &mut Frame, area: Rect, state: &MonitorState) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3), // Private Key
+            Constraint::Length(3), // Target Address
+            Constraint::Length(3), // Amount
+            Constraint::Length(5), // Status/Feedback
+            Constraint::Min(0),    // Help
+        ])
+        .split(area);
 
-    let popup_area = Rect {
-        x: popup_x,
-        y: popup_y,
-        width: popup_width,
-        height: popup_height,
-    };
-
-    let node_text = if let Some(idx) = state.selected_node_index {
-        if idx < state.nodes.len() {
-            format!("{:?}", state.nodes[idx])
-        } else {
-            "Unknown".to_string()
-        }
+    let pk_style = if state.staking_active_input == StakingInputField::PrivateKey {
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
     } else {
-        "Unknown".to_string()
+        Style::default().fg(Color::White)
     };
 
-    let text = vec![
-        Line::from(""),
-        Line::from(vec![Span::styled(
-            "⚠ Confirm Deregistration",
-            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-        )]),
-        Line::from(""),
-        Line::from(vec![Span::raw("Are you sure you want to deregister node:")]),
-        Line::from(""),
-        Line::from(vec![Span::styled(
-            node_text,
-            Style::default().fg(Color::Cyan),
-        )]),
-        Line::from(""),
-        Line::from(vec![
-            Span::styled(
-                "Y",
-                Style::default()
-                    .fg(Color::Green)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw(": Yes  "),
-            Span::styled(
-                "N",
-                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-            ),
-            Span::raw("/"),
-            Span::styled(
-                "ESC",
-                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-            ),
-            Span::raw(": No"),
-        ]),
-    ];
+    let target_style = if state.staking_active_input == StakingInputField::TargetAddress {
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::White)
+    };
 
-    let dialog = Paragraph::new(text)
+    let amount_style = if state.staking_active_input == StakingInputField::Amount {
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::White)
+    };
+
+    let pk_input = Paragraph::new(state.staking_private_key.as_str())
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title("Confirm Action")
-                .title_style(Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))
-                .style(Style::default().bg(Color::Black)),
+                .title("Private Key (Optional - leave empty to use default)"),
         )
+        .style(pk_style)
+        .scroll((0, state.staking_private_key.len().saturating_sub(50) as u16));
+
+    // Add character counter to help user see if full address is entered
+    let target_title = format!(
+        "Target Operator Address (entered: {} chars, need: 42)",
+        state.staking_target_address.len()
+    );
+    // Auto-scroll to show the end of the address as user types
+    let target_scroll_offset = state.staking_target_address.len().saturating_sub(50) as u16;
+    let target_input = Paragraph::new(state.staking_target_address.as_str())
+        .block(Block::default().borders(Borders::ALL).title(target_title))
+        .style(target_style)
+        .scroll((0, target_scroll_offset));
+
+    let amount_input = Paragraph::new(state.staking_amount.as_str())
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Amount (TEST)"),
+        )
+        .style(amount_style)
+        .scroll((0, 0));
+
+    f.render_widget(pk_input, chunks[0]);
+    f.render_widget(target_input, chunks[1]);
+    f.render_widget(amount_input, chunks[2]);
+
+    // Status feedback box - always show status
+    let status_color = if state.status_message.contains("Error") {
+        Color::Red
+    } else if state.status_message.contains("submitted")
+        || state.status_message.contains("Stake submitted")
+    {
+        Color::Green
+    } else if state.status_message.contains("Submitting")
+        || state.status_message.contains("stake...")
+    {
+        Color::Yellow
+    } else {
+        Color::Cyan
+    };
+
+    let status_text = vec![
+        Line::from(""),
+        Line::from(vec![Span::styled(
+            &state.status_message,
+            Style::default()
+                .fg(status_color)
+                .add_modifier(Modifier::BOLD),
+        )]),
+    ];
+
+    let status = Paragraph::new(status_text)
+        .block(Block::default().borders(Borders::ALL).title("Status"))
         .alignment(Alignment::Center);
 
-    f.render_widget(dialog, popup_area);
+    f.render_widget(status, chunks[3]);
+
+    let help_text = vec![
+        Line::from(vec![Span::styled(
+            "Press Enter to Submit Stake",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        )]),
+        Line::from("Use Up/Down to navigate fields"),
+    ];
+
+    let help = Paragraph::new(help_text).block(Block::default().borders(Borders::NONE));
+
+    f.render_widget(help, chunks[4]);
+}
+
+fn render_token_holders(f: &mut Frame, area: Rect, state: &mut MonitorState) {
+    // Initialize selection if not set and items exist
+    if state.token_holders_state.selected().is_none() && !state.token_holders.is_empty() {
+        state.token_holders_state.select(Some(0));
+    }
+
+    let list_items: Vec<ListItem> = state
+        .token_holders
+        .iter()
+        .enumerate()
+        .map(|(idx, holder)| {
+            let balance_formatted =
+                format_units(holder.balance, 18).unwrap_or_else(|_| "0".to_string());
+
+            let content = vec![
+                Span::raw(format!("{}. ", idx + 1)),
+                Span::styled(
+                    format!("{:?}", holder.address),
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(format!(" | Balance: {} TEST", balance_formatted)),
+            ];
+
+            ListItem::new(Line::from(content))
+        })
+        .collect();
+
+    let scroll_help = if !state.token_holders.is_empty() {
+        " - Use ↑↓ to scroll"
+    } else {
+        ""
+    };
+
+    let list = List::new(list_items)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(format!(
+                    "TEST Token Holders - Nodes & Operators ({}){}",
+                    state.token_holders.len(),
+                    scroll_help
+                ))
+                .title_style(Style::default().fg(Color::Green)),
+        )
+        .highlight_style(
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol("▶ ");
+
+    f.render_stateful_widget(list, area, &mut state.token_holders_state);
+}
+
+fn render_minting(f: &mut Frame, area: Rect, state: &MonitorState) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3), // Private Key
+            Constraint::Length(3), // Target Address
+            Constraint::Length(3), // Amount
+            Constraint::Length(5), // Status/Feedback
+            Constraint::Min(0),    // Help
+        ])
+        .split(area);
+
+    let pk_style = if state.minting_active_input == MintingInputField::PrivateKey {
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::White)
+    };
+
+    let target_style = if state.minting_active_input == MintingInputField::TargetAddress {
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::White)
+    };
+
+    let amount_style = if state.minting_active_input == MintingInputField::Amount {
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::White)
+    };
+
+    let pk_input = Paragraph::new(state.minting_private_key.as_str())
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Private Key (Optional - leave empty to use default)"),
+        )
+        .style(pk_style)
+        .scroll((0, state.minting_private_key.len().saturating_sub(50) as u16));
+
+    // Add character counter to help user see if full address is entered
+    let target_title = format!(
+        "Target Address (entered: {} chars, need: 42)",
+        state.minting_target_address.len()
+    );
+    // Auto-scroll to show the end of the address as user types
+    let target_scroll_offset = state.minting_target_address.len().saturating_sub(50) as u16;
+    let target_input = Paragraph::new(state.minting_target_address.as_str())
+        .block(Block::default().borders(Borders::ALL).title(target_title))
+        .style(target_style)
+        .scroll((0, target_scroll_offset));
+
+    let amount_input = Paragraph::new(state.minting_amount.as_str())
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Amount (TEST tokens)"),
+        )
+        .style(amount_style)
+        .scroll((0, 0));
+
+    f.render_widget(pk_input, chunks[0]);
+    f.render_widget(target_input, chunks[1]);
+    f.render_widget(amount_input, chunks[2]);
+
+    // Status feedback box - always show status
+    let status_color = if state.status_message.contains("Error") {
+        Color::Red
+    } else if state.status_message.contains("minted")
+        || state.status_message.contains("Tokens minted")
+    {
+        Color::Green
+    } else if state.status_message.contains("Minting") {
+        Color::Yellow
+    } else {
+        Color::Cyan
+    };
+
+    let status_text = vec![
+        Line::from(""),
+        Line::from(vec![Span::styled(
+            &state.status_message,
+            Style::default()
+                .fg(status_color)
+                .add_modifier(Modifier::BOLD),
+        )]),
+    ];
+
+    let status = Paragraph::new(status_text)
+        .block(Block::default().borders(Borders::ALL).title("Status"))
+        .alignment(Alignment::Center);
+
+    f.render_widget(status, chunks[3]);
+
+    let help_text = vec![
+        Line::from(vec![Span::styled(
+            "Press Enter to Mint Tokens",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        )]),
+        Line::from("Use Up/Down to navigate fields"),
+    ];
+
+    let help = Paragraph::new(help_text).block(Block::default().borders(Borders::NONE));
+
+    f.render_widget(help, chunks[4]);
+}
+
+fn render_transfer_eth(f: &mut Frame, area: Rect, state: &MonitorState) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3), // Private Key
+            Constraint::Length(3), // Target Address
+            Constraint::Length(3), // Amount
+            Constraint::Length(5), // Status/Feedback
+            Constraint::Min(0),    // Help
+        ])
+        .split(area);
+
+    let pk_style = if state.transfer_active_input == TransferInputField::PrivateKey {
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::White)
+    };
+
+    let target_style = if state.transfer_active_input == TransferInputField::TargetAddress {
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::White)
+    };
+
+    let amount_style = if state.transfer_active_input == TransferInputField::Amount {
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::White)
+    };
+
+    let pk_input = Paragraph::new(state.transfer_private_key.as_str())
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Private Key (Optional - leave empty to use default)"),
+        )
+        .style(pk_style)
+        .scroll((
+            0,
+            state.transfer_private_key.len().saturating_sub(50) as u16,
+        ));
+
+    let target_title = format!(
+        "Target Address (entered: {} chars, need: 42)",
+        state.transfer_target_address.len()
+    );
+    let target_scroll_offset = state.transfer_target_address.len().saturating_sub(50) as u16;
+    let target_input = Paragraph::new(state.transfer_target_address.as_str())
+        .block(Block::default().borders(Borders::ALL).title(target_title))
+        .style(target_style)
+        .scroll((0, target_scroll_offset));
+
+    let amount_input = Paragraph::new(state.transfer_amount.as_str())
+        .block(Block::default().borders(Borders::ALL).title("Amount (ETH)"))
+        .style(amount_style)
+        .scroll((0, 0));
+
+    f.render_widget(pk_input, chunks[0]);
+    f.render_widget(target_input, chunks[1]);
+    f.render_widget(amount_input, chunks[2]);
+
+    // Status feedback box
+    let status_color = if state.status_message.contains("Error") {
+        Color::Red
+    } else if state.status_message.contains("transferred")
+        || state.status_message.contains("ETH transferred")
+    {
+        Color::Green
+    } else if state.status_message.contains("Transferring") {
+        Color::Yellow
+    } else {
+        Color::Cyan
+    };
+
+    let status_text = vec![
+        Line::from(""),
+        Line::from(vec![Span::styled(
+            &state.status_message,
+            Style::default()
+                .fg(status_color)
+                .add_modifier(Modifier::BOLD),
+        )]),
+    ];
+
+    let status = Paragraph::new(status_text)
+        .block(Block::default().borders(Borders::ALL).title("Status"))
+        .alignment(Alignment::Center);
+
+    f.render_widget(status, chunks[3]);
+
+    let help_text = vec![
+        Line::from(vec![Span::styled(
+            "Press Enter to Transfer ETH",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        )]),
+        Line::from("Use Up/Down to navigate fields"),
+    ];
+
+    let help = Paragraph::new(help_text).block(Block::default().borders(Borders::NONE));
+
+    f.render_widget(help, chunks[4]);
+}
+
+// WebSocket event listener for Transfer events
+// Refreshes token balances for all system addresses (nodes and operators)
+async fn listen_token_transfers(
+    client: Arc<NilAVClient>,
+    state: Arc<Mutex<MonitorState>>,
+) -> Result<()> {
+    client
+        .token
+        .clone()
+        .listen_transfer_events(move |_event| {
+            let state = state.clone();
+            let client = client.clone();
+            async move {
+                // Collect system addresses: registered nodes + staked operators
+                let mut system_addresses = HashSet::new();
+
+                // Add all registered nodes
+                if let Ok(registered_nodes) = client.router.get_nodes().await {
+                    for addr in registered_nodes {
+                        system_addresses.insert(addr);
+                    }
+                }
+
+                // Add all operators with stake (efficient: direct contract query)
+                if let Ok(staked_operators) = client.staking.get_operators_with_stake().await {
+                    for operator in staked_operators {
+                        system_addresses.insert(operator);
+                    }
+                }
+
+                // Update tracked addresses in state
+                {
+                    let mut state_guard = state.lock().unwrap();
+                    state_guard.token_holder_addresses = system_addresses.clone();
+                }
+
+                // Fetch updated balances for all system addresses
+                let mut holders = Vec::new();
+                for addr in system_addresses {
+                    if let Ok(balance) = client.token.balance_of(addr).await {
+                        if balance > U256::zero() {
+                            holders.push(TokenHolder {
+                                address: addr,
+                                balance,
+                            });
+                        }
+                    }
+                }
+
+                // Sort by balance descending
+                holders.sort_by(|a, b| b.balance.cmp(&a.balance));
+
+                // Update state
+                {
+                    let mut state_guard = state.lock().unwrap();
+                    state_guard.token_holders = holders;
+                    state_guard.last_update = std::time::Instant::now();
+                }
+
+                Ok(())
+            }
+        })
+        .await
 }

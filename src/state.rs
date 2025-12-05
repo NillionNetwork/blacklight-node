@@ -57,8 +57,7 @@ impl StateFile {
 
     /// Save all key-value pairs to the state file (sorted by key for consistency).
     pub fn save_all(&self, state: &HashMap<String, String>) -> Result<()> {
-        let mut keys: Vec<_> = state.keys().collect();
-        keys.sort();
+        let keys: Vec<_> = state.keys().collect();
         let mut content = String::new();
         for k in keys {
             content.push_str(&format!("{}={}\n", k, state[k]));

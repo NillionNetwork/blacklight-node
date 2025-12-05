@@ -8,7 +8,7 @@ NilAV (Nillion Auditor-Verifier) is a Rust-based HTX (Hash Transaction) verifica
 
 **Key Architecture:**
 - **Smart Contract** (Solidity): NilAVRouter manages node registration, HTX submission, and verification assignment
-- **Rust Binaries**: Four independent executables that interact with the contract or simulate the network
+- **Rust Binaries**: Three independent executables that interact with the contract or simulate the network
 - **Event-Driven**: WebSocket streaming replaces polling for real-time responsiveness
 
 ## Build & Test Commands
@@ -26,7 +26,6 @@ cargo build --release
 cargo build --bin nilav_node
 cargo build --bin nilcc_simulator
 cargo build --bin monitor
-cargo build --bin contract_cli
 
 # Run tests
 cargo test
@@ -41,12 +40,12 @@ cargo test -- --nocapture
 cargo check
 ```
 
-### Smart Contract (Foundry)
+### Smart Contracts (Foundry Monorepo)
 
 ```bash
-cd contracts/nilav-router
+cd contracts
 
-# Compile contract
+# Compile all contracts
 forge build
 
 # Run tests
@@ -57,6 +56,16 @@ forge test -vvv
 
 # Format Solidity code
 forge fmt
+
+# Deploy to local Anvil
+./script/deploy_local.sh router    # Deploy NilAVRouter
+./script/deploy_local.sh staking   # Deploy StakingOperators
+
+# Deploy to any chain
+export RPC_URL=<your-rpc-url>
+export PRIVATE_KEY=<your-private-key>
+./script/deploy.sh router    # Deploy NilAVRouter
+./script/deploy.sh staking   # Deploy StakingOperators with TESTToken
 ```
 
 ### Docker
@@ -74,6 +83,11 @@ docker compose up --scale node1=5
 
 # Stop all services
 docker compose down
+
+# Use pre-built images from GHCR
+docker pull ghcr.io/nillionnetwork/nilav/nilav_node:latest
+docker pull ghcr.io/nillionnetwork/nilav/nilcc_simulator:latest
+docker pull ghcr.io/nillionnetwork/nilav/monitor:latest
 ```
 
 ## Binaries & Their Purposes
@@ -131,27 +145,6 @@ Interactive TUI for monitoring contract activity in real-time.
 cargo run --release --bin monitor
 ```
 
-### 4. `contract_cli` (src/bin/contract_cli.rs)
-Command-line interface for direct contract interaction.
-
-**Commands:**
-```bash
-# Register a node
-cargo run --bin contract_cli -- register-node 0xNodeAddress
-
-# Deregister a node
-cargo run --bin contract_cli -- deregister-node 0xNodeAddress
-
-# List registered nodes
-cargo run --bin contract_cli -- list-nodes
-
-# Submit HTX from JSON file
-cargo run --bin contract_cli -- submit-htx data/htxs.json
-
-# Get assignment info
-cargo run --bin contract_cli -- get-assignment 0xHtxId
-```
-
 ## Architecture Patterns
 
 ### Smart Contract Flow
@@ -207,6 +200,16 @@ pub struct Htx {
 }
 ```
 
+**Critical: JSON Canonicalization**
+
+HTX serialization uses `stable_stringify` (from `src/json.rs`) which canonicalizes JSON by sorting all object keys recursively. This ensures:
+
+1. **Deterministic hashing**: Same HTX always produces the same on-chain hash
+2. **Consistent HTX IDs**: Since `htxId = keccak256(abi.encode(rawHTXHash, msg.sender, block.number))`, the raw HTX hash must be deterministic
+3. **Verification correctness**: Nodes can reliably match assignments
+
+Without canonicalization, the same HTX could serialize with different key orderings, producing different hashes and breaking the entire verification flow.
+
 ### Smart Contract Assignment (NilAVRouter.sol)
 ```solidity
 struct Assignment {
@@ -223,20 +226,48 @@ The project uses `ethers-rs` `abigen!` macro to generate type-safe contract bind
 ```rust
 abigen!(
     NilAVRouter,
-    "./contracts/nilav-router/out/NilAVRouter.sol/NilAVRouter.json",
+    "./contracts/out/NilAVRouter.sol/NilAVRouter.json",
     event_derives(serde::Deserialize, serde::Serialize)
 );
 ```
 
 **Important:** After modifying the Solidity contract, regenerate the ABI:
 ```bash
-cd contracts/nilav-router
+cd contracts
 forge build
 ```
 
 Then rebuild Rust to regenerate bindings:
 ```bash
 cargo build
+```
+
+## Contract Structure
+
+The contracts are organized in a monorepo structure:
+
+```
+contracts/
+├── src/
+│   ├── core/              # Core contract implementations
+│   │   ├── NilAVRouter.sol
+│   │   ├── StakingOperators.sol
+│   │   └── TESTToken.sol
+│   ├── interfaces/        # Shared interfaces
+│   │   └── Interfaces.sol
+│   └── libraries/         # Shared utility libraries
+├── test/                  # All tests
+│   ├── NilAVRouter.t.sol
+│   └── integration/       # Integration tests
+├── script/                # Deployment scripts
+│   ├── DeployRouter.s.sol
+│   ├── DeployStaking.s.sol
+│   ├── deploy.sh
+│   └── deploy_local.sh
+├── lib/                   # Dependencies
+│   ├── forge-std/
+│   └── openzeppelin-contracts/
+└── out/                   # Compiled artifacts
 ```
 
 ## Error Handling Patterns
@@ -288,6 +319,58 @@ Run the node:
 ```bash
 cargo run --release --bin nilav_node
 ```
+
+## CI/CD Workflows
+
+### GitHub Actions
+
+The repository includes two automated workflows:
+
+#### 1. Build Binaries (`.github/workflows/build.yml`)
+
+Triggers on version tags (`v*.*.*`) and builds native binaries for multiple platforms:
+
+- **Platforms**: Linux (x64), macOS (Intel & ARM), Windows (x64)
+- **Artifacts**: `nilav_node`, `nilcc_simulator`, `monitor`
+- **Distribution**: Archives uploaded to GitHub Releases (`.tar.gz` for Unix, `.zip` for Windows)
+
+```bash
+# Create a release
+git tag v1.0.0
+git push origin v1.0.0
+# Workflow automatically builds and publishes release artifacts
+```
+
+#### 2. Docker Build & Push (`.github/workflows/docker.yml`)
+
+Triggers on version tags or manual dispatch. Builds and pushes three Docker images to GHCR:
+
+- **Images**: `nilav_node`, `nilcc_simulator`, `monitor`
+- **Registry**: `ghcr.io/nillionnetwork/nilav/<image-name>`
+- **Tags**: 
+  - `latest` - most recent release
+  - `v1.0.0`, `v1.0`, `v1` - semantic version tags
+  - `main-sha256abc` - commit-specific tags
+- **Platforms**: linux/amd64, linux/arm64
+
+```bash
+# Images are automatically built and pushed on release tags
+# To manually trigger: Go to Actions → docker-build-push → Run workflow
+
+# Pull and use images
+docker pull ghcr.io/nillionnetwork/nilav/nilav_node:latest
+docker run --rm \
+  -e RPC_URL=https://rpc-nilav-shzvox09l5.t.conduit.xyz \
+  -e CONTRACT_ADDRESS=0x4f071c297EF53565A86c634C9AAf5faCa89f6209 \
+  -e PRIVATE_KEY=0xYourPrivateKey \
+  ghcr.io/nillionnetwork/nilav/nilav_node:latest
+```
+
+**Build Process:**
+1. Multi-stage Dockerfile compiles Rust binaries with Foundry support
+2. Each binary gets its own minimal Debian-based runtime image
+3. Build caches are used for faster subsequent builds
+4. Images include attestation for supply chain security
 
 ## Important Notes
 

@@ -598,88 +598,6 @@ RPC_URL=ws://localhost:8545 cargo run --bin monitor
 
 ---
 
-#### `src/bin/contract_cli.rs`
-
-**Purpose**: Command-line interface for direct contract interaction
-
-**Lines**: 220
-
-**Commands**:
-
-**1. List Nodes**:
-```bash
-cargo run --bin contract_cli -- list-nodes
-```
-- Queries all registered nodes
-- Displays addresses and count
-
-**2. Register Node**:
-```bash
-cargo run --bin contract_cli -- register-node 0xYourAddress
-```
-- Registers a specific address as a node
-- Requires gas fees
-
-**3. Deregister Node**:
-```bash
-cargo run --bin contract_cli -- deregister-node 0xYourAddress
-```
-- Removes a node from the registry
-- Only node owner can deregister
-
-**4. Submit HTX**:
-```bash
-cargo run --bin contract_cli -- submit-htx data/htxs.json
-# Or submit specific HTX by index
-cargo run --bin contract_cli -- submit-htx data/htxs.json --index 2
-```
-- Submits HTX from JSON file
-- Can specify index for multi-HTX files
-
-**5. Get Assignment**:
-```bash
-cargo run --bin contract_cli -- get-assignment 0xHtxId
-```
-- Queries assignment details for an HTX
-- Shows assigned node and response status
-
-**6. Get HTX Data**:
-```bash
-cargo run --bin contract_cli -- get-htx 0xHtxId
-```
-- Retrieves raw HTX data from contract
-- Displays as JSON
-
-**Configuration**:
-- `RPC_URL` - Ethereum RPC endpoint
-- `CONTRACT_ADDRESS` - NilAV contract address
-- `PRIVATE_KEY` - Transaction signer's key
-
-**Features**:
-- Colored output for better readability
-- Error handling with helpful messages
-- Transaction hash display for all operations
-- JSON pretty-printing for data queries
-
-**Usage Examples**:
-```bash
-# Check your balance first
-cargo run --bin contract_cli -- balance
-
-# Register your node
-cargo run --bin contract_cli -- register-node $(cast wallet address)
-
-# Submit all HTXs from file
-for i in {0..4}; do
-  cargo run --bin contract_cli -- submit-htx data/htxs.json --index $i
-done
-
-# Monitor assignment
-cargo run --bin contract_cli -- get-assignment 0x123abc...
-```
-
----
-
 ### Configuration Modules
 
 #### `src/config/mod.rs`
@@ -1109,8 +1027,7 @@ license = "MIT OR Apache-2.0"
 **Binary Targets**:
 1. `nilcc_simulator` - HTX submission simulator
 2. `nilav_node` - Verification node
-3. `contract_cli` - Contract CLI
-4. `monitor` - TUI monitor
+3. `monitor` - TUI monitor
 
 **Dependency Categories**:
 
@@ -1566,7 +1483,6 @@ matrix:
 - `nilav_node-{platform}`
 - `nilcc_simulator-{platform}`
 - `monitor-{platform}`
-- `contract_cli-{platform}`
 
 ---
 

@@ -26,9 +26,9 @@ jobs:
 
       - name: Build smart contract
         run: |
-          cd contracts/nilav-router
+          cd contracts
           forge build
-          cd ../..
+          cd ..
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
