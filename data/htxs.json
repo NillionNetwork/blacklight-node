@@ -7,7 +7,8 @@
       "url": "https://nilgpt.xyz/nilcc/api/v2/report",
       "nilcc_version": "0.2.1",
       "cpu_count": 4,
-      "GPUs": 1
+      "GPUs": 1,
+      "docker_compose_hash": "724ad766d1dc767394b842fdf319e89fcf2d1b462939070f5651ab54f97ce259"
     },
     "builder_measurement": {
       "url": "https://raw.githubusercontent.com/NillionNetwork/nilgpt/main/measurement-hash-index.json"
@@ -21,7 +22,8 @@
       "url": "https://nilgpt.xyz/nilcc/api/v2/report",
       "nilcc_version": "0.2.2",
       "cpu_count": 4,
-      "GPUs": 1
+      "GPUs": 1,
+      "docker_compose_hash": "724ad766d1dc767394b842fdf319e89fcf2d1b462939070f5651ab54f97ce259"
     },
     "builder_measurement": {
       "url": "https://raw.githubusercontent.com/invalid.json"
@@ -35,7 +37,8 @@
       "url": "https://2e08d150-6083-49aa-99e3-2b786e51fb2f.workloads.nilcc.sandbox.nillion.network/nilcc/api/v2/report",
       "nilcc_version": "0.2.1",
       "cpu_count": 4,
-      "GPUs": 1
+      "GPUs": 1,
+      "docker_compose_hash": "a379c191c9605bc59ffb724cd8de5bd4911b82af3906783e9db50ad087225ffa"
     },
     "builder_measurement": {
       "url": "https://raw.githubusercontent.com/NillionNetwork/nilgpt/main/measurement-hash-index.json"
@@ -49,7 +52,8 @@
       "url": "https://invalid.com/invalid.json",
       "nilcc_version": "0.2.1",
       "cpu_count": 4,
-      "GPUs": 1
+      "GPUs": 1,
+      "docker_compose_hash": "1b8e7ba01e5e45e8570b7fdac9dba17e950e310225b26408beb68a3d76bf760f"
     },
     "builder_measurement": {
       "url": "https://raw.githubusercontent.com/NillionNetwork/nilgpt/main/measurement-hash-index.json"

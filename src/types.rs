@@ -1,6 +1,7 @@
 use crate::json::stable_stringify;
 use ethers::types::Bytes;
 use serde::{Deserialize, Serialize};
+use serde_with::{hex::Hex, serde_as};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkloadId {
@@ -20,6 +21,7 @@ pub struct Builder {
     pub name: String,
 }
 
+#[serde_as]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NilCcMeasurement {
     pub url: String,
@@ -29,6 +31,8 @@ pub struct NilCcMeasurement {
     pub cpu_count: u64,
     #[serde(rename = "GPUs")]
     pub gpus: u64,
+    #[serde_as(as = "Hex")]
+    pub docker_compose_hash: [u8; 32],
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -140,6 +144,7 @@ mod tests {
                 nilcc_version: "1.0.0".to_string(),
                 cpu_count: 8,
                 gpus: 2,
+                docker_compose_hash: [0; 32],
             },
             builder_measurement: BuilderMeasurement {
                 url: "https://example.com/builder".to_string(),
