@@ -322,17 +322,17 @@ mod tests {
         // Create minimal test HTX
         let htx = crate::types::Htx {
             workload_id: WorkloadId {
-                current: 1,
-                previous: 0,
+                current: "1".into(),
+                previous: Some("0".into()),
             },
-            nilcc_operator: NilCcOperator {
+            nilcc_operator: Some(NilCcOperator {
                 id: 1,
                 name: "test".into(),
-            },
-            builder: Builder {
+            }),
+            builder: Some(Builder {
                 id: 1,
                 name: "test".into(),
-            },
+            }),
             nilcc_measurement: NilCcMeasurement {
                 url: "https://test.com".into(),
                 nilcc_version: "0.0.0".into(),

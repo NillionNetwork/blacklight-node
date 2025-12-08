@@ -1,5 +1,5 @@
 {
-    "workload_id": { "current": 1001, "previous": 1000 },
+    "workload_id": { "current": "1001", "previous": "1000" },
     "nilCC_operator": { "id": 4, "name": "Latitude" },
     "builder": { "id": 94323, "name": "Nillion" },
     "nilCC_measurement": {
