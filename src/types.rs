@@ -5,8 +5,8 @@ use serde_with::{hex::Hex, serde_as};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkloadId {
-    pub current: u64,
-    pub previous: u64,
+    pub current: String,
+    pub previous: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,8 +44,8 @@ pub struct BuilderMeasurement {
 pub struct Htx {
     pub workload_id: WorkloadId,
     #[serde(rename = "nilCC_operator")]
-    pub nilcc_operator: NilCcOperator,
-    pub builder: Builder,
+    pub nilcc_operator: Option<NilCcOperator>,
+    pub builder: Option<Builder>,
     #[serde(rename = "nilCC_measurement")]
     pub nilcc_measurement: NilCcMeasurement,
     pub builder_measurement: BuilderMeasurement,
@@ -128,17 +128,17 @@ mod tests {
         // Create an HTX
         let htx = Htx {
             workload_id: WorkloadId {
-                current: 1,
-                previous: 0,
+                current: "1".into(),
+                previous: Some("0".into()),
             },
-            nilcc_operator: NilCcOperator {
+            nilcc_operator: Some(NilCcOperator {
                 id: 123,
                 name: "test-operator".to_string(),
-            },
-            builder: Builder {
+            }),
+            builder: Some(Builder {
                 id: 456,
                 name: "test-builder".to_string(),
-            },
+            }),
             nilcc_measurement: NilCcMeasurement {
                 url: "https://example.com/measurement".to_string(),
                 nilcc_version: "1.0.0".to_string(),
