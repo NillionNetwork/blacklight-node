@@ -118,7 +118,7 @@ impl NilAVRouterClient {
                 .or_else(|| error_msg.split("revert data: ").nth(1))
                 .or_else(|| {
                     // Look for hex data starting with 0x08c379a0 (Error(string) selector)
-                    error_msg.find("0x08c379a0").and_then(|start| {
+                    error_msg.find("0x08c379a0").map(|start| {
                         // Find the end of the hex string (stop at first non-hex char after 0x)
                         let remaining = &error_msg[start..];
                         let end = remaining
@@ -127,7 +127,7 @@ impl NilAVRouterClient {
                             .find(|(_, c)| !c.is_ascii_hexdigit())
                             .map(|(i, _)| i)
                             .unwrap_or(remaining.len());
-                        Some(&error_msg[start..start + end])
+                        &error_msg[start..start + end]
                     })
                 });
 
