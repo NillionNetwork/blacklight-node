@@ -1,0 +1,68 @@
+// For format details, see https://aka.ms/devcontainer.json. For config options, see the
+// README at: https://github.com/devcontainers/templates/tree/main/src/rust
+{
+	"name": "NilAV - Rust + Foundry",
+	"image": "mcr.microsoft.com/devcontainers/rust:2-1-bookworm",
+
+	"features": {
+		"ghcr.io/devcontainers/features/docker-outside-of-docker:1": {},
+		"ghcr.io/devcontainers/features/common-utils:2": {
+			"installZsh": true,
+			"installOhMyZsh": true,
+			"configureZshAsDefaultShell": true,
+			"upgradePackages": true
+		}
+	},
+
+	// Use 'mounts' to make the cargo cache persistent in a Docker Volume.
+	"mounts": [
+		{
+			"source": "devcontainer-cargo-cache-${devcontainerId}",
+			"target": "/usr/local/cargo",
+			"type": "volume"
+		}
+	],
+
+	// Forward ports for local development
+	"forwardPorts": [
+		8545  // Anvil default port
+	],
+
+	// Install Foundry and set up the environment after container creation
+	"postCreateCommand": "curl -L https://foundry.paradigm.xyz | bash && . ~/.bashrc && foundryup && cargo build --release",
+
+	// Configure tool-specific properties
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				// Rust extensions
+				"rust-lang.rust-analyzer",
+				"tamasfe.even-better-toml",
+				"serayuzgur.crates",
+
+				// Solidity extensions
+				"NomicFoundation.hardhat-solidity"
+
+			],
+			"settings": {
+				"rust-analyzer.checkOnSave.command": "clippy",
+				"rust-analyzer.cargo.features": "all",
+				"solidity.formatter": "forge",
+				"solidity.compileUsingRemoteVersion": "v0.8.20"
+			}
+		}
+	},
+
+	// Connect to the docker-compose network to access Anvil (make sure to change the network name to the one you are using)
+	// "runArgs": [
+	// 	"--network=nilav-stable_nilav-network"
+	// ]
+
+
+	// Environment variables for the container
+	"remoteEnv": {
+		"RUST_LOG": "info"
+	},
+
+
+}
