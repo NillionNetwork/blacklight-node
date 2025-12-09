@@ -1,7 +1,7 @@
 # Multi-stage Dockerfile for nilAV project with cross-compilation support
 # Builds all binaries: nilav_node, nilcc_simulator, monitor
 
-FROM --platform=$BUILDPLATFORM rust:1.85-slim-bookworm AS builder
+FROM --platform=$BUILDPLATFORM rust:1.91-slim-trixie AS builder
 
 ARG TARGETPLATFORM
 ARG BUILDPLATFORM
