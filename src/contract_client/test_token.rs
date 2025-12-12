@@ -41,7 +41,7 @@ impl<P: Provider + Clone> TESTTokenClient<P> {
 
     /// Get the contract address
     pub fn address(&self) -> Address {
-        self.contract.address().clone()
+        *self.contract.address()
     }
 
     // ------------------------------------------------------------------------
@@ -85,22 +85,23 @@ impl<P: Provider + Clone> TESTTokenClient<P> {
     /// Transfers tokens to a recipient
     pub async fn transfer(&self, to: Address, amount: U256) -> anyhow::Result<B256> {
         let call = self.contract.transfer(to, amount);
-        
+
         // Pre-simulate to catch errors with proper messages
         if let Err(e) = call.call().await {
             return Err(Self::decode_error(e));
         }
-        
+
         let _guard = self.tx_lock.lock().await;
         let pending = call.send().await.map_err(Self::decode_error)?;
         let receipt = pending.get_receipt().await?;
-        
+
         if !receipt.status() {
             if let Err(e) = call.call().await {
                 let decoded = super::errors::decode_any_error(&e);
                 return Err(anyhow::anyhow!(
                     "transfer reverted: {}. Tx hash: {:?}",
-                    decoded, receipt.transaction_hash
+                    decoded,
+                    receipt.transaction_hash
                 ));
             }
             return Err(anyhow::anyhow!(
@@ -114,22 +115,23 @@ impl<P: Provider + Clone> TESTTokenClient<P> {
     /// Approves a spender to spend tokens on behalf of the caller
     pub async fn approve(&self, spender: Address, amount: U256) -> anyhow::Result<B256> {
         let call = self.contract.approve(spender, amount);
-        
+
         // Pre-simulate to catch errors with proper messages
         if let Err(e) = call.call().await {
             return Err(Self::decode_error(e));
         }
-        
+
         let _guard = self.tx_lock.lock().await;
         let pending = call.send().await.map_err(Self::decode_error)?;
         let receipt = pending.get_receipt().await?;
-        
+
         if !receipt.status() {
             if let Err(e) = call.call().await {
                 let decoded = super::errors::decode_any_error(&e);
                 return Err(anyhow::anyhow!(
                     "approve reverted: {}. Tx hash: {:?}",
-                    decoded, receipt.transaction_hash
+                    decoded,
+                    receipt.transaction_hash
                 ));
             }
             return Err(anyhow::anyhow!(
@@ -143,22 +145,23 @@ impl<P: Provider + Clone> TESTTokenClient<P> {
     /// Mints new tokens (requires owner privileges)
     pub async fn mint(&self, to: Address, amount: U256) -> anyhow::Result<B256> {
         let call = self.contract.mint(to, amount);
-        
+
         // Pre-simulate to catch errors with proper messages
         if let Err(e) = call.call().await {
             return Err(Self::decode_error(e));
         }
-        
+
         let _guard = self.tx_lock.lock().await;
         let pending = call.send().await.map_err(Self::decode_error)?;
         let receipt = pending.get_receipt().await?;
-        
+
         if !receipt.status() {
             if let Err(e) = call.call().await {
                 let decoded = super::errors::decode_any_error(&e);
                 return Err(anyhow::anyhow!(
                     "mint reverted: {}. Tx hash: {:?}",
-                    decoded, receipt.transaction_hash
+                    decoded,
+                    receipt.transaction_hash
                 ));
             }
             return Err(anyhow::anyhow!(

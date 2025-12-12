@@ -4,7 +4,7 @@ use crate::contract_client::{
 
 use alloy::{
     network::{Ethereum, EthereumWallet, NetworkWallet},
-    primitives::{Address, B256, TxKind, U256},
+    primitives::{Address, TxKind, B256, U256},
     providers::{DynProvider, Provider, ProviderBuilder, WsConnect},
     rpc::types::TransactionRequest,
     signers::local::PrivateKeySigner,

@@ -45,10 +45,7 @@
 //! - [`decode_revert`] - For raw `Bytes` revert data
 
 use alloy::{
-    contract::Error as ContractError,
-    primitives::Bytes,
-    sol,
-    sol_types::SolInterface,
+    contract::Error as ContractError, primitives::Bytes, sol, sol_types::SolInterface,
     transports::TransportError,
 };
 
@@ -282,7 +279,9 @@ fn format_staking_error(err: &StakingOperatorsErrors) -> String {
         StakingOperatorsErrors::NotStaker(_) => "Not a staker".to_string(),
         StakingOperatorsErrors::OperatorJailed(_) => "Operator is jailed".to_string(),
         StakingOperatorsErrors::PendingUnbonding(_) => "Pending unbonding exists".to_string(),
-        StakingOperatorsErrors::ReentrancyGuardReentrantCall(_) => "Reentrancy detected".to_string(),
+        StakingOperatorsErrors::ReentrancyGuardReentrantCall(_) => {
+            "Reentrancy detected".to_string()
+        }
         StakingOperatorsErrors::SafeERC20FailedOperation(e) => {
             format!("ERC20 operation failed for token {}", e.token)
         }
@@ -436,7 +435,9 @@ fn try_extract_from_string(error_str: &str) -> Option<DecodedRevert> {
 
             // Find the end of the hex string (only hex chars after 0x)
             let hex_end = if remaining.starts_with("0x") {
-                2 + remaining[2..]
+                2 + remaining
+                    .strip_prefix("0x")
+                    .unwrap_or(remaining)
                     .chars()
                     .take_while(|c| c.is_ascii_hexdigit())
                     .count()

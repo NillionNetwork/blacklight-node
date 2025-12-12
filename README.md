@@ -103,6 +103,7 @@ Build your own Docker image from the repository.
 1. **Clone the repository:**
    ```bash
    git clone https://github.com/NillionNetwork/nilAV.git
+   git submodule update --init --recursive
    cd nilAV
    git submodule update --init --recursive
    ```
@@ -159,6 +160,7 @@ Compile the binaries directly on your system.
 1. **Clone the repository:**
    ```bash
    git clone https://github.com/NillionNetwork/nilAV.git
+   git submodule update --init --recursive
    cd nilAV
    git submodule update --init --recursive
    ```

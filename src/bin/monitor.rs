@@ -1,3 +1,4 @@
+use alloy::primitives::{utils::format_units, Address, U256};
 use anyhow::Result;
 use clap::Parser;
 use crossterm::{
@@ -8,7 +9,6 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use alloy::primitives::{Address, U256, utils::format_units};
 use nilav::config::{MonitorCliArgs, MonitorConfig};
 use nilav::contract_client::{ContractConfig, NilAVClient};
 use ratatui::{

@@ -101,23 +101,24 @@ impl<P: Provider + Clone> StakingOperatorsClient<P> {
     /// Stakes tokens to a specific operator
     pub async fn stake_to(&self, operator: Address, amount: U256) -> anyhow::Result<B256> {
         let call = self.contract.stakeTo(operator, amount);
-        
+
         // Pre-simulate to catch errors with proper messages
         if let Err(e) = call.call().await {
             return Err(Self::decode_error(e));
         }
-        
+
         let _guard = self.tx_lock.lock().await;
         let pending = call.send().await.map_err(Self::decode_error)?;
         let receipt = pending.get_receipt().await?;
-        
+
         if !receipt.status() {
             // Re-simulate to get the error message
             if let Err(e) = call.call().await {
                 let decoded = super::errors::decode_any_error(&e);
                 return Err(anyhow::anyhow!(
                     "stakeTo reverted: {}. Tx hash: {:?}",
-                    decoded, receipt.transaction_hash
+                    decoded,
+                    receipt.transaction_hash
                 ));
             }
             return Err(anyhow::anyhow!(
@@ -131,23 +132,24 @@ impl<P: Provider + Clone> StakingOperatorsClient<P> {
     /// Requests to unstake tokens from an operator
     pub async fn request_unstake(&self, operator: Address, amount: U256) -> anyhow::Result<B256> {
         let call = self.contract.requestUnstake(operator, amount);
-        
+
         // Pre-simulate to catch errors with proper messages
         if let Err(e) = call.call().await {
             return Err(Self::decode_error(e));
         }
-        
+
         let _guard = self.tx_lock.lock().await;
         let pending = call.send().await.map_err(Self::decode_error)?;
         let receipt = pending.get_receipt().await?;
-        
+
         if !receipt.status() {
             // Re-simulate to get the error message
             if let Err(e) = call.call().await {
                 let decoded = super::errors::decode_any_error(&e);
                 return Err(anyhow::anyhow!(
                     "requestUnstake reverted: {}. Tx hash: {:?}",
-                    decoded, receipt.transaction_hash
+                    decoded,
+                    receipt.transaction_hash
                 ));
             }
             return Err(anyhow::anyhow!(
@@ -161,23 +163,24 @@ impl<P: Provider + Clone> StakingOperatorsClient<P> {
     /// Withdraws unstaked tokens after the unbonding period has passed
     pub async fn withdraw_unstaked(&self, operator: Address) -> anyhow::Result<B256> {
         let call = self.contract.withdrawUnstaked(operator);
-        
+
         // Pre-simulate to catch errors with proper messages
         if let Err(e) = call.call().await {
             return Err(Self::decode_error(e));
         }
-        
+
         let _guard = self.tx_lock.lock().await;
         let pending = call.send().await.map_err(Self::decode_error)?;
         let receipt = pending.get_receipt().await?;
-        
+
         if !receipt.status() {
             // Re-simulate to get the error message
             if let Err(e) = call.call().await {
                 let decoded = super::errors::decode_any_error(&e);
                 return Err(anyhow::anyhow!(
                     "withdrawUnstaked reverted: {}. Tx hash: {:?}",
-                    decoded, receipt.transaction_hash
+                    decoded,
+                    receipt.transaction_hash
                 ));
             }
             return Err(anyhow::anyhow!(
@@ -195,23 +198,24 @@ impl<P: Provider + Clone> StakingOperatorsClient<P> {
     /// Registers the caller as an operator or updates their metadata
     pub async fn register_operator(&self, metadata_uri: String) -> anyhow::Result<B256> {
         let call = self.contract.registerOperator(metadata_uri);
-        
+
         // Pre-simulate to catch errors with proper messages
         if let Err(e) = call.call().await {
             return Err(Self::decode_error(e));
         }
-        
+
         let _guard = self.tx_lock.lock().await;
         let pending = call.send().await.map_err(Self::decode_error)?;
         let receipt = pending.get_receipt().await?;
-        
+
         if !receipt.status() {
             // Re-simulate to get the error message
             if let Err(e) = call.call().await {
                 let decoded = super::errors::decode_any_error(&e);
                 return Err(anyhow::anyhow!(
                     "registerOperator reverted: {}. Tx hash: {:?}",
-                    decoded, receipt.transaction_hash
+                    decoded,
+                    receipt.transaction_hash
                 ));
             }
             return Err(anyhow::anyhow!(
@@ -225,23 +229,24 @@ impl<P: Provider + Clone> StakingOperatorsClient<P> {
     /// Deactivates the caller as an operator
     pub async fn deactivate_operator(&self) -> anyhow::Result<B256> {
         let call = self.contract.deactivateOperator();
-        
+
         // Pre-simulate to catch errors with proper messages
         if let Err(e) = call.call().await {
             return Err(Self::decode_error(e));
         }
-        
+
         let _guard = self.tx_lock.lock().await;
         let pending = call.send().await.map_err(Self::decode_error)?;
         let receipt = pending.get_receipt().await?;
-        
+
         if !receipt.status() {
             // Re-simulate to get the error message
             if let Err(e) = call.call().await {
                 let decoded = super::errors::decode_any_error(&e);
                 return Err(anyhow::anyhow!(
                     "deactivateOperator reverted: {}. Tx hash: {:?}",
-                    decoded, receipt.transaction_hash
+                    decoded,
+                    receipt.transaction_hash
                 ));
             }
             return Err(anyhow::anyhow!(

@@ -62,7 +62,5 @@
 	// Environment variables for the container
 	"remoteEnv": {
 		"RUST_LOG": "info"
-	},
-
-
+	}
 }

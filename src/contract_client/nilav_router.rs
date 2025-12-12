@@ -9,8 +9,8 @@ use alloy::{
 };
 use futures_util::StreamExt;
 use std::sync::Arc;
-use tracing::error;
 use tokio::sync::Mutex;
+use tracing::error;
 
 sol!(
     #[sol(rpc)]
@@ -102,7 +102,7 @@ impl<P: Provider + Clone> NilAVRouterClient<P> {
             let decoded = super::errors::decode_any_error(&e);
             return Err(anyhow::anyhow!("submitHTX reverted: {}", decoded));
         }
-        
+
         // Estimate gas and add buffer for safety
         let estimated_gas = call.estimate_gas().await.map_err(|e| {
             let decoded = super::errors::decode_any_error(&e);
@@ -115,7 +115,7 @@ impl<P: Provider + Clone> NilAVRouterClient<P> {
             let decoded = super::errors::decode_any_error(&e);
             anyhow::anyhow!("submitHTX failed to send: {}", decoded)
         })?;
-        
+
         let receipt = pending.get_receipt().await?;
         if !receipt.status() {
             // Check if it was an OutOfGas error by comparing gas used to gas limit
@@ -124,10 +124,12 @@ impl<P: Provider + Clone> NilAVRouterClient<P> {
                 return Err(anyhow::anyhow!(
                     "submitHTX ran out of gas (used {} of {} limit). \
                     This can happen when many nodes are selected. Tx: {:?}",
-                    gas_used, gas_with_buffer, receipt.transaction_hash
+                    gas_used,
+                    gas_with_buffer,
+                    receipt.transaction_hash
                 ));
             }
-            
+
             // Transaction was included but reverted - re-simulate at the SAME block to get the error
             // This is important because htxId = keccak256(rawHTXHash, sender, block.number)
             // so simulating at a different block would give a different htxId
@@ -137,7 +139,8 @@ impl<P: Provider + Clone> NilAVRouterClient<P> {
                     let decoded = super::errors::decode_any_error(&e);
                     return Err(anyhow::anyhow!(
                         "submitHTX reverted: {}. Tx: {:?}",
-                        decoded, receipt.transaction_hash
+                        decoded,
+                        receipt.transaction_hash
                     ));
                 }
                 // Re-simulation succeeded - likely ran out of gas but gas check above didn't catch it
@@ -159,38 +162,42 @@ impl<P: Provider + Clone> NilAVRouterClient<P> {
     /// Respond to an HTX assignment (called by assigned node)
     pub async fn respond_htx(&self, htx_id: B256, result: bool) -> anyhow::Result<B256> {
         let call = self.contract.respondHTX(htx_id, result);
-        
+
         // First simulate the call to catch reverts with proper error messages
         if let Err(e) = call.call().await {
             let decoded = super::errors::decode_any_error(&e);
             return Err(anyhow::anyhow!("respondHTX reverted: {}", decoded));
         }
-        
+
         // Estimate gas and add buffer for safety
         let estimated_gas = call.estimate_gas().await.map_err(|e| {
             let decoded = super::errors::decode_any_error(&e);
             anyhow::anyhow!("respondHTX would revert: {}", decoded)
         })?;
         let gas_with_buffer = estimated_gas.saturating_add(estimated_gas / 5); // +20%
-        
+
         let call_with_gas = call.gas(gas_with_buffer);
-        
+
         let _guard = self.tx_lock.lock().await;
         let pending = call_with_gas.send().await.map_err(|e| {
             let decoded = super::errors::decode_any_error(&e);
             anyhow::anyhow!("respondHTX failed to send: {}", decoded)
         })?;
-        
+
         let receipt = pending.get_receipt().await?;
         if !receipt.status() {
             // Transaction was included but reverted - re-simulate at the SAME block to get the error
             if let Some(block_number) = receipt.block_number {
-                let retry_call = self.contract.respondHTX(htx_id, result).block(block_number.into());
+                let retry_call = self
+                    .contract
+                    .respondHTX(htx_id, result)
+                    .block(block_number.into());
                 if let Err(e) = retry_call.call().await {
                     let decoded = super::errors::decode_any_error(&e);
                     return Err(anyhow::anyhow!(
                         "respondHTX reverted: {}. Tx: {:?}",
-                        decoded, receipt.transaction_hash
+                        decoded,
+                        receipt.transaction_hash
                     ));
                 }
                 // Re-simulation succeeded
@@ -204,7 +211,7 @@ impl<P: Provider + Clone> NilAVRouterClient<P> {
                 receipt.transaction_hash
             ));
         }
-        
+
         Ok(receipt.transaction_hash)
     }
 
@@ -273,7 +280,9 @@ impl<P: Provider + Clone> NilAVRouterClient<P> {
             .ok_or_else(|| anyhow::anyhow!("No HTXSubmitted event found for htxId"))?;
 
         // Get the transaction hash from the event log
-        let tx_hash = log.transaction_hash.ok_or_else(|| anyhow::anyhow!("No transaction hash in log"))?;
+        let tx_hash = log
+            .transaction_hash
+            .ok_or_else(|| anyhow::anyhow!("No transaction hash in log"))?;
 
         // Fetch the transaction
         let tx = self

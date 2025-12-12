@@ -134,7 +134,6 @@ mod tests {
     use crate::types::{Builder, BuilderMeasurement, NilCcMeasurement, NilCcOperator, WorkloadId};
     use std::env;
 
-
     // ------------------------------------------------------------------------
     // Unit Tests - Configuration
     // ------------------------------------------------------------------------

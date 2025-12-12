@@ -107,7 +107,7 @@ async fn submit_next_htx(client: &Arc<NilAVClient>, htxs: &Arc<Vec<Htx>>, slot: 
     }
 
     let mut last_error = None;
-    
+
     for attempt in 0..MAX_RETRIES {
         // Randomly select an HTX and make it unique by appending a random nonce to workload_id
         // This prevents "HTX already exists" errors when multiple submissions land in the same block
@@ -115,7 +115,7 @@ async fn submit_next_htx(client: &Arc<NilAVClient>, htxs: &Arc<Vec<Htx>>, slot: 
         let htx = {
             let mut rng = rand::rng();
             let idx = rng.random_range(0..htxs.len());
-            let nonce: u128 = rng.random_range(0..u128::MAX); // 128-bit random number 
+            let nonce: u128 = rng.random_range(0..u128::MAX); // 128-bit random number
             let mut htx = htxs[idx].clone();
             htx.workload_id.current = format!("{}-{:x}", htx.workload_id.current, nonce);
             htx
