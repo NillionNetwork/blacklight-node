@@ -10,6 +10,7 @@ use alloy::{
 use futures_util::StreamExt;
 use std::sync::Arc;
 use tracing::error;
+use tokio::sync::Mutex;
 
 sol!(
     #[sol(rpc)]
@@ -37,14 +38,19 @@ pub struct Assignment {
 pub struct NilAVRouterClient<P: Provider + Clone> {
     provider: P,
     contract: NilAVRouter::NilAVRouterInstance<P>,
+    tx_lock: Arc<Mutex<()>>,
 }
 
 impl<P: Provider + Clone> NilAVRouterClient<P> {
     /// Create a new WebSocket client from ContractConfig
-    pub fn new(provider: P, config: super::ContractConfig) -> Self {
+    pub fn new(provider: P, config: super::ContractConfig, tx_lock: Arc<Mutex<()>>) -> Self {
         let contract =
             NilAVRouter::NilAVRouterInstance::new(config.router_contract_address, provider.clone());
-        Self { provider, contract }
+        Self {
+            provider,
+            contract,
+            tx_lock,
+        }
     }
 
     /// Get the contract address
@@ -89,6 +95,7 @@ impl<P: Provider + Clone> NilAVRouterClient<P> {
     /// Submit an HTX for verification
     pub async fn submit_htx(&self, htx: &Htx) -> anyhow::Result<(B256, B256)> {
         let call = self.contract.submitHTX(htx.try_into()?);
+        let _guard = self.tx_lock.lock().await;
         let pending = call.send().await?;
         let receipt = pending.get_receipt().await?;
 
@@ -108,6 +115,7 @@ impl<P: Provider + Clone> NilAVRouterClient<P> {
     /// Respond to an HTX assignment (called by assigned node)
     pub async fn respond_htx(&self, htx_id: B256, result: bool) -> anyhow::Result<B256> {
         let call = self.contract.respondHTX(htx_id, result);
+        let _guard = self.tx_lock.lock().await;
         let pending = call.send().await.map_err(|e| {
             // Try to decode error message from revert data
             let error_msg = e.to_string();

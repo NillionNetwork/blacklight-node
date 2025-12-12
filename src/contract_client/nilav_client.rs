@@ -9,6 +9,8 @@ use alloy::{
     rpc::types::TransactionRequest,
     signers::local::PrivateKeySigner,
 };
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 /// High-level wrapper bundling all contract clients with a shared Alloy provider.
 pub struct NilAVClient {
@@ -38,10 +40,11 @@ impl NilAVClient {
             .connect_ws(ws)
             .await?
             .erased();
+        let tx_lock = Arc::new(Mutex::new(()));
         // Instantiate contract clients using the shared provider
-        let router = NilAVRouterClient::new(provider.clone(), config.clone());
-        let token = TESTTokenClient::new(provider.clone(), config.clone());
-        let staking = StakingOperatorsClient::new(provider.clone(), config);
+        let router = NilAVRouterClient::new(provider.clone(), config.clone(), tx_lock.clone());
+        let token = TESTTokenClient::new(provider.clone(), config.clone(), tx_lock.clone());
+        let staking = StakingOperatorsClient::new(provider.clone(), config, tx_lock.clone());
 
         Ok(Self {
             provider,

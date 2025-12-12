@@ -5,6 +5,7 @@ use alloy::{
 };
 use futures_util::StreamExt;
 use std::sync::Arc;
+use tokio::sync::Mutex;
 
 // Generate type-safe contract bindings from ABI
 sol!(
@@ -23,14 +24,19 @@ use TESTToken::TESTTokenInstance;
 #[derive(Clone)]
 pub struct TESTTokenClient<P: Provider + Clone> {
     contract: TESTTokenInstance<P>,
+    tx_lock: Arc<Mutex<()>>,
 }
 
 impl<P: Provider + Clone> TESTTokenClient<P> {
     /// Create a new WebSocket client from configuration
-    pub fn new(provider: P, config: crate::contract_client::ContractConfig) -> Self {
+    pub fn new(
+        provider: P,
+        config: crate::contract_client::ContractConfig,
+        tx_lock: Arc<Mutex<()>>,
+    ) -> Self {
         let contract_address = config.token_contract_address;
         let contract = TESTTokenInstance::new(contract_address, provider.clone());
-        Self { contract }
+        Self { contract, tx_lock }
     }
 
     /// Get the contract address
@@ -79,6 +85,7 @@ impl<P: Provider + Clone> TESTTokenClient<P> {
     /// Transfers tokens to a recipient
     pub async fn transfer(&self, to: Address, amount: U256) -> anyhow::Result<B256> {
         let call = self.contract.transfer(to, amount);
+        let _guard = self.tx_lock.lock().await;
         let pending = call.send().await?;
         let receipt = pending.get_receipt().await?;
         Ok(receipt.transaction_hash)
@@ -87,6 +94,7 @@ impl<P: Provider + Clone> TESTTokenClient<P> {
     /// Approves a spender to spend tokens on behalf of the caller
     pub async fn approve(&self, spender: Address, amount: U256) -> anyhow::Result<B256> {
         let call = self.contract.approve(spender, amount);
+        let _guard = self.tx_lock.lock().await;
         let pending = call.send().await?;
         let receipt = pending.get_receipt().await?;
         Ok(receipt.transaction_hash)
@@ -95,6 +103,7 @@ impl<P: Provider + Clone> TESTTokenClient<P> {
     /// Mints new tokens (requires owner privileges)
     pub async fn mint(&self, to: Address, amount: U256) -> anyhow::Result<B256> {
         let call = self.contract.mint(to, amount);
+        let _guard = self.tx_lock.lock().await;
         let pending = call.send().await?;
         let receipt = pending.get_receipt().await?;
         Ok(receipt.transaction_hash)

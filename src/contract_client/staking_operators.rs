@@ -3,6 +3,8 @@ use alloy::{
     providers::Provider,
     sol,
 };
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 // Keep an H256 alias if you still like that name
 type H256 = B256;
@@ -22,15 +24,20 @@ use StakingOperators::StakingOperatorsInstance;
 #[derive(Clone)]
 pub struct StakingOperatorsClient<P: Provider + Clone> {
     contract: StakingOperatorsInstance<P>,
+    tx_lock: Arc<Mutex<()>>,
 }
 
 impl<P: Provider + Clone> StakingOperatorsClient<P> {
     /// Create a new WebSocket client from configuration
-    pub fn new(provider: P, config: crate::contract_client::ContractConfig) -> Self {
+    pub fn new(
+        provider: P,
+        config: crate::contract_client::ContractConfig,
+        tx_lock: Arc<Mutex<()>>,
+    ) -> Self {
         let contract =
             StakingOperatorsInstance::new(config.staking_contract_address, provider.clone());
 
-        Self { contract }
+        Self { contract, tx_lock }
     }
 
     /// Get the contract address
@@ -98,6 +105,7 @@ impl<P: Provider + Clone> StakingOperatorsClient<P> {
     pub async fn stake_to(&self, operator: Address, amount: U256) -> anyhow::Result<H256> {
         // Solidity: function stakeTo(address operator, uint256 amount) external
         let call = self.contract.stakeTo(operator, amount);
+        let _guard = self.tx_lock.lock().await;
         let pending = call.send().await?;
         let receipt = pending.get_receipt().await?;
         Ok(receipt.transaction_hash)
@@ -107,6 +115,7 @@ impl<P: Provider + Clone> StakingOperatorsClient<P> {
     pub async fn request_unstake(&self, operator: Address, amount: U256) -> anyhow::Result<H256> {
         // Solidity: function requestUnstake(address operator, uint256 amount) external
         let call = self.contract.requestUnstake(operator, amount);
+        let _guard = self.tx_lock.lock().await;
         let pending = call.send().await?;
         let receipt = pending.get_receipt().await?;
         Ok(receipt.transaction_hash)
@@ -116,6 +125,7 @@ impl<P: Provider + Clone> StakingOperatorsClient<P> {
     pub async fn withdraw_unstaked(&self, operator: Address) -> anyhow::Result<H256> {
         // Solidity: function withdrawUnstaked(address operator) external
         let call = self.contract.withdrawUnstaked(operator);
+        let _guard = self.tx_lock.lock().await;
         let pending = call.send().await?;
         let receipt = pending.get_receipt().await?;
         Ok(receipt.transaction_hash)
@@ -129,6 +139,7 @@ impl<P: Provider + Clone> StakingOperatorsClient<P> {
     pub async fn register_operator(&self, metadata_uri: String) -> anyhow::Result<H256> {
         // Solidity: function registerOperator(string calldata metadataURI) external
         let call = self.contract.registerOperator(metadata_uri);
+        let _guard = self.tx_lock.lock().await;
         let pending = call.send().await?;
         let receipt = pending.get_receipt().await?;
         Ok(receipt.transaction_hash)
@@ -138,6 +149,7 @@ impl<P: Provider + Clone> StakingOperatorsClient<P> {
     pub async fn deactivate_operator(&self) -> anyhow::Result<H256> {
         // Solidity: function deactivateOperator() external
         let call = self.contract.deactivateOperator();
+        let _guard = self.tx_lock.lock().await;
         let pending = call.send().await?;
         let receipt = pending.get_receipt().await?;
         Ok(receipt.transaction_hash)
