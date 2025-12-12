@@ -93,60 +93,118 @@ impl<P: Provider + Clone> NilAVRouterClient<P> {
     // ------------------------------------------------------------------------
 
     /// Submit an HTX for verification
-    pub async fn submit_htx(&self, htx: &Htx) -> anyhow::Result<(B256, B256)> {
-        let call = self.contract.submitHTX(htx.try_into()?);
+    pub async fn submit_htx(&self, htx: &Htx) -> anyhow::Result<B256> {
+        let raw_htx: alloy::primitives::Bytes = htx.try_into()?;
+        let call = self.contract.submitHTX(raw_htx.clone());
+
+        // First simulate the call to catch reverts with proper error messages
+        if let Err(e) = call.call().await {
+            let decoded = super::errors::decode_any_error(&e);
+            return Err(anyhow::anyhow!("submitHTX reverted: {}", decoded));
+        }
+        
+        // Estimate gas and add buffer for safety
+        let estimated_gas = call.estimate_gas().await.map_err(|e| {
+            let decoded = super::errors::decode_any_error(&e);
+            anyhow::anyhow!("submitHTX would revert: {}", decoded)
+        })?;
+        let gas_with_buffer = estimated_gas.saturating_add(estimated_gas / 5); // +20% buffer for variable node selection
+        let call_with_gas = call.gas(gas_with_buffer);
         let _guard = self.tx_lock.lock().await;
-        let pending = call.send().await?;
+        let pending = call_with_gas.send().await.map_err(|e| {
+            let decoded = super::errors::decode_any_error(&e);
+            anyhow::anyhow!("submitHTX failed to send: {}", decoded)
+        })?;
+        
         let receipt = pending.get_receipt().await?;
+        if !receipt.status() {
+            // Check if it was an OutOfGas error by comparing gas used to gas limit
+            let gas_used = receipt.gas_used;
+            if gas_used >= gas_with_buffer {
+                return Err(anyhow::anyhow!(
+                    "submitHTX ran out of gas (used {} of {} limit). \
+                    This can happen when many nodes are selected. Tx: {:?}",
+                    gas_used, gas_with_buffer, receipt.transaction_hash
+                ));
+            }
+            
+            // Transaction was included but reverted - re-simulate at the SAME block to get the error
+            // This is important because htxId = keccak256(rawHTXHash, sender, block.number)
+            // so simulating at a different block would give a different htxId
+            if let Some(block_number) = receipt.block_number {
+                let retry_call = self.contract.submitHTX(raw_htx).block(block_number.into());
+                if let Err(e) = retry_call.call().await {
+                    let decoded = super::errors::decode_any_error(&e);
+                    return Err(anyhow::anyhow!(
+                        "submitHTX reverted: {}. Tx: {:?}",
+                        decoded, receipt.transaction_hash
+                    ));
+                }
+                // Re-simulation succeeded - likely ran out of gas but gas check above didn't catch it
+                return Err(anyhow::anyhow!(
+                    "submitHTX failed on-chain (possible OutOfGas - re-simulation succeeded). Tx: {:?}",
+                    receipt.transaction_hash
+                ));
+            }
+            // No block number in receipt - shouldn't happen
+            return Err(anyhow::anyhow!(
+                "submitHTX reverted on-chain (no block number in receipt). Tx: {:?}",
+                receipt.transaction_hash
+            ));
+        }
 
-        // Extract htxId from logs
-        let htx_id = if let Some(log) = receipt.logs().first() {
-            log.topics()
-                .get(1)
-                .copied()
-                .ok_or_else(|| anyhow::anyhow!("No htxId in logs"))?
-        } else {
-            return Err(anyhow::anyhow!("No logs in receipt"));
-        };
-
-        Ok((receipt.transaction_hash, htx_id))
+        Ok(receipt.transaction_hash)
     }
 
     /// Respond to an HTX assignment (called by assigned node)
     pub async fn respond_htx(&self, htx_id: B256, result: bool) -> anyhow::Result<B256> {
         let call = self.contract.respondHTX(htx_id, result);
-        let _guard = self.tx_lock.lock().await;
-        let pending = call.send().await.map_err(|e| {
-            // Try to decode error message from revert data
-            let error_msg = e.to_string();
-
-            // Try different patterns for finding revert data
-            let revert_data = error_msg
-                .split("reverted with data: ")
-                .nth(1)
-                .or_else(|| error_msg.split("revert data: ").nth(1))
-                .or_else(|| {
-                    error_msg.find("0x08c379a0").map(|start| {
-                        let remaining = &error_msg[start..];
-                        let end = remaining
-                            .char_indices()
-                            .skip(2)
-                            .find(|(_, c)| !c.is_ascii_hexdigit())
-                            .map(|(i, _)| i)
-                            .unwrap_or(remaining.len());
-                        &error_msg[start..start + end]
-                    })
-                });
-
-            if let Some(data) = revert_data {
-                if let Some(decoded) = super::decode_error_string(data.trim()) {
-                    return anyhow::anyhow!("Contract call reverted: {}", decoded);
-                }
-            }
-
-            e.into()
+        
+        // First simulate the call to catch reverts with proper error messages
+        if let Err(e) = call.call().await {
+            let decoded = super::errors::decode_any_error(&e);
+            return Err(anyhow::anyhow!("respondHTX reverted: {}", decoded));
+        }
+        
+        // Estimate gas and add buffer for safety
+        let estimated_gas = call.estimate_gas().await.map_err(|e| {
+            let decoded = super::errors::decode_any_error(&e);
+            anyhow::anyhow!("respondHTX would revert: {}", decoded)
         })?;
+        let gas_with_buffer = estimated_gas.saturating_add(estimated_gas / 5); // +20%
+        
+        let call_with_gas = call.gas(gas_with_buffer);
+        
+        let _guard = self.tx_lock.lock().await;
+        let pending = call_with_gas.send().await.map_err(|e| {
+            let decoded = super::errors::decode_any_error(&e);
+            anyhow::anyhow!("respondHTX failed to send: {}", decoded)
+        })?;
+        
         let receipt = pending.get_receipt().await?;
+        if !receipt.status() {
+            // Transaction was included but reverted - re-simulate at the SAME block to get the error
+            if let Some(block_number) = receipt.block_number {
+                let retry_call = self.contract.respondHTX(htx_id, result).block(block_number.into());
+                if let Err(e) = retry_call.call().await {
+                    let decoded = super::errors::decode_any_error(&e);
+                    return Err(anyhow::anyhow!(
+                        "respondHTX reverted: {}. Tx: {:?}",
+                        decoded, receipt.transaction_hash
+                    ));
+                }
+                // Re-simulation succeeded
+                return Err(anyhow::anyhow!(
+                    "respondHTX reverted (re-simulation at block {} succeeded, state changed). Tx: {:?}",
+                    block_number, receipt.transaction_hash
+                ));
+            }
+            return Err(anyhow::anyhow!(
+                "respondHTX reverted on-chain (no block number in receipt). Tx: {:?}",
+                receipt.transaction_hash
+            ));
+        }
+        
         Ok(receipt.transaction_hash)
     }
 
@@ -447,56 +505,6 @@ impl<P: Provider + Clone> NilAVRouterClient<P> {
             .from_block(from_block);
         let events = event_filter.query().await?;
         Ok(events.into_iter().map(|(event, _log)| event).collect())
-    }
-
-    // ------------------------------------------------------------------------
-    // Deprecated Event Query Methods (use StakingOperatorsClient)
-    // ------------------------------------------------------------------------
-
-    /// Get node registered events (DEPRECATED - use StakingOperatorsClient)
-    /// Node registration events moved to StakingOperators contract.
-    #[deprecated(note = "Use StakingOperatorsClient.get_operator_registered_events() instead")]
-    pub async fn get_node_registered_events(&self) -> anyhow::Result<Vec<NodeRegisteredFilter>> {
-        Err(anyhow::anyhow!(
-            "NodeRegistered events are no longer emitted by NilAVRouter. Use StakingOperatorsClient instead."
-        ))
-    }
-
-    /// Get node registered events with lookback (DEPRECATED - use StakingOperatorsClient)
-    #[deprecated(
-        note = "Use StakingOperatorsClient.get_operator_registered_events_with_lookback() instead"
-    )]
-    pub async fn get_node_registered_events_with_lookback(
-        &self,
-        _lookback_blocks: u64,
-    ) -> anyhow::Result<Vec<NodeRegisteredFilter>> {
-        Err(anyhow::anyhow!(
-            "NodeRegistered events are no longer emitted by NilAVRouter. Use StakingOperatorsClient instead."
-        ))
-    }
-
-    /// Get node deregistered events (DEPRECATED - use StakingOperatorsClient)
-    /// Node deregistration events moved to StakingOperators contract.
-    #[deprecated(note = "Use StakingOperatorsClient.get_operator_deactivated_events() instead")]
-    pub async fn get_node_deregistered_events(
-        &self,
-    ) -> anyhow::Result<Vec<NodeDeregisteredFilter>> {
-        Err(anyhow::anyhow!(
-            "NodeDeregistered events are no longer emitted by NilAVRouter. Use StakingOperatorsClient instead."
-        ))
-    }
-
-    /// Get node deregistered events with lookback (DEPRECATED - use StakingOperatorsClient)
-    #[deprecated(
-        note = "Use StakingOperatorsClient.get_operator_deactivated_events_with_lookback() instead"
-    )]
-    pub async fn get_node_deregistered_events_with_lookback(
-        &self,
-        _lookback_blocks: u64,
-    ) -> anyhow::Result<Vec<NodeDeregisteredFilter>> {
-        Err(anyhow::anyhow!(
-            "NodeDeregistered events are no longer emitted by NilAVRouter. Use StakingOperatorsClient instead."
-        ))
     }
 }
 

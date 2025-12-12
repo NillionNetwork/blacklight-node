@@ -85,28 +85,114 @@ impl<P: Provider + Clone> TESTTokenClient<P> {
     /// Transfers tokens to a recipient
     pub async fn transfer(&self, to: Address, amount: U256) -> anyhow::Result<B256> {
         let call = self.contract.transfer(to, amount);
+        
+        // Pre-simulate to catch errors with proper messages
+        if let Err(e) = call.call().await {
+            return Err(Self::decode_error(e));
+        }
+        
         let _guard = self.tx_lock.lock().await;
-        let pending = call.send().await?;
+        let pending = call.send().await.map_err(Self::decode_error)?;
         let receipt = pending.get_receipt().await?;
+        
+        if !receipt.status() {
+            if let Err(e) = call.call().await {
+                let decoded = super::errors::decode_any_error(&e);
+                return Err(anyhow::anyhow!(
+                    "transfer reverted: {}. Tx hash: {:?}",
+                    decoded, receipt.transaction_hash
+                ));
+            }
+            return Err(anyhow::anyhow!(
+                "transfer reverted on-chain. Tx hash: {:?}",
+                receipt.transaction_hash
+            ));
+        }
         Ok(receipt.transaction_hash)
     }
 
     /// Approves a spender to spend tokens on behalf of the caller
     pub async fn approve(&self, spender: Address, amount: U256) -> anyhow::Result<B256> {
         let call = self.contract.approve(spender, amount);
+        
+        // Pre-simulate to catch errors with proper messages
+        if let Err(e) = call.call().await {
+            return Err(Self::decode_error(e));
+        }
+        
         let _guard = self.tx_lock.lock().await;
-        let pending = call.send().await?;
+        let pending = call.send().await.map_err(Self::decode_error)?;
         let receipt = pending.get_receipt().await?;
+        
+        if !receipt.status() {
+            if let Err(e) = call.call().await {
+                let decoded = super::errors::decode_any_error(&e);
+                return Err(anyhow::anyhow!(
+                    "approve reverted: {}. Tx hash: {:?}",
+                    decoded, receipt.transaction_hash
+                ));
+            }
+            return Err(anyhow::anyhow!(
+                "approve reverted on-chain. Tx hash: {:?}",
+                receipt.transaction_hash
+            ));
+        }
         Ok(receipt.transaction_hash)
     }
 
     /// Mints new tokens (requires owner privileges)
     pub async fn mint(&self, to: Address, amount: U256) -> anyhow::Result<B256> {
         let call = self.contract.mint(to, amount);
+        
+        // Pre-simulate to catch errors with proper messages
+        if let Err(e) = call.call().await {
+            return Err(Self::decode_error(e));
+        }
+        
         let _guard = self.tx_lock.lock().await;
-        let pending = call.send().await?;
+        let pending = call.send().await.map_err(Self::decode_error)?;
         let receipt = pending.get_receipt().await?;
+        
+        if !receipt.status() {
+            if let Err(e) = call.call().await {
+                let decoded = super::errors::decode_any_error(&e);
+                return Err(anyhow::anyhow!(
+                    "mint reverted: {}. Tx hash: {:?}",
+                    decoded, receipt.transaction_hash
+                ));
+            }
+            return Err(anyhow::anyhow!(
+                "mint reverted on-chain. Tx hash: {:?}",
+                receipt.transaction_hash
+            ));
+        }
         Ok(receipt.transaction_hash)
+    }
+
+    // ------------------------------------------------------------------------
+    // Error Handling
+    // ------------------------------------------------------------------------
+
+    /// Decode contract errors into human-readable messages
+    fn decode_error<E: std::fmt::Display + std::fmt::Debug>(e: E) -> anyhow::Error {
+        let error_str = e.to_string();
+        let decoded = super::errors::decode_any_error(&e);
+
+        // If we successfully decoded a revert, use that
+        if !matches!(decoded, super::errors::DecodedRevert::NoRevertData(_)) {
+            return anyhow::anyhow!("Contract reverted: {}", decoded);
+        }
+
+        // Common error patterns
+        if error_str.contains("insufficient funds") {
+            anyhow::anyhow!("Insufficient ETH for gas. Please fund the account.")
+        } else if error_str.contains("replacement transaction underpriced") {
+            anyhow::anyhow!("Transaction underpriced. A pending transaction may be blocking.")
+        } else if error_str.contains("nonce too low") {
+            anyhow::anyhow!("Nonce too low. A transaction may have been confirmed already.")
+        } else {
+            anyhow::anyhow!("Transaction failed: {}", e)
+        }
     }
 
     // ------------------------------------------------------------------------

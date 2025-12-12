@@ -6,9 +6,6 @@ use alloy::{
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-// Keep an H256 alias if you still like that name
-type H256 = B256;
-
 // Generate type-safe contract bindings from ABI
 sol!(
     #[sol(rpc)]
@@ -102,32 +99,92 @@ impl<P: Provider + Clone> StakingOperatorsClient<P> {
     // ------------------------------------------------------------------------
 
     /// Stakes tokens to a specific operator
-    pub async fn stake_to(&self, operator: Address, amount: U256) -> anyhow::Result<H256> {
-        // Solidity: function stakeTo(address operator, uint256 amount) external
+    pub async fn stake_to(&self, operator: Address, amount: U256) -> anyhow::Result<B256> {
         let call = self.contract.stakeTo(operator, amount);
+        
+        // Pre-simulate to catch errors with proper messages
+        if let Err(e) = call.call().await {
+            return Err(Self::decode_error(e));
+        }
+        
         let _guard = self.tx_lock.lock().await;
-        let pending = call.send().await?;
+        let pending = call.send().await.map_err(Self::decode_error)?;
         let receipt = pending.get_receipt().await?;
+        
+        if !receipt.status() {
+            // Re-simulate to get the error message
+            if let Err(e) = call.call().await {
+                let decoded = super::errors::decode_any_error(&e);
+                return Err(anyhow::anyhow!(
+                    "stakeTo reverted: {}. Tx hash: {:?}",
+                    decoded, receipt.transaction_hash
+                ));
+            }
+            return Err(anyhow::anyhow!(
+                "stakeTo reverted on-chain. Tx hash: {:?}",
+                receipt.transaction_hash
+            ));
+        }
         Ok(receipt.transaction_hash)
     }
 
     /// Requests to unstake tokens from an operator
-    pub async fn request_unstake(&self, operator: Address, amount: U256) -> anyhow::Result<H256> {
-        // Solidity: function requestUnstake(address operator, uint256 amount) external
+    pub async fn request_unstake(&self, operator: Address, amount: U256) -> anyhow::Result<B256> {
         let call = self.contract.requestUnstake(operator, amount);
+        
+        // Pre-simulate to catch errors with proper messages
+        if let Err(e) = call.call().await {
+            return Err(Self::decode_error(e));
+        }
+        
         let _guard = self.tx_lock.lock().await;
-        let pending = call.send().await?;
+        let pending = call.send().await.map_err(Self::decode_error)?;
         let receipt = pending.get_receipt().await?;
+        
+        if !receipt.status() {
+            // Re-simulate to get the error message
+            if let Err(e) = call.call().await {
+                let decoded = super::errors::decode_any_error(&e);
+                return Err(anyhow::anyhow!(
+                    "requestUnstake reverted: {}. Tx hash: {:?}",
+                    decoded, receipt.transaction_hash
+                ));
+            }
+            return Err(anyhow::anyhow!(
+                "requestUnstake reverted on-chain. Tx hash: {:?}",
+                receipt.transaction_hash
+            ));
+        }
         Ok(receipt.transaction_hash)
     }
 
     /// Withdraws unstaked tokens after the unbonding period has passed
-    pub async fn withdraw_unstaked(&self, operator: Address) -> anyhow::Result<H256> {
-        // Solidity: function withdrawUnstaked(address operator) external
+    pub async fn withdraw_unstaked(&self, operator: Address) -> anyhow::Result<B256> {
         let call = self.contract.withdrawUnstaked(operator);
+        
+        // Pre-simulate to catch errors with proper messages
+        if let Err(e) = call.call().await {
+            return Err(Self::decode_error(e));
+        }
+        
         let _guard = self.tx_lock.lock().await;
-        let pending = call.send().await?;
+        let pending = call.send().await.map_err(Self::decode_error)?;
         let receipt = pending.get_receipt().await?;
+        
+        if !receipt.status() {
+            // Re-simulate to get the error message
+            if let Err(e) = call.call().await {
+                let decoded = super::errors::decode_any_error(&e);
+                return Err(anyhow::anyhow!(
+                    "withdrawUnstaked reverted: {}. Tx hash: {:?}",
+                    decoded, receipt.transaction_hash
+                ));
+            }
+            return Err(anyhow::anyhow!(
+                "withdrawUnstaked reverted on-chain. Tx hash: {:?}",
+                receipt.transaction_hash
+            ));
+        }
         Ok(receipt.transaction_hash)
     }
 
@@ -136,22 +193,88 @@ impl<P: Provider + Clone> StakingOperatorsClient<P> {
     // ------------------------------------------------------------------------
 
     /// Registers the caller as an operator or updates their metadata
-    pub async fn register_operator(&self, metadata_uri: String) -> anyhow::Result<H256> {
-        // Solidity: function registerOperator(string calldata metadataURI) external
+    pub async fn register_operator(&self, metadata_uri: String) -> anyhow::Result<B256> {
         let call = self.contract.registerOperator(metadata_uri);
+        
+        // Pre-simulate to catch errors with proper messages
+        if let Err(e) = call.call().await {
+            return Err(Self::decode_error(e));
+        }
+        
         let _guard = self.tx_lock.lock().await;
-        let pending = call.send().await?;
+        let pending = call.send().await.map_err(Self::decode_error)?;
         let receipt = pending.get_receipt().await?;
+        
+        if !receipt.status() {
+            // Re-simulate to get the error message
+            if let Err(e) = call.call().await {
+                let decoded = super::errors::decode_any_error(&e);
+                return Err(anyhow::anyhow!(
+                    "registerOperator reverted: {}. Tx hash: {:?}",
+                    decoded, receipt.transaction_hash
+                ));
+            }
+            return Err(anyhow::anyhow!(
+                "registerOperator reverted on-chain. Tx hash: {:?}",
+                receipt.transaction_hash
+            ));
+        }
         Ok(receipt.transaction_hash)
     }
 
     /// Deactivates the caller as an operator
-    pub async fn deactivate_operator(&self) -> anyhow::Result<H256> {
-        // Solidity: function deactivateOperator() external
+    pub async fn deactivate_operator(&self) -> anyhow::Result<B256> {
         let call = self.contract.deactivateOperator();
+        
+        // Pre-simulate to catch errors with proper messages
+        if let Err(e) = call.call().await {
+            return Err(Self::decode_error(e));
+        }
+        
         let _guard = self.tx_lock.lock().await;
-        let pending = call.send().await?;
+        let pending = call.send().await.map_err(Self::decode_error)?;
         let receipt = pending.get_receipt().await?;
+        
+        if !receipt.status() {
+            // Re-simulate to get the error message
+            if let Err(e) = call.call().await {
+                let decoded = super::errors::decode_any_error(&e);
+                return Err(anyhow::anyhow!(
+                    "deactivateOperator reverted: {}. Tx hash: {:?}",
+                    decoded, receipt.transaction_hash
+                ));
+            }
+            return Err(anyhow::anyhow!(
+                "deactivateOperator reverted on-chain. Tx hash: {:?}",
+                receipt.transaction_hash
+            ));
+        }
         Ok(receipt.transaction_hash)
+    }
+
+    // ------------------------------------------------------------------------
+    // Error Handling
+    // ------------------------------------------------------------------------
+
+    /// Decode contract errors into human-readable messages
+    fn decode_error<E: std::fmt::Display + std::fmt::Debug>(e: E) -> anyhow::Error {
+        let error_str = e.to_string();
+        let decoded = super::errors::decode_any_error(&e);
+
+        // If we successfully decoded a revert, use that
+        if !matches!(decoded, super::errors::DecodedRevert::NoRevertData(_)) {
+            return anyhow::anyhow!("Contract reverted: {}", decoded);
+        }
+
+        // Common error patterns
+        if error_str.contains("insufficient funds") {
+            anyhow::anyhow!("Insufficient ETH for gas. Please fund the account.")
+        } else if error_str.contains("replacement transaction underpriced") {
+            anyhow::anyhow!("Transaction underpriced. A pending transaction may be blocking.")
+        } else if error_str.contains("nonce too low") {
+            anyhow::anyhow!("Nonce too low. A transaction may have been confirmed already.")
+        } else {
+            anyhow::anyhow!("Transaction failed: {}", e)
+        }
     }
 }

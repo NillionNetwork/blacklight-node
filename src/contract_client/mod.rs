@@ -1,10 +1,9 @@
-use crate::config::consts::ERROR_STRING_SELECTOR;
 use alloy::primitives::Address;
 
 // ============================================================================
 // Module Declarations
 // ============================================================================
-
+pub mod errors;
 pub mod nilav_client;
 pub mod nilav_router;
 pub mod staking_operators;
@@ -24,7 +23,7 @@ pub use test_token::TESTTokenClient;
 // ============================================================================
 
 // NilAVRouter events
-pub use nilav_router::{Assignment, NilAVRouter, NodeDeregisteredFilter, NodeRegisteredFilter};
+pub use nilav_router::{Assignment, NilAVRouter};
 
 // Re-export NilAVRouter event types with Filter suffix for backwards compatibility
 pub use nilav_router::NilAVRouter::HTXAssigned as HtxassignedFilter;
@@ -120,70 +119,10 @@ impl ContractConfig {
 }
 
 // ============================================================================
-// Utility Functions
+// Error Handling Re-exports
 // ============================================================================
 
-/// Decode a Solidity `Error(string)` revert message from hex-encoded calldata
-///
-/// Solidity reverts with `revert("message")` are encoded as:
-/// - 4-byte selector: `0x08c379a0` (keccak256("Error(string)"))
-/// - ABI-encoded string parameter:
-///   - 32 bytes: offset (always 0x20 for single string)
-///   - 32 bytes: string length
-///   - N bytes: UTF-8 string data (padded to 32-byte boundary)
-///
-/// # Arguments
-/// * `revert_data` - Hex-encoded revert data (with or without "0x" prefix)
-///
-/// # Returns
-/// * `Some(String)` - Decoded error message if valid Error(string) format
-/// * `None` - If not a standard Error(string) revert or decoding fails
-///
-/// # Example
-/// ```ignore
-/// let error = "0x08c379a0..."; // "NilAV: unknown HTX"
-/// let msg = decode_error_string(error);
-/// assert_eq!(msg, Some("NilAV: unknown HTX".to_string()));
-/// ```
-pub fn decode_error_string(revert_data: &str) -> Option<String> {
-    // Strip "0x" prefix if present
-    let data = revert_data.strip_prefix("0x").unwrap_or(revert_data);
-
-    // Check for Error(string) selector
-    if !data.starts_with(ERROR_STRING_SELECTOR) {
-        return None;
-    }
-
-    // Skip 4-byte selector (8 hex chars)
-    let encoded = &data[8..];
-
-    // Need at least 128 hex chars (64 bytes) for offset + length
-    if encoded.len() < 128 {
-        return None;
-    }
-
-    // Parse offset (first 32 bytes, should be 0x20 = 32)
-    let offset_hex = &encoded[0..64];
-    let offset = u64::from_str_radix(offset_hex, 16).ok()?;
-    if offset != 32 {
-        return None; // Invalid offset for single string parameter
-    }
-
-    // Parse string length (next 32 bytes)
-    let length_hex = &encoded[64..128];
-    let length = u64::from_str_radix(length_hex, 16).ok()? as usize;
-
-    // Decode string data (remaining bytes after offset + length)
-    let string_data_hex = &encoded[128..];
-    let string_bytes = hex::decode(string_data_hex).ok()?;
-
-    // Extract only the actual string (ignore padding)
-    if length <= string_bytes.len() {
-        String::from_utf8(string_bytes[..length].to_vec()).ok()
-    } else {
-        None
-    }
-}
+pub use errors::DecodedRevert;
 
 // ============================================================================
 // Tests
@@ -195,31 +134,6 @@ mod tests {
     use crate::types::{Builder, BuilderMeasurement, NilCcMeasurement, NilCcOperator, WorkloadId};
     use std::env;
 
-    // ------------------------------------------------------------------------
-    // Unit Tests - Error Decoding
-    // ------------------------------------------------------------------------
-
-    #[test]
-    fn test_decode_error_string() {
-        // Test decoding a real contract error: "NilAV: unknown HTX"
-        let error_data = "0x08c379a0000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000124e696c41563a20756e6b6e6f776e204854580000000000000000000000000000";
-        let decoded = decode_error_string(error_data);
-        assert_eq!(decoded, Some("NilAV: unknown HTX".to_string()));
-
-        // Test without "0x" prefix
-        let error_data_no_prefix = &error_data[2..];
-        let decoded2 = decode_error_string(error_data_no_prefix);
-        assert_eq!(decoded2, Some("NilAV: unknown HTX".to_string()));
-
-        // Test with invalid function selector
-        let invalid = "0x12345678000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000124e696c41563a20756e6b6e6f776e204854580000000000000000000000000000";
-        assert_eq!(decode_error_string(invalid), None);
-
-        // Test with empty error string
-        let empty_error = "0x08c379a000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000";
-        let decoded_empty = decode_error_string(empty_error);
-        assert_eq!(decoded_empty, Some("".to_string()));
-    }
 
     // ------------------------------------------------------------------------
     // Unit Tests - Configuration
@@ -354,10 +268,9 @@ mod tests {
         };
 
         // Submit and verify
-        let (tx_hash, htx_id) = client.router.submit_htx(&htx).await?;
+        let tx_hash = client.router.submit_htx(&htx).await?;
         println!("HTX submitted successfully:");
         println!("  Transaction: {:?}", tx_hash);
-        println!("  HTX ID: {:?}", htx_id);
 
         Ok(())
     }
