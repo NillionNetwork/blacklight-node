@@ -104,6 +104,7 @@ Build your own Docker image from the repository.
    ```bash
    git clone https://github.com/NillionNetwork/nilAV.git
    cd nilAV
+   git submodule update --init --recursive
    ```
 
 2. **Build the Docker image:**
@@ -159,6 +160,7 @@ Compile the binaries directly on your system.
    ```bash
    git clone https://github.com/NillionNetwork/nilAV.git
    cd nilAV
+   git submodule update --init --recursive
    ```
 
 2. **Compile the smart contract:**

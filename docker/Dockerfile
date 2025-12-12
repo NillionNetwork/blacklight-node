@@ -101,7 +101,8 @@ ARG TARGETPLATFORM
 
 WORKDIR /app
 RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/* && useradd -u 10001 -m appuser && \
-    touch /app/nilav_node.env /app/nilav_monitor.env /app/nilcc_simulator.env
+    touch /app/nilav_node.env /app/nilav_monitor.env /app/nilcc_simulator.env && \
+    chown appuser:appuser /app/nilav_node.env /app/nilav_monitor.env /app/nilcc_simulator.env
 USER appuser
 
 # Runtime stage for nilav_node
@@ -122,3 +123,4 @@ ENTRYPOINT ["/usr/local/bin/nilcc_simulator"]
 FROM base_release AS monitor
 COPY --from=builder /out/bin/monitor /usr/local/bin/monitor
 ENTRYPOINT ["/usr/local/bin/monitor"]
+
