@@ -8,8 +8,7 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use ethers::core::types::{Address, U256};
-use ethers::utils::format_units;
+use alloy::primitives::{Address, U256, utils::format_units};
 use nilav::config::{MonitorCliArgs, MonitorConfig};
 use nilav::contract_client::{ContractConfig, NilAVClient};
 use ratatui::{
@@ -201,7 +200,7 @@ async fn main() -> Result<()> {
     let client = NilAVClient::new(contract_config, config.private_key).await?;
 
     // Initial data fetch for node count and list
-    let node_count = client.router.node_count().await?.as_usize();
+    let node_count = client.router.node_count().await?.to::<usize>();
 
     // Get all registered nodes from router
     let registered_nodes = client.router.get_nodes().await?;
@@ -213,7 +212,7 @@ async fn main() -> Result<()> {
         for addr in staked_operators {
             if let Ok(stake) = client.staking.stake_of(addr).await {
                 let is_registered = registered_set.contains(&addr);
-                let eth_balance = client.get_balance_of(addr).await.unwrap_or(U256::zero());
+                let eth_balance = client.get_balance_of(addr).await.unwrap_or(U256::ZERO);
                 nodes.push(NodeInfo {
                     address: addr,
                     stake,
@@ -233,8 +232,8 @@ async fn main() -> Result<()> {
         .token
         .balance_of(signer_address)
         .await
-        .unwrap_or(U256::zero());
-    let eth_balance = client.get_balance().await.unwrap_or(U256::zero());
+        .unwrap_or(U256::ZERO);
+    let eth_balance = client.get_balance().await.unwrap_or(U256::ZERO);
 
     // Build token holders list from system addresses (nodes and operators)
     // Collect all relevant addresses: registered nodes + all staked operators
@@ -258,7 +257,7 @@ async fn main() -> Result<()> {
     let mut token_holders = Vec::new();
     for addr in &token_holder_addresses {
         if let Ok(balance) = client.token.balance_of(*addr).await {
-            if balance > U256::zero() {
+            if balance > U256::ZERO {
                 token_holders.push(TokenHolder {
                     address: *addr,
                     balance,
@@ -278,7 +277,7 @@ async fn main() -> Result<()> {
         if let Ok(events) = client.router.get_htx_submitted_events().await {
             total_events += events.len();
             for e in events {
-                let htx_id = bytes_to_hex(&e.htx_id);
+                let htx_id = bytes_to_hex(e.htxId.as_slice());
                 let sender = format!("{:?}", e.sender);
                 htx_tracking.insert(
                     htx_id.clone(),
@@ -297,7 +296,7 @@ async fn main() -> Result<()> {
         if let Ok(events) = client.router.get_htx_assigned_events().await {
             total_events += events.len();
             for e in events {
-                let htx_id = bytes_to_hex(&e.htx_id);
+                let htx_id = bytes_to_hex(e.htxId.as_slice());
                 let node = format!("{:?}", e.node);
                 htx_tracking
                     .entry(htx_id.clone())
@@ -322,7 +321,7 @@ async fn main() -> Result<()> {
         if let Ok(events) = client.router.get_htx_responded_events().await {
             total_events += events.len();
             for e in events {
-                let htx_id = bytes_to_hex(&e.htx_id);
+                let htx_id = bytes_to_hex(e.htxId.as_slice());
                 let node = format!("{:?}", e.node);
                 htx_tracking
                     .entry(htx_id.clone())
@@ -543,7 +542,7 @@ async fn run_monitor_loop(
                                             let eth_balance = client
                                                 .get_balance_of(addr)
                                                 .await
-                                                .unwrap_or(U256::zero());
+                                                .unwrap_or(U256::ZERO);
                                             nodes.push(NodeInfo {
                                                 address: addr,
                                                 stake,
@@ -562,9 +561,9 @@ async fn run_monitor_loop(
                                         .token
                                         .balance_of(signer_address)
                                         .await
-                                        .unwrap_or(U256::zero());
+                                        .unwrap_or(U256::ZERO);
                                     let eth_balance =
-                                        client.get_balance().await.unwrap_or(U256::zero());
+                                        client.get_balance().await.unwrap_or(U256::ZERO);
 
                                     // Fetch updated token holder balances from system addresses
                                     // Collect addresses from registered nodes and staked operators
@@ -589,7 +588,7 @@ async fn run_monitor_loop(
                                     let mut token_holders = Vec::new();
                                     for addr in token_holder_addresses.iter() {
                                         if let Ok(balance) = client.token.balance_of(*addr).await {
-                                            if balance > U256::zero() {
+                                            if balance > U256::ZERO {
                                                 token_holders.push(TokenHolder {
                                                     address: *addr,
                                                     balance,
@@ -1288,13 +1287,12 @@ async fn listen_htx_submitted(
     client: Arc<NilAVClient>,
     state: Arc<Mutex<MonitorState>>,
 ) -> Result<()> {
-    client
-        .router
-        .clone()
+    let router_arc = Arc::new(client.router.clone());
+    router_arc
         .listen_htx_submitted_events(move |event| {
             let state = state.clone();
             async move {
-                let htx_id = bytes_to_hex(&event.htx_id);
+                let htx_id = bytes_to_hex(event.htxId.as_slice());
                 let sender = format!("{:?}", event.sender);
 
                 let mut state_guard = state.lock().await;
@@ -1324,13 +1322,12 @@ async fn listen_htx_assigned(
     client: Arc<NilAVClient>,
     state: Arc<Mutex<MonitorState>>,
 ) -> Result<()> {
-    client
-        .router
-        .clone()
+    let router_arc = Arc::new(client.router.clone());
+    router_arc
         .listen_htx_assigned_events(move |event| {
             let state = state.clone();
             async move {
-                let htx_id = bytes_to_hex(&event.htx_id);
+                let htx_id = bytes_to_hex(event.htxId.as_slice());
                 let node = format!("{:?}", event.node);
 
                 let mut state_guard = state.lock().await;
@@ -1366,13 +1363,12 @@ async fn listen_htx_responded(
     client: Arc<NilAVClient>,
     state: Arc<Mutex<MonitorState>>,
 ) -> Result<()> {
-    client
-        .router
-        .clone()
+    let router_arc = Arc::new(client.router.clone());
+    router_arc
         .listen_htx_responded_events(move |event| {
             let state = state.clone();
             async move {
-                let htx_id = bytes_to_hex(&event.htx_id);
+                let htx_id = bytes_to_hex(event.htxId.as_slice());
                 let node = format!("{:?}", event.node);
 
                 let mut state_guard = state.lock().await;
@@ -2299,9 +2295,8 @@ async fn listen_token_transfers(
     client: Arc<NilAVClient>,
     state: Arc<Mutex<MonitorState>>,
 ) -> Result<()> {
-    client
-        .token
-        .clone()
+    let token_arc = Arc::new(client.token.clone());
+    token_arc
         .listen_transfer_events(move |_event| {
             let state = state.clone();
             let client = client.clone();
@@ -2333,7 +2328,7 @@ async fn listen_token_transfers(
                 let mut holders = Vec::new();
                 for addr in system_addresses {
                     if let Ok(balance) = client.token.balance_of(addr).await {
-                        if balance > U256::zero() {
+                        if balance > U256::ZERO {
                             holders.push(TokenHolder {
                                 address: addr,
                                 balance,

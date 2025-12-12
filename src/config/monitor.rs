@@ -1,6 +1,6 @@
+use alloy::primitives::Address;
 use anyhow::Result;
 use clap::Parser;
-use ethers::core::types::Address;
 
 use crate::config::consts::{
     DEFAULT_ROUTER_CONTRACT_ADDRESS, DEFAULT_RPC_URL, DEFAULT_STAKING_CONTRACT_ADDRESS,

@@ -1,10 +1,5 @@
 use crate::config::consts::ERROR_STRING_SELECTOR;
-use ethers::core::types::Address;
-pub use ethers::middleware::{NonceManagerMiddleware, SignerMiddleware};
-use ethers::providers::{Provider, Ws};
-use ethers::signers::LocalWallet;
-
-pub type SignedWsProvider = NonceManagerMiddleware<SignerMiddleware<Provider<Ws>, LocalWallet>>;
+use alloy::primitives::Address;
 
 // ============================================================================
 // Module Declarations
@@ -29,20 +24,33 @@ pub use test_token::TESTTokenClient;
 // ============================================================================
 
 // NilAVRouter events
-pub use nilav_router::{
-    Assignment, HtxassignedFilter, HtxrespondedFilter, HtxsubmittedFilter, NilAVRouter,
-    NodeDeregisteredFilter, NodeRegisteredFilter,
-};
+pub use nilav_router::{Assignment, NilAVRouter, NodeDeregisteredFilter, NodeRegisteredFilter};
+
+// Re-export NilAVRouter event types with Filter suffix for backwards compatibility
+pub use nilav_router::NilAVRouter::HTXAssigned as HtxassignedFilter;
+pub use nilav_router::NilAVRouter::HTXResponded as HtxrespondedFilter;
+pub use nilav_router::NilAVRouter::HTXSubmitted as HtxsubmittedFilter;
 
 // StakingOperators events
-pub use staking_operators::{
-    JailedFilter, OperatorDeactivatedFilter, OperatorRegisteredFilter, SlashedFilter,
-    StakedToFilter, StakingOperators, UnstakeDelayUpdatedFilter, UnstakeRequestedFilter,
-    UnstakedWithdrawnFilter,
-};
+pub use staking_operators::StakingOperators;
+
+// Re-export StakingOperators event types with Filter suffix for backwards compatibility
+pub use staking_operators::StakingOperators::Jailed as JailedFilter;
+pub use staking_operators::StakingOperators::OperatorDeactivated as OperatorDeactivatedFilter;
+pub use staking_operators::StakingOperators::OperatorRegistered as OperatorRegisteredFilter;
+pub use staking_operators::StakingOperators::Slashed as SlashedFilter;
+pub use staking_operators::StakingOperators::StakedTo as StakedToFilter;
+pub use staking_operators::StakingOperators::UnstakeDelayUpdated as UnstakeDelayUpdatedFilter;
+pub use staking_operators::StakingOperators::UnstakeRequested as UnstakeRequestedFilter;
+pub use staking_operators::StakingOperators::UnstakedWithdrawn as UnstakedWithdrawnFilter;
 
 // TESTToken events
-pub use test_token::{ApprovalFilter, OwnershipTransferredFilter, TESTToken, TransferFilter};
+pub use test_token::TESTToken;
+
+// Re-export TESTToken event types with Filter suffix for backwards compatibility
+pub use test_token::TESTToken::Approval as ApprovalFilter;
+pub use test_token::TESTToken::OwnershipTransferred as OwnershipTransferredFilter;
+pub use test_token::TESTToken::Transfer as TransferFilter;
 
 // ============================================================================
 // Type Aliases

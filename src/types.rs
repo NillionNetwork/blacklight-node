@@ -1,5 +1,5 @@
 use crate::json::stable_stringify;
-use ethers::types::Bytes;
+use alloy::primitives::Bytes;
 use serde::{Deserialize, Serialize};
 use serde_with::{hex::Hex, serde_as};
 

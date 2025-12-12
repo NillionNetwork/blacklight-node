@@ -1,37 +1,41 @@
-use ethers::{
-    contract::abigen,
-    core::types::{Address, U256},
+use alloy::{
+    primitives::{Address, B256, U256},
+    providers::Provider,
+    sol,
 };
+use futures_util::StreamExt;
 use std::sync::Arc;
 
-use crate::contract_client::SignedWsProvider;
-
 // Generate type-safe contract bindings from ABI
-abigen!(
+sol!(
+    #[sol(rpc)]
+    #[derive(Debug)]
     TESTToken,
-    "./contracts/out/TESTToken.sol/TESTToken.json",
-    event_derives(serde::Deserialize, serde::Serialize)
+    "./contracts/out/TESTToken.sol/TESTToken.json"
 );
 
+// Optional: bring the instance & events into scope
+use TESTToken::TESTTokenInstance;
+// You’ll also get event types generated from the ABI, e.g.
+// use NilAVRouter::{Htxsubmitted, Htxassigned, Htxresponded};
+
 /// WebSocket-based client for interacting with the TESTToken ERC20 contract
-pub struct TESTTokenClient {
-    contract: TESTToken<SignedWsProvider>,
+#[derive(Clone)]
+pub struct TESTTokenClient<P: Provider + Clone> {
+    contract: TESTTokenInstance<P>,
 }
 
-impl TESTTokenClient {
+impl<P: Provider + Clone> TESTTokenClient<P> {
     /// Create a new WebSocket client from configuration
-    pub fn new(
-        provider: Arc<SignedWsProvider>,
-        config: crate::contract_client::ContractConfig,
-    ) -> Self {
+    pub fn new(provider: P, config: crate::contract_client::ContractConfig) -> Self {
         let contract_address = config.token_contract_address;
-        let contract = TESTToken::new(contract_address, provider.clone());
+        let contract = TESTTokenInstance::new(contract_address, provider.clone());
         Self { contract }
     }
 
     /// Get the contract address
     pub fn address(&self) -> Address {
-        self.contract.address()
+        self.contract.address().clone()
     }
 
     // ------------------------------------------------------------------------
@@ -55,12 +59,12 @@ impl TESTTokenClient {
 
     /// Returns the total token supply
     pub async fn total_supply(&self) -> anyhow::Result<U256> {
-        Ok(self.contract.total_supply().call().await?)
+        Ok(self.contract.totalSupply().call().await?)
     }
 
     /// Returns the token balance of an account
     pub async fn balance_of(&self, account: Address) -> anyhow::Result<U256> {
-        Ok(self.contract.balance_of(account).call().await?)
+        Ok(self.contract.balanceOf(account).call().await?)
     }
 
     /// Returns the remaining number of tokens that spender is allowed to spend on behalf of owner
@@ -73,33 +77,26 @@ impl TESTTokenClient {
     // ------------------------------------------------------------------------
 
     /// Transfers tokens to a recipient
-    pub async fn transfer(&self, to: Address, amount: U256) -> anyhow::Result<ethers::types::H256> {
+    pub async fn transfer(&self, to: Address, amount: U256) -> anyhow::Result<B256> {
         let call = self.contract.transfer(to, amount);
-        let tx = call.send().await?;
-        let receipt = tx.await?;
-        let receipt = receipt.ok_or_else(|| anyhow::anyhow!("No transaction receipt"))?;
+        let pending = call.send().await?;
+        let receipt = pending.get_receipt().await?;
         Ok(receipt.transaction_hash)
     }
 
     /// Approves a spender to spend tokens on behalf of the caller
-    pub async fn approve(
-        &self,
-        spender: Address,
-        amount: U256,
-    ) -> anyhow::Result<ethers::types::H256> {
+    pub async fn approve(&self, spender: Address, amount: U256) -> anyhow::Result<B256> {
         let call = self.contract.approve(spender, amount);
-        let tx = call.send().await?;
-        let receipt = tx.await?;
-        let receipt = receipt.ok_or_else(|| anyhow::anyhow!("No transaction receipt"))?;
+        let pending = call.send().await?;
+        let receipt = pending.get_receipt().await?;
         Ok(receipt.transaction_hash)
     }
 
     /// Mints new tokens (requires owner privileges)
-    pub async fn mint(&self, to: Address, amount: U256) -> anyhow::Result<ethers::types::H256> {
+    pub async fn mint(&self, to: Address, amount: U256) -> anyhow::Result<B256> {
         let call = self.contract.mint(to, amount);
-        let tx = call.send().await?;
-        let receipt = tx.await?;
-        let receipt = receipt.ok_or_else(|| anyhow::anyhow!("No transaction receipt"))?;
+        let pending = call.send().await?;
+        let receipt = pending.get_receipt().await?;
         Ok(receipt.transaction_hash)
     }
 
@@ -113,17 +110,16 @@ impl TESTTokenClient {
         mut callback: F,
     ) -> anyhow::Result<()>
     where
-        F: FnMut(TransferFilter) -> Fut + Send,
+        F: FnMut(TESTToken::Transfer) -> Fut + Send,
         Fut: std::future::Future<Output = anyhow::Result<()>> + Send,
     {
-        use ethers::providers::StreamExt;
-
-        let event_stream = self.contract.event::<TransferFilter>();
-        let mut events = event_stream.subscribe().await?;
+        let event_stream = self.contract.event_filter::<TESTToken::Transfer>();
+        let subscription = event_stream.subscribe().await?;
+        let mut events = subscription.into_stream();
 
         while let Some(event_result) = events.next().await {
             match event_result {
-                Ok(event) => {
+                Ok((event, _log)) => {
                     if let Err(e) = callback(event).await {
                         tracing::error!("Error processing Transfer event: {}", e);
                     }

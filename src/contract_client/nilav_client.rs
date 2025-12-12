@@ -1,56 +1,51 @@
-use crate::contract_client::ContractConfig;
 use crate::contract_client::{
-    NilAVRouterClient, SignedWsProvider, StakingOperatorsClient, TESTTokenClient,
+    ContractConfig, NilAVRouterClient, StakingOperatorsClient, TESTTokenClient,
 };
-use ethers::{
-    core::types::{Address, U256},
-    middleware::{NonceManagerMiddleware, SignerMiddleware},
-    providers::{Middleware, Provider, Ws},
-    signers::{LocalWallet, Signer},
-};
-use std::sync::Arc;
 
+use alloy::{
+    network::{Ethereum, EthereumWallet, NetworkWallet},
+    primitives::{Address, B256, TxKind, U256},
+    providers::{DynProvider, Provider, ProviderBuilder, WsConnect},
+    rpc::types::TransactionRequest,
+    signers::local::PrivateKeySigner,
+};
+
+/// High-level wrapper bundling all contract clients with a shared Alloy provider.
 pub struct NilAVClient {
-    provider: Arc<SignedWsProvider>,
-    pub router: Arc<NilAVRouterClient>,
-    pub token: Arc<TESTTokenClient>,
-    pub staking: Arc<StakingOperatorsClient>,
+    provider: DynProvider,
+    wallet: EthereumWallet,
+    pub router: NilAVRouterClient<DynProvider>,
+    pub token: TESTTokenClient<DynProvider>,
+    pub staking: StakingOperatorsClient<DynProvider>,
 }
 
 impl NilAVClient {
     pub async fn new(config: ContractConfig, private_key: String) -> anyhow::Result<Self> {
-        let rpc_url = &config.rpc_url;
-        // Convert HTTP URL to WebSocket URL
+        let rpc_url = config.rpc_url.clone();
         let ws_url = rpc_url
             .replace("http://", "ws://")
             .replace("https://", "wss://");
 
-        // Connect with keepalive enabled (10 second interval)
-        let provider = Provider::<Ws>::connect_with_reconnects(&ws_url, usize::MAX).await?;
-        let chain_id = provider.get_chainid().await?;
+        // Build WS transport and signer wallet
+        let ws = WsConnect::new(ws_url).with_max_retries(u32::MAX);
+        let signer: PrivateKeySigner = private_key.parse::<PrivateKeySigner>()?;
+        let wallet = EthereumWallet::from(signer);
 
-        let wallet = private_key
-            .parse::<LocalWallet>()
-            .expect("Invalid private key")
-            .with_chain_id(chain_id.as_u64());
-
-        // Wrap with SignerMiddleware first, then NonceManagerMiddleware to handle concurrent txs
-        let wallet_address = wallet.address();
-        let signer_middleware = SignerMiddleware::new(provider, wallet);
-        let provider = Arc::new(NonceManagerMiddleware::new(
-            signer_middleware,
-            wallet_address,
-        ));
-
-        let router = Arc::new(NilAVRouterClient::new(provider.clone(), config.clone()));
-        let token = Arc::new(TESTTokenClient::new(provider.clone(), config.clone()));
-        let staking = Arc::new(StakingOperatorsClient::new(
-            provider.clone(),
-            config.clone(),
-        ));
+        // Build a provider that can sign transactions, then erase the concrete type
+        let provider: DynProvider = ProviderBuilder::new()
+            .wallet(wallet.clone())
+            .with_simple_nonce_management()
+            .connect_ws(ws)
+            .await?
+            .erased();
+        // Instantiate contract clients using the shared provider
+        let router = NilAVRouterClient::new(provider.clone(), config.clone());
+        let token = TESTTokenClient::new(provider.clone(), config.clone());
+        let staking = StakingOperatorsClient::new(provider.clone(), config);
 
         Ok(Self {
             provider,
+            wallet,
             router,
             token,
             staking,
@@ -59,30 +54,30 @@ impl NilAVClient {
 
     /// Get the signer address
     pub fn signer_address(&self) -> Address {
-        self.provider.inner().signer().address()
+        <EthereumWallet as NetworkWallet<Ethereum>>::default_signer_address(&self.wallet)
     }
 
     /// Get the balance of the wallet
     pub async fn get_balance(&self) -> anyhow::Result<U256> {
         let address = self.signer_address();
-        Ok(self.provider.get_balance(address, None).await?)
+        Ok(self.provider.get_balance(address).await?)
     }
 
     /// Get the balance of a specific address
     pub async fn get_balance_of(&self, address: Address) -> anyhow::Result<U256> {
-        Ok(self.provider.get_balance(address, None).await?)
+        Ok(self.provider.get_balance(address).await?)
     }
 
     /// Send ETH to an address
-    pub async fn send_eth(&self, to: Address, amount: U256) -> anyhow::Result<ethers::types::H256> {
-        use ethers::providers::Middleware;
-        use ethers::types::TransactionRequest;
+    pub async fn send_eth(&self, to: Address, amount: U256) -> anyhow::Result<B256> {
+        let tx = TransactionRequest {
+            to: Some(TxKind::Call(to)),
+            value: Some(amount),
+            ..Default::default()
+        };
 
-        let tx = TransactionRequest::new().to(to).value(amount);
+        let tx_hash = self.provider.send_transaction(tx).await?.watch().await?;
 
-        let pending_tx = self.provider.send_transaction(tx, None).await?;
-        let receipt = pending_tx.await?;
-        let receipt = receipt.ok_or_else(|| anyhow::anyhow!("No transaction receipt"))?;
-        Ok(receipt.transaction_hash)
+        Ok(tx_hash)
     }
 }
