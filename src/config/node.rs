@@ -12,7 +12,7 @@ use crate::config::consts::{
 use crate::contract_client::NilAVClient;
 use crate::state::StateFile;
 use crate::wallet::{display_wallet_status, generate_wallet, WalletStatus};
-use tracing::{info, error};
+use tracing::{error, info};
 
 /// CLI arguments for the NilAV node
 #[derive(Parser, Debug)]
@@ -119,7 +119,13 @@ impl NodeConfig {
                     "TOKEN_CONTRACT_ADDRESS".to_string(),
                     token_contract_address_str.clone(),
                 );
-                state_file.save_all(&state).map_err(|e| anyhow::anyhow!("Failed to save state file on path {}: {}", STATE_FILE_NODE, e))?;
+                state_file.save_all(&state).map_err(|e| {
+                    anyhow::anyhow!(
+                        "Failed to save state file on path {}: {}",
+                        STATE_FILE_NODE,
+                        e
+                    )
+                })?;
 
                 info!("New wallet generated and saved to {}", STATE_FILE_NODE);
                 info!("Address: {}", public_key);

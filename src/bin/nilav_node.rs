@@ -71,9 +71,11 @@ async fn print_status(client: &NilAVClient, verified_count: u64) -> Result<()> {
 
     info!(
         "📊 STATUS | ETH: {} | STAKED: {} NIL | Verified HTXs: {}",
-        format_ether(eth_balance), format_ether(staked_balance), verified_count
+        format_ether(eth_balance),
+        format_ether(staked_balance),
+        verified_count
     );
-    
+
     Ok(())
 }
 
@@ -123,14 +125,11 @@ async fn process_htx_assignment(
                     info!(tx_hash = ?tx_hash, error = %e, "❌ INVALID HTX verification submitted");
                 }
             }
-            
-            // Print status every 10 HTXs
-            if count % 10 == 0 {
-                if let Err(e) = print_status(&client, count).await {
-                    warn!(error = %e, "Failed to fetch status information");
-                }
+
+            if let Err(e) = print_status(&client, count).await {
+                warn!(error = %e, "Failed to fetch status information");
             }
-            
+
             Ok(())
         }
         Err(e) => {
@@ -179,7 +178,9 @@ async fn process_assignment_backlog(
                 let verifier = verifier.clone();
                 let counter = verified_counter.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = process_htx_assignment(client_clone, htx_id, &verifier, counter).await {
+                    if let Err(e) =
+                        process_htx_assignment(client_clone, htx_id, &verifier, counter).await
+                    {
                         error!(htx_id = ?htx_id, error = %e, "Failed to process pending HTX");
                     }
                 });
@@ -292,7 +293,9 @@ async fn run_event_listener(
                     Ok((responded, _result)) if responded => (),
                     Ok(_) => {
                         info!(htx_id = ?htx_id, "📥 HTX received");
-                        if let Err(e) = process_htx_assignment(client, htx_id, &verifier, counter).await {
+                        if let Err(e) =
+                            process_htx_assignment(client, htx_id, &verifier, counter).await
+                        {
                             error!(htx_id = ?htx_id, error = %e, "Failed to process real-time HTX");
                         }
                     }
@@ -369,7 +372,7 @@ async fn main() -> Result<()> {
         // Keep nilav logs at info level
         .add_directive("nilav=info".parse()?)
         .add_directive("nilav_node=info".parse()?);
-    
+
     tracing_subscriber::registry()
         .with(fmt::layer().with_ansi(true))
         .with(filter)
