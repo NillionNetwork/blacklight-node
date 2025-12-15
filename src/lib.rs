@@ -4,7 +4,6 @@ pub mod types;
 // Utilities
 pub mod config;
 
-pub mod json;
 pub mod state;
 pub mod wallet;
 

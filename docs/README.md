@@ -325,7 +325,7 @@ async fn process_htx_assignment(
     let htx_bytes = ws_client.get_htx(htx_id).await?;
 
     // 2. Parse JSON
-    let htx: Htx = serde_json::from_slice(&htx_bytes)?;
+    let htx: VersionedHtx = serde_json::from_slice(&htx_bytes)?;
 
     // 3. Verify HTX
     let result = verify_htx(&htx).await.is_ok();

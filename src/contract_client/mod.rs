@@ -263,7 +263,8 @@ mod tests {
             builder_measurement: BuilderMeasurement {
                 url: "https://test.com".into(),
             },
-        };
+        }
+        .into();
 
         // Submit and verify
         let tx_hash = client.router.submit_htx(&htx).await?;
