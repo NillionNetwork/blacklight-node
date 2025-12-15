@@ -1,6 +1,6 @@
+use alloy::primitives::{Address, B256};
 use anyhow::Result;
 use clap::Parser;
-use ethers::core::types::{Address, H256};
 use nilav::{
     config::{
         consts::{INITIAL_RECONNECT_DELAY_SECS, MAX_RECONNECT_DELAY_SECS},
@@ -64,7 +64,7 @@ async fn setup_shutdown_handler(shutdown_notify: Arc<Notify>) {
 /// Process a single HTX assignment - verifies and submits result
 async fn process_htx_assignment(
     client: Arc<NilAVClient>,
-    htx_id: H256,
+    htx_id: B256,
     verifier: &HtxVerifier,
 ) -> Result<()> {
     // Retrieve the HTX data from the contract
@@ -132,7 +132,7 @@ async fn process_assignment_backlog(
     );
 
     for event in pending {
-        let htx_id = H256::from(event.htx_id);
+        let htx_id = event.htxId;
 
         // Check if already responded
         match client.router.has_node_responded(htx_id, node_address).await {
@@ -240,35 +240,33 @@ async fn run_event_listener(
 ) -> Result<()> {
     let client_for_callback = client.clone();
 
-    let listen_future = client
-        .router
-        .clone()
-        .listen_htx_assigned_for_node(node_address, move |event| {
-            let client = client_for_callback.clone();
+    let router_arc = Arc::new(client.router.clone());
+    let listen_future = router_arc.listen_htx_assigned_for_node(node_address, move |event| {
+        let client = client_for_callback.clone();
 
-            async move {
-                let htx_id = H256::from(event.htx_id);
-                let node_addr = client.signer_address();
-                let verifier = verifier.clone();
-                tokio::spawn(async move {
-                    // Check if already responded
-                    match client.router.has_node_responded(htx_id, node_addr).await {
-                        Ok((responded, _result)) if responded => (),
-                        Ok(_) => {
-                            info!(htx_id = ?htx_id, "Processing HTX");
-                            if let Err(e) = process_htx_assignment(client, htx_id, &verifier).await {
-                                error!(htx_id = ?htx_id, error = %e, "Failed to process real-time HTX");
-                            }
-                        }
-                        Err(e) => {
-                            error!(htx_id = ?htx_id, error = %e, "Failed to get assignment for HTX");
+        async move {
+            let htx_id = event.htxId;
+            let node_addr = client.signer_address();
+            let verifier = verifier.clone();
+            tokio::spawn(async move {
+                // Check if already responded
+                match client.router.has_node_responded(htx_id, node_addr).await {
+                    Ok((responded, _result)) if responded => (),
+                    Ok(_) => {
+                        info!(htx_id = ?htx_id, "Processing HTX");
+                        if let Err(e) = process_htx_assignment(client, htx_id, &verifier).await {
+                            error!(htx_id = ?htx_id, error = %e, "Failed to process real-time HTX");
                         }
                     }
-                });
+                    Err(e) => {
+                        error!(htx_id = ?htx_id, error = %e, "Failed to get assignment for HTX");
+                    }
+                }
+            });
 
-                Ok(())
-            }
-        });
+            Ok(())
+        }
+    });
 
     // Listen for either events or shutdown signal
     tokio::select! {

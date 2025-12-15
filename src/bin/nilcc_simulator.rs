@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -7,6 +8,7 @@ use nilav::{
     contract_client::{ContractConfig, NilAVClient},
     types::Htx,
 };
+use rand::Rng;
 use tokio::time::interval;
 use tracing::{error, info, warn};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
@@ -71,18 +73,28 @@ fn load_htxs(path: &str) -> Vec<Htx> {
 async fn run_submission_loop(client: NilAVClient, htxs: Vec<Htx>, slot_ms: u64) -> Result<()> {
     let mut ticker = interval(Duration::from_millis(slot_ms));
     let mut slot = 0u64;
+    let client = Arc::new(client);
+    let htxs = Arc::new(htxs);
 
     loop {
         ticker.tick().await;
         slot += 1;
 
-        if let Err(e) = submit_next_htx(&client, &htxs, slot).await {
-            error!(slot, error = %e, "Submission failed");
-        }
+        // Spawn submission as a background task so it doesn't block the next slot
+        let client = Arc::clone(&client);
+        let htxs = Arc::clone(&htxs);
+        tokio::spawn(async move {
+            if let Err(e) = submit_next_htx(&client, &htxs, slot).await {
+                error!(slot, error = %e, "Submission failed");
+            }
+        });
     }
 }
 
-async fn submit_next_htx(client: &NilAVClient, htxs: &[Htx], slot: u64) -> Result<()> {
+const MAX_RETRIES: u32 = 3;
+const RETRY_DELAY_MS: u64 = 500;
+
+async fn submit_next_htx(client: &Arc<NilAVClient>, htxs: &Arc<Vec<Htx>>, slot: u64) -> Result<()> {
     if htxs.is_empty() {
         warn!(slot, "No HTXs available");
         return Ok(());
@@ -94,18 +106,46 @@ async fn submit_next_htx(client: &NilAVClient, htxs: &[Htx], slot: u64) -> Resul
         return Ok(());
     }
 
-    let htx = &htxs[((slot - 1) as usize) % htxs.len()];
+    let mut last_error = None;
 
-    info!(slot, node_count = %node_count, "Submitting HTX");
+    for attempt in 0..MAX_RETRIES {
+        // Randomly select an HTX and make it unique by appending a random nonce to workload_id
+        // This prevents "HTX already exists" errors when multiple submissions land in the same block
+        // Scope rng to drop it before await (ThreadRng is not Send)
+        let htx = {
+            let mut rng = rand::rng();
+            let idx = rng.random_range(0..htxs.len());
+            let nonce: u128 = rng.random_range(0..u128::MAX); // 128-bit random number
+            let mut htx = htxs[idx].clone();
+            htx.workload_id.current = format!("{}-{:x}", htx.workload_id.current, nonce);
+            htx
+        };
 
-    let (tx_hash, htx_id) = client.router.submit_htx(htx).await?;
+        if attempt == 0 {
+            info!(slot, node_count = %node_count, "Submitting HTX");
+        } else {
+            info!(slot, attempt, "Retrying HTX submission");
+        }
 
-    info!(
-        slot,
-        tx_hash = ?tx_hash,
-        htx_id = ?htx_id,
-        "HTX submitted"
-    );
+        match client.router.submit_htx(&htx).await {
+            Ok(tx_hash) => {
+                info!(slot, tx_hash = ?tx_hash, "HTX submitted");
+                return Ok(());
+            }
+            Err(e) => {
+                let error_str = e.to_string();
+                // Only retry on on-chain reverts (state race conditions)
+                if error_str.contains("reverted on-chain") {
+                    warn!(slot, attempt, error = %e, "Submission reverted, will retry");
+                    last_error = Some(e);
+                    tokio::time::sleep(Duration::from_millis(RETRY_DELAY_MS)).await;
+                    continue;
+                }
+                // For other errors (simulation failures, etc.), fail immediately
+                return Err(e);
+            }
+        }
+    }
 
-    Ok(())
+    Err(last_error.unwrap_or_else(|| anyhow::anyhow!("Max retries exceeded")))
 }

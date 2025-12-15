@@ -1,5 +1,5 @@
 use crate::json::stable_stringify;
-use ethers::types::Bytes;
+use alloy::primitives::Bytes;
 use serde::{Deserialize, Serialize};
 use serde_with::{hex::Hex, serde_as};
 
@@ -73,50 +73,6 @@ impl TryInto<Bytes> for &Htx {
         let json = stable_stringify(self)?;
         Ok(Bytes::from(json.into_bytes()))
     }
-}
-
-// Legacy types (from WebSocket-based architecture, kept for compatibility)
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AssignmentMsg {
-    #[serde(rename = "type")]
-    pub msg_type: String, // "assignment"
-    pub slot: u64,
-    #[serde(rename = "nodeId")]
-    pub node_id: String,
-    pub htx: Htx,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RegisteredMsg {
-    #[serde(rename = "type")]
-    pub msg_type: String, // "registered"
-    #[serde(rename = "nodeId")]
-    pub node_id: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TransactionEnvelope {
-    pub htx: Htx,
-    pub valid: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reason: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct VerificationPayload {
-    pub transaction: TransactionEnvelope,
-    pub signature: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct VerificationResultMsg {
-    #[serde(rename = "type")]
-    pub msg_type: String, // "verification_result"
-    #[serde(rename = "nodeId")]
-    pub node_id: String,
-    pub slot: u64,
-    pub payload: VerificationPayload,
 }
 
 #[cfg(test)]

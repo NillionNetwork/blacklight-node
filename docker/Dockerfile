@@ -99,11 +99,12 @@ FROM --platform=$TARGETPLATFORM debian:bookworm-slim AS base_release
 
 ARG TARGETPLATFORM
 
-WORKDIR /app
-RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/* && useradd -u 10001 -m appuser && \
-    touch /app/nilav_node.env /app/nilav_monitor.env /app/nilcc_simulator.env && \
-    chown appuser:appuser /app/nilav_node.env /app/nilav_monitor.env /app/nilcc_simulator.env
+RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/* && \
+    useradd -u 1000 -m appuser && \
+    mkdir -p /app && \
+    chown -R appuser:appuser /app
 USER appuser
+WORKDIR /app
 
 # Runtime stage for nilav_node
 FROM base_release AS nilav_node
@@ -113,8 +114,8 @@ ENTRYPOINT ["/usr/local/bin/nilav_node"]
 # Runtime stage for nilcc_simulator
 FROM base_release AS nilcc_simulator
 COPY --from=builder /out/bin/nilcc_simulator /usr/local/bin/nilcc_simulator
-COPY --from=builder /app/config /app/config
-COPY --from=builder /app/data /app/data
+COPY --from=builder --chown=appuser:appuser /app/config /app/config
+COPY --from=builder --chown=appuser:appuser /app/data /app/data
 ENV CONFIG_PATH=/app/config/config.toml
 ENV HTXS_PATH=/app/data/htxs.json
 ENTRYPOINT ["/usr/local/bin/nilcc_simulator"]

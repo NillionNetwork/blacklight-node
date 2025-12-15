@@ -1,37 +1,50 @@
-use ethers::{
-    contract::abigen,
-    core::types::{Address, U256},
+use alloy::{
+    primitives::{Address, B256, U256},
+    providers::Provider,
+    sol,
 };
 use std::sync::Arc;
+use tokio::sync::Mutex;
 
-use crate::contract_client::SignedWsProvider;
+use crate::contract_client::common::event_helper::listen_events;
+use crate::contract_client::common::tx_helper::send_and_confirm;
+use anyhow::Result;
 
 // Generate type-safe contract bindings from ABI
-abigen!(
+sol!(
+    #[sol(rpc)]
+    #[derive(Debug)]
     TESTToken,
-    "./contracts/out/TESTToken.sol/TESTToken.json",
-    event_derives(serde::Deserialize, serde::Serialize)
+    "./contracts/out/TESTToken.sol/TESTToken.json"
 );
 
+// Optional: bring the instance & events into scope
+use TESTToken::TESTTokenInstance;
+// You’ll also get event types generated from the ABI, e.g.
+// use NilAVRouter::{Htxsubmitted, Htxassigned, Htxresponded};
+
 /// WebSocket-based client for interacting with the TESTToken ERC20 contract
-pub struct TESTTokenClient {
-    contract: TESTToken<SignedWsProvider>,
+#[derive(Clone)]
+pub struct TESTTokenClient<P: Provider + Clone> {
+    contract: TESTTokenInstance<P>,
+    tx_lock: Arc<Mutex<()>>,
 }
 
-impl TESTTokenClient {
+impl<P: Provider + Clone> TESTTokenClient<P> {
     /// Create a new WebSocket client from configuration
     pub fn new(
-        provider: Arc<SignedWsProvider>,
+        provider: P,
         config: crate::contract_client::ContractConfig,
+        tx_lock: Arc<Mutex<()>>,
     ) -> Self {
         let contract_address = config.token_contract_address;
-        let contract = TESTToken::new(contract_address, provider.clone());
-        Self { contract }
+        let contract = TESTTokenInstance::new(contract_address, provider.clone());
+        Self { contract, tx_lock }
     }
 
     /// Get the contract address
     pub fn address(&self) -> Address {
-        self.contract.address()
+        *self.contract.address()
     }
 
     // ------------------------------------------------------------------------
@@ -39,32 +52,32 @@ impl TESTTokenClient {
     // ------------------------------------------------------------------------
 
     /// Returns the name of the token
-    pub async fn name(&self) -> anyhow::Result<String> {
+    pub async fn name(&self) -> Result<String> {
         Ok(self.contract.name().call().await?)
     }
 
     /// Returns the symbol of the token
-    pub async fn symbol(&self) -> anyhow::Result<String> {
+    pub async fn symbol(&self) -> Result<String> {
         Ok(self.contract.symbol().call().await?)
     }
 
     /// Returns the number of decimals the token uses
-    pub async fn decimals(&self) -> anyhow::Result<u8> {
+    pub async fn decimals(&self) -> Result<u8> {
         Ok(self.contract.decimals().call().await?)
     }
 
     /// Returns the total token supply
-    pub async fn total_supply(&self) -> anyhow::Result<U256> {
-        Ok(self.contract.total_supply().call().await?)
+    pub async fn total_supply(&self) -> Result<U256> {
+        Ok(self.contract.totalSupply().call().await?)
     }
 
     /// Returns the token balance of an account
-    pub async fn balance_of(&self, account: Address) -> anyhow::Result<U256> {
-        Ok(self.contract.balance_of(account).call().await?)
+    pub async fn balance_of(&self, account: Address) -> Result<U256> {
+        Ok(self.contract.balanceOf(account).call().await?)
     }
 
     /// Returns the remaining number of tokens that spender is allowed to spend on behalf of owner
-    pub async fn allowance(&self, owner: Address, spender: Address) -> anyhow::Result<U256> {
+    pub async fn allowance(&self, owner: Address, spender: Address) -> Result<U256> {
         Ok(self.contract.allowance(owner, spender).call().await?)
     }
 
@@ -73,34 +86,21 @@ impl TESTTokenClient {
     // ------------------------------------------------------------------------
 
     /// Transfers tokens to a recipient
-    pub async fn transfer(&self, to: Address, amount: U256) -> anyhow::Result<ethers::types::H256> {
+    pub async fn transfer(&self, to: Address, amount: U256) -> Result<B256> {
         let call = self.contract.transfer(to, amount);
-        let tx = call.send().await?;
-        let receipt = tx.await?;
-        let receipt = receipt.ok_or_else(|| anyhow::anyhow!("No transaction receipt"))?;
-        Ok(receipt.transaction_hash)
+        send_and_confirm(call, &self.tx_lock, "transfer").await
     }
 
     /// Approves a spender to spend tokens on behalf of the caller
-    pub async fn approve(
-        &self,
-        spender: Address,
-        amount: U256,
-    ) -> anyhow::Result<ethers::types::H256> {
+    pub async fn approve(&self, spender: Address, amount: U256) -> Result<B256> {
         let call = self.contract.approve(spender, amount);
-        let tx = call.send().await?;
-        let receipt = tx.await?;
-        let receipt = receipt.ok_or_else(|| anyhow::anyhow!("No transaction receipt"))?;
-        Ok(receipt.transaction_hash)
+        send_and_confirm(call, &self.tx_lock, "approve").await
     }
 
     /// Mints new tokens (requires owner privileges)
-    pub async fn mint(&self, to: Address, amount: U256) -> anyhow::Result<ethers::types::H256> {
+    pub async fn mint(&self, to: Address, amount: U256) -> Result<B256> {
         let call = self.contract.mint(to, amount);
-        let tx = call.send().await?;
-        let receipt = tx.await?;
-        let receipt = receipt.ok_or_else(|| anyhow::anyhow!("No transaction receipt"))?;
-        Ok(receipt.transaction_hash)
+        send_and_confirm(call, &self.tx_lock, "mint").await
     }
 
     // ------------------------------------------------------------------------
@@ -108,31 +108,15 @@ impl TESTTokenClient {
     // ------------------------------------------------------------------------
 
     /// Start listening for Transfer events (including mints where from == address(0))
-    pub async fn listen_transfer_events<F, Fut>(
-        self: Arc<Self>,
-        mut callback: F,
-    ) -> anyhow::Result<()>
+    pub async fn listen_transfer_events<F, Fut>(self: Arc<Self>, callback: F) -> Result<()>
     where
-        F: FnMut(TransferFilter) -> Fut + Send,
-        Fut: std::future::Future<Output = anyhow::Result<()>> + Send,
+        F: FnMut(TESTToken::Transfer) -> Fut + Send,
+        Fut: std::future::Future<Output = Result<()>> + Send,
     {
-        use ethers::providers::StreamExt;
+        let event_stream = self.contract.event_filter::<TESTToken::Transfer>();
+        let subscription = event_stream.subscribe().await?;
+        let events = subscription.into_stream();
 
-        let event_stream = self.contract.event::<TransferFilter>();
-        let mut events = event_stream.subscribe().await?;
-
-        while let Some(event_result) = events.next().await {
-            match event_result {
-                Ok(event) => {
-                    if let Err(e) = callback(event).await {
-                        tracing::error!("Error processing Transfer event: {}", e);
-                    }
-                }
-                Err(e) => {
-                    tracing::error!("Error receiving Transfer event: {}", e);
-                }
-            }
-        }
-        Ok(())
+        listen_events(events, "Transfer", callback).await
     }
 }

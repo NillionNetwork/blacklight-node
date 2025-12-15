@@ -1,11 +1,9 @@
 use std::env::temp_dir;
 use std::path::PathBuf;
 
+use alloy::primitives::{Address, U256};
 use anyhow::{Context, Result};
 use clap::Parser;
-use ethers::core::types::Address;
-use ethers::prelude::U256;
-use ethers::signers::Signer;
 
 use crate::config::consts::{
     DEFAULT_ROUTER_CONTRACT_ADDRESS, DEFAULT_RPC_URL, DEFAULT_STAKING_CONTRACT_ADDRESS,
@@ -101,7 +99,7 @@ impl NodeConfig {
                 // Generate a new wallet
                 info!("No private key found. Generating new wallet...");
                 let wallet = generate_wallet()?;
-                let private_key = format!("0x{}", hex::encode(wallet.signer().to_bytes()));
+                let private_key = format!("0x{}", hex::encode(wallet.to_bytes()));
                 let public_key = format!("{:?}", wallet.address());
 
                 // Save all values to state file using save_all
@@ -172,13 +170,13 @@ pub async fn validate_node_requirements(
     );
     let staked_balance = client.staking.stake_of(address).await.unwrap_or_else(|e| {
         info!("Could not fetch staked balance: {}", e);
-        U256::zero()
+        U256::ZERO
     });
 
     // Determine wallet status and display unified banner
     let status = if was_wallet_created {
         WalletStatus::Created
-    } else if eth_balance == U256::zero() || staked_balance == U256::zero() {
+    } else if eth_balance == U256::ZERO || staked_balance == U256::ZERO {
         WalletStatus::InsufficientFunds
     } else {
         WalletStatus::Ready

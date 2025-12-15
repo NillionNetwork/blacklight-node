@@ -1,7 +1,7 @@
+use alloy::primitives::{Address, U256};
+use alloy::providers::{Provider, ProviderBuilder};
+use alloy::signers::local::PrivateKeySigner;
 use anyhow::{Context, Result};
-use ethers::prelude::*;
-use ethers::signers::LocalWallet;
-use std::str::FromStr;
 use term_table::row::Row;
 use term_table::table_cell::{Alignment as CellAlignment, TableCell};
 use term_table::{Table, TableStyle};
@@ -19,25 +19,26 @@ pub enum WalletStatus {
 }
 
 /// Generate a new random Ethereum wallet
-pub fn generate_wallet() -> Result<LocalWallet> {
-    let wallet = LocalWallet::new(&mut rand::thread_rng());
+pub fn generate_wallet() -> Result<PrivateKeySigner> {
+    let wallet = PrivateKeySigner::random();
     Ok(wallet)
 }
 
 /// Load wallet from private key string (with or without 0x prefix)
-pub fn load_wallet(private_key: &str) -> Result<LocalWallet> {
-    let key = private_key.trim_start_matches("0x");
-    let wallet = LocalWallet::from_str(key).context("Failed to parse private key")?;
+pub fn load_wallet(private_key: &str) -> Result<PrivateKeySigner> {
+    let wallet = private_key
+        .parse::<PrivateKeySigner>()
+        .context("Failed to parse private key")?;
     Ok(wallet)
 }
 
 /// Check if an address has funds on the given RPC endpoint
 pub async fn check_balance(rpc_url: &str, address: Address) -> Result<U256> {
     let provider =
-        Provider::<Http>::try_from(rpc_url).context("Failed to connect to RPC endpoint")?;
+        ProviderBuilder::new().connect_http(rpc_url.parse().context("Failed to parse RPC URL")?);
 
     let balance = provider
-        .get_balance(address, None)
+        .get_balance(address)
         .await
         .context("Failed to fetch balance")?;
 
@@ -54,10 +55,10 @@ pub fn display_wallet_status(
     staked_balance: U256,
 ) {
     let address_str = format!("{:?}", address);
-    let eth_formatted = ethers::utils::format_ether(eth_balance);
-    let staked_formatted = ethers::utils::format_ether(staked_balance);
-    let has_eth = eth_balance > U256::zero();
-    let has_stake = staked_balance > U256::zero();
+    let eth_formatted = alloy::primitives::utils::format_ether(eth_balance);
+    let staked_formatted = alloy::primitives::utils::format_ether(staked_balance);
+    let has_eth = eth_balance > U256::ZERO;
+    let has_stake = staked_balance > U256::ZERO;
 
     let eth_balance_str = if has_eth {
         format!("{} ETH ✅", eth_formatted)
@@ -160,7 +161,7 @@ mod tests {
     #[test]
     fn test_generate_wallet() {
         let wallet = generate_wallet().unwrap();
-        assert_eq!(wallet.address().as_bytes().len(), 20);
+        assert_eq!(wallet.address().len(), 20);
     }
 
     #[test]
