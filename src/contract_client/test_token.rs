@@ -3,9 +3,12 @@ use alloy::{
     providers::Provider,
     sol,
 };
-use futures_util::StreamExt;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+
+use crate::contract_client::common::event_helper::listen_events;
+use crate::contract_client::common::tx_helper::send_and_confirm;
+use anyhow::Result;
 
 // Generate type-safe contract bindings from ABI
 sol!(
@@ -49,32 +52,32 @@ impl<P: Provider + Clone> TESTTokenClient<P> {
     // ------------------------------------------------------------------------
 
     /// Returns the name of the token
-    pub async fn name(&self) -> anyhow::Result<String> {
+    pub async fn name(&self) -> Result<String> {
         Ok(self.contract.name().call().await?)
     }
 
     /// Returns the symbol of the token
-    pub async fn symbol(&self) -> anyhow::Result<String> {
+    pub async fn symbol(&self) -> Result<String> {
         Ok(self.contract.symbol().call().await?)
     }
 
     /// Returns the number of decimals the token uses
-    pub async fn decimals(&self) -> anyhow::Result<u8> {
+    pub async fn decimals(&self) -> Result<u8> {
         Ok(self.contract.decimals().call().await?)
     }
 
     /// Returns the total token supply
-    pub async fn total_supply(&self) -> anyhow::Result<U256> {
+    pub async fn total_supply(&self) -> Result<U256> {
         Ok(self.contract.totalSupply().call().await?)
     }
 
     /// Returns the token balance of an account
-    pub async fn balance_of(&self, account: Address) -> anyhow::Result<U256> {
+    pub async fn balance_of(&self, account: Address) -> Result<U256> {
         Ok(self.contract.balanceOf(account).call().await?)
     }
 
     /// Returns the remaining number of tokens that spender is allowed to spend on behalf of owner
-    pub async fn allowance(&self, owner: Address, spender: Address) -> anyhow::Result<U256> {
+    pub async fn allowance(&self, owner: Address, spender: Address) -> Result<U256> {
         Ok(self.contract.allowance(owner, spender).call().await?)
     }
 
@@ -83,119 +86,21 @@ impl<P: Provider + Clone> TESTTokenClient<P> {
     // ------------------------------------------------------------------------
 
     /// Transfers tokens to a recipient
-    pub async fn transfer(&self, to: Address, amount: U256) -> anyhow::Result<B256> {
+    pub async fn transfer(&self, to: Address, amount: U256) -> Result<B256> {
         let call = self.contract.transfer(to, amount);
-
-        // Pre-simulate to catch errors with proper messages
-        if let Err(e) = call.call().await {
-            return Err(Self::decode_error(e));
-        }
-
-        let _guard = self.tx_lock.lock().await;
-        let pending = call.send().await.map_err(Self::decode_error)?;
-        let receipt = pending.get_receipt().await?;
-
-        if !receipt.status() {
-            if let Err(e) = call.call().await {
-                let decoded = super::errors::decode_any_error(&e);
-                return Err(anyhow::anyhow!(
-                    "transfer reverted: {}. Tx hash: {:?}",
-                    decoded,
-                    receipt.transaction_hash
-                ));
-            }
-            return Err(anyhow::anyhow!(
-                "transfer reverted on-chain. Tx hash: {:?}",
-                receipt.transaction_hash
-            ));
-        }
-        Ok(receipt.transaction_hash)
+        send_and_confirm(call, &self.tx_lock, "transfer").await
     }
 
     /// Approves a spender to spend tokens on behalf of the caller
-    pub async fn approve(&self, spender: Address, amount: U256) -> anyhow::Result<B256> {
+    pub async fn approve(&self, spender: Address, amount: U256) -> Result<B256> {
         let call = self.contract.approve(spender, amount);
-
-        // Pre-simulate to catch errors with proper messages
-        if let Err(e) = call.call().await {
-            return Err(Self::decode_error(e));
-        }
-
-        let _guard = self.tx_lock.lock().await;
-        let pending = call.send().await.map_err(Self::decode_error)?;
-        let receipt = pending.get_receipt().await?;
-
-        if !receipt.status() {
-            if let Err(e) = call.call().await {
-                let decoded = super::errors::decode_any_error(&e);
-                return Err(anyhow::anyhow!(
-                    "approve reverted: {}. Tx hash: {:?}",
-                    decoded,
-                    receipt.transaction_hash
-                ));
-            }
-            return Err(anyhow::anyhow!(
-                "approve reverted on-chain. Tx hash: {:?}",
-                receipt.transaction_hash
-            ));
-        }
-        Ok(receipt.transaction_hash)
+        send_and_confirm(call, &self.tx_lock, "approve").await
     }
 
     /// Mints new tokens (requires owner privileges)
-    pub async fn mint(&self, to: Address, amount: U256) -> anyhow::Result<B256> {
+    pub async fn mint(&self, to: Address, amount: U256) -> Result<B256> {
         let call = self.contract.mint(to, amount);
-
-        // Pre-simulate to catch errors with proper messages
-        if let Err(e) = call.call().await {
-            return Err(Self::decode_error(e));
-        }
-
-        let _guard = self.tx_lock.lock().await;
-        let pending = call.send().await.map_err(Self::decode_error)?;
-        let receipt = pending.get_receipt().await?;
-
-        if !receipt.status() {
-            if let Err(e) = call.call().await {
-                let decoded = super::errors::decode_any_error(&e);
-                return Err(anyhow::anyhow!(
-                    "mint reverted: {}. Tx hash: {:?}",
-                    decoded,
-                    receipt.transaction_hash
-                ));
-            }
-            return Err(anyhow::anyhow!(
-                "mint reverted on-chain. Tx hash: {:?}",
-                receipt.transaction_hash
-            ));
-        }
-        Ok(receipt.transaction_hash)
-    }
-
-    // ------------------------------------------------------------------------
-    // Error Handling
-    // ------------------------------------------------------------------------
-
-    /// Decode contract errors into human-readable messages
-    fn decode_error<E: std::fmt::Display + std::fmt::Debug>(e: E) -> anyhow::Error {
-        let error_str = e.to_string();
-        let decoded = super::errors::decode_any_error(&e);
-
-        // If we successfully decoded a revert, use that
-        if !matches!(decoded, super::errors::DecodedRevert::NoRevertData(_)) {
-            return anyhow::anyhow!("Contract reverted: {}", decoded);
-        }
-
-        // Common error patterns
-        if error_str.contains("insufficient funds") {
-            anyhow::anyhow!("Insufficient ETH for gas. Please fund the account.")
-        } else if error_str.contains("replacement transaction underpriced") {
-            anyhow::anyhow!("Transaction underpriced. A pending transaction may be blocking.")
-        } else if error_str.contains("nonce too low") {
-            anyhow::anyhow!("Nonce too low. A transaction may have been confirmed already.")
-        } else {
-            anyhow::anyhow!("Transaction failed: {}", e)
-        }
+        send_and_confirm(call, &self.tx_lock, "mint").await
     }
 
     // ------------------------------------------------------------------------
@@ -203,30 +108,15 @@ impl<P: Provider + Clone> TESTTokenClient<P> {
     // ------------------------------------------------------------------------
 
     /// Start listening for Transfer events (including mints where from == address(0))
-    pub async fn listen_transfer_events<F, Fut>(
-        self: Arc<Self>,
-        mut callback: F,
-    ) -> anyhow::Result<()>
+    pub async fn listen_transfer_events<F, Fut>(self: Arc<Self>, callback: F) -> Result<()>
     where
         F: FnMut(TESTToken::Transfer) -> Fut + Send,
-        Fut: std::future::Future<Output = anyhow::Result<()>> + Send,
+        Fut: std::future::Future<Output = Result<()>> + Send,
     {
         let event_stream = self.contract.event_filter::<TESTToken::Transfer>();
         let subscription = event_stream.subscribe().await?;
-        let mut events = subscription.into_stream();
+        let events = subscription.into_stream();
 
-        while let Some(event_result) = events.next().await {
-            match event_result {
-                Ok((event, _log)) => {
-                    if let Err(e) = callback(event).await {
-                        tracing::error!("Error processing Transfer event: {}", e);
-                    }
-                }
-                Err(e) => {
-                    tracing::error!("Error receiving Transfer event: {}", e);
-                }
-            }
-        }
-        Ok(())
+        listen_events(events, "Transfer", callback).await
     }
 }

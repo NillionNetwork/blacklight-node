@@ -51,7 +51,7 @@ pub const DEFAULT_HTXS_PATH: &str = "data/htxs.json";
 pub const DEFAULT_SLOT_MS: u64 = 3000; // 3 seconds for debug (faster testing)
 
 #[cfg(not(debug_assertions))]
-pub const DEFAULT_SLOT_MS: u64 = 500; // 5 seconds for release
+pub const DEFAULT_SLOT_MS: u64 = 5000; // 5 seconds for release
 
 // =============================================================================
 // Node Reconnection Settings

@@ -13,6 +13,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 /// High-level wrapper bundling all contract clients with a shared Alloy provider.
+#[derive(Clone)]
 pub struct NilAVClient {
     provider: DynProvider,
     wallet: EthereumWallet,
@@ -28,8 +29,8 @@ impl NilAVClient {
             .replace("http://", "ws://")
             .replace("https://", "wss://");
 
-        // Build WS transport and signer wallet
-        let ws = WsConnect::new(ws_url).with_max_retries(u32::MAX);
+        // Build WS transport with configurable retries
+        let ws = WsConnect::new(ws_url).with_max_retries(config.max_ws_retries);
         let signer: PrivateKeySigner = private_key.parse::<PrivateKeySigner>()?;
         let wallet = EthereumWallet::from(signer);
 
@@ -37,10 +38,13 @@ impl NilAVClient {
         let provider: DynProvider = ProviderBuilder::new()
             .wallet(wallet.clone())
             .with_simple_nonce_management()
+            .with_gas_estimation()
             .connect_ws(ws)
             .await?
             .erased();
+
         let tx_lock = Arc::new(Mutex::new(()));
+
         // Instantiate contract clients using the shared provider
         let router = NilAVRouterClient::new(provider.clone(), config.clone(), tx_lock.clone());
         let token = TESTTokenClient::new(provider.clone(), config.clone(), tx_lock.clone());

@@ -7,10 +7,15 @@ use alloy::{
     providers::Provider,
     sol,
 };
-use futures_util::StreamExt;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::error;
+
+use crate::contract_client::common::errors::decode_any_error;
+use crate::contract_client::common::event_helper::{
+    listen_events, listen_events_filtered, BlockRange,
+};
+use crate::contract_client::common::tx_helper::{send_and_confirm, send_with_gas_and_confirm};
+use anyhow::{anyhow, Result};
 
 sol!(
     #[sol(rpc)]
@@ -23,15 +28,6 @@ sol!(
 pub type HTXAssignedFilter = NilAVRouter::HTXAssigned;
 pub type HTXRespondedFilter = NilAVRouter::HTXResponded;
 pub type HTXSubmittedFilter = NilAVRouter::HTXSubmitted;
-
-/// Assignment struct for backwards compatibility with old NilAVRouter contract
-/// The new contract uses a different structure with multiple nodes.
-#[derive(Debug, Clone)]
-pub struct Assignment {
-    pub node: Address,
-    pub responded: bool,
-    pub result: bool,
-}
 
 /// WebSocket-based client for real-time event streaming and contract interaction with NilAVRouter
 #[derive(Clone)]
@@ -63,13 +59,13 @@ impl<P: Provider + Clone> NilAVRouterClient<P> {
     // ------------------------------------------------------------------------
 
     /// Get the current block number
-    pub async fn get_block_number(&self) -> anyhow::Result<u64> {
+    pub async fn get_block_number(&self) -> Result<u64> {
         Ok(self.provider.get_block_number().await?)
     }
 
     /// Get the starting block for event queries based on lookback limit
     /// Returns max(0, current_block - lookback_blocks)
-    async fn get_from_block(&self, lookback_blocks: u64) -> anyhow::Result<u64> {
+    async fn get_from_block(&self, lookback_blocks: u64) -> Result<u64> {
         let current_block = self.get_block_number().await?;
         Ok(current_block.saturating_sub(lookback_blocks))
     }
@@ -79,12 +75,12 @@ impl<P: Provider + Clone> NilAVRouterClient<P> {
     // ------------------------------------------------------------------------
 
     /// Get the total number of active nodes
-    pub async fn node_count(&self) -> anyhow::Result<U256> {
+    pub async fn node_count(&self) -> Result<U256> {
         Ok(self.contract.nodeCount().call().await?)
     }
 
     /// Get the list of all active node addresses
-    pub async fn get_nodes(&self) -> anyhow::Result<Vec<Address>> {
+    pub async fn get_nodes(&self) -> Result<Vec<Address>> {
         Ok(self.contract.getNodes().call().await?)
     }
 
@@ -93,147 +89,28 @@ impl<P: Provider + Clone> NilAVRouterClient<P> {
     // ------------------------------------------------------------------------
 
     /// Submit an HTX for verification
-    pub async fn submit_htx(&self, htx: &Htx) -> anyhow::Result<B256> {
+    pub async fn submit_htx(&self, htx: &Htx) -> Result<B256> {
         let raw_htx: alloy::primitives::Bytes = htx.try_into()?;
-        let call = self.contract.submitHTX(raw_htx.clone());
+        let call = self.contract.submitHTX(raw_htx);
 
-        // First simulate the call to catch reverts with proper error messages
-        if let Err(e) = call.call().await {
-            let decoded = super::errors::decode_any_error(&e);
-            return Err(anyhow::anyhow!("submitHTX reverted: {}", decoded));
-        }
-
-        // Estimate gas and add buffer for safety
+        // Estimate gas and add 50% buffer for variable node selection
         let estimated_gas = call.estimate_gas().await.map_err(|e| {
-            let decoded = super::errors::decode_any_error(&e);
-            anyhow::anyhow!("submitHTX would revert: {}", decoded)
+            let decoded = decode_any_error(&e);
+            anyhow!("submitHTX would revert: {}", decoded)
         })?;
-        let gas_with_buffer = estimated_gas.saturating_add(estimated_gas / 5); // +20% buffer for variable node selection
-        let call_with_gas = call.gas(gas_with_buffer);
-        let _guard = self.tx_lock.lock().await;
-        let pending = call_with_gas.send().await.map_err(|e| {
-            let decoded = super::errors::decode_any_error(&e);
-            anyhow::anyhow!("submitHTX failed to send: {}", decoded)
-        })?;
+        let gas_with_buffer = estimated_gas.saturating_add(estimated_gas / 2);
 
-        let receipt = pending.get_receipt().await?;
-        if !receipt.status() {
-            // Check if it was an OutOfGas error by comparing gas used to gas limit
-            let gas_used = receipt.gas_used;
-            if gas_used >= gas_with_buffer {
-                return Err(anyhow::anyhow!(
-                    "submitHTX ran out of gas (used {} of {} limit). \
-                    This can happen when many nodes are selected. Tx: {:?}",
-                    gas_used,
-                    gas_with_buffer,
-                    receipt.transaction_hash
-                ));
-            }
-
-            // Transaction was included but reverted - re-simulate at the SAME block to get the error
-            // This is important because htxId = keccak256(rawHTXHash, sender, block.number)
-            // so simulating at a different block would give a different htxId
-            if let Some(block_number) = receipt.block_number {
-                let retry_call = self.contract.submitHTX(raw_htx).block(block_number.into());
-                if let Err(e) = retry_call.call().await {
-                    let decoded = super::errors::decode_any_error(&e);
-                    return Err(anyhow::anyhow!(
-                        "submitHTX reverted: {}. Tx: {:?}",
-                        decoded,
-                        receipt.transaction_hash
-                    ));
-                }
-                // Re-simulation succeeded - likely ran out of gas but gas check above didn't catch it
-                return Err(anyhow::anyhow!(
-                    "submitHTX failed on-chain (possible OutOfGas - re-simulation succeeded). Tx: {:?}",
-                    receipt.transaction_hash
-                ));
-            }
-            // No block number in receipt - shouldn't happen
-            return Err(anyhow::anyhow!(
-                "submitHTX reverted on-chain (no block number in receipt). Tx: {:?}",
-                receipt.transaction_hash
-            ));
-        }
-
-        Ok(receipt.transaction_hash)
+        send_with_gas_and_confirm(call, &self.tx_lock, "submitHTX", gas_with_buffer).await
     }
 
     /// Respond to an HTX assignment (called by assigned node)
-    pub async fn respond_htx(&self, htx_id: B256, result: bool) -> anyhow::Result<B256> {
+    pub async fn respond_htx(&self, htx_id: B256, result: bool) -> Result<B256> {
         let call = self.contract.respondHTX(htx_id, result);
-
-        // First simulate the call to catch reverts with proper error messages
-        if let Err(e) = call.call().await {
-            let decoded = super::errors::decode_any_error(&e);
-            return Err(anyhow::anyhow!("respondHTX reverted: {}", decoded));
-        }
-
-        // Estimate gas and add buffer for safety
-        let estimated_gas = call.estimate_gas().await.map_err(|e| {
-            let decoded = super::errors::decode_any_error(&e);
-            anyhow::anyhow!("respondHTX would revert: {}", decoded)
-        })?;
-        let gas_with_buffer = estimated_gas.saturating_add(estimated_gas / 5); // +20%
-
-        let call_with_gas = call.gas(gas_with_buffer);
-
-        let _guard = self.tx_lock.lock().await;
-        let pending = call_with_gas.send().await.map_err(|e| {
-            let decoded = super::errors::decode_any_error(&e);
-            anyhow::anyhow!("respondHTX failed to send: {}", decoded)
-        })?;
-
-        let receipt = pending.get_receipt().await?;
-        if !receipt.status() {
-            // Transaction was included but reverted - re-simulate at the SAME block to get the error
-            if let Some(block_number) = receipt.block_number {
-                let retry_call = self
-                    .contract
-                    .respondHTX(htx_id, result)
-                    .block(block_number.into());
-                if let Err(e) = retry_call.call().await {
-                    let decoded = super::errors::decode_any_error(&e);
-                    return Err(anyhow::anyhow!(
-                        "respondHTX reverted: {}. Tx: {:?}",
-                        decoded,
-                        receipt.transaction_hash
-                    ));
-                }
-                // Re-simulation succeeded
-                return Err(anyhow::anyhow!(
-                    "respondHTX reverted (re-simulation at block {} succeeded, state changed). Tx: {:?}",
-                    block_number, receipt.transaction_hash
-                ));
-            }
-            return Err(anyhow::anyhow!(
-                "respondHTX reverted on-chain (no block number in receipt). Tx: {:?}",
-                receipt.transaction_hash
-            ));
-        }
-
-        Ok(receipt.transaction_hash)
-    }
-
-    /// Get assignment details for an HTX
-    pub async fn get_assigned_nodes(&self, htx_id: B256) -> anyhow::Result<Vec<Address>> {
-        Ok(self.contract.getAssignedNodes(htx_id).call().await?)
-    }
-
-    /// Get assignment info for an HTX
-    pub async fn get_assignment_info(
-        &self,
-        htx_id: B256,
-    ) -> anyhow::Result<(Vec<Address>, U256, U256, U256)> {
-        Ok(self.contract.getAssignmentInfo(htx_id).call().await?.into())
+        send_and_confirm(call, &self.tx_lock, "respondHTX").await
     }
 
     /// Check if a specific node has responded to an HTX
-    pub async fn has_node_responded(
-        &self,
-        htx_id: B256,
-        node: Address,
-    ) -> anyhow::Result<(bool, bool)> {
+    pub async fn has_node_responded(&self, htx_id: B256, node: Address) -> Result<(bool, bool)> {
         Ok(self
             .contract
             .hasNodeResponded(htx_id, node)
@@ -242,14 +119,9 @@ impl<P: Provider + Clone> NilAVRouterClient<P> {
             .into())
     }
 
-    /// Check if all assigned nodes have responded
-    pub async fn all_nodes_responded(&self, htx_id: B256) -> anyhow::Result<bool> {
-        Ok(self.contract.allNodesResponded(htx_id).call().await?)
-    }
-
     /// Get HTX bytes from the original submission transaction call data
     /// Default lookback: 1000 blocks. Use get_htx_with_lookback for custom lookback.
-    pub async fn get_htx(&self, htx_id: B256) -> anyhow::Result<Vec<u8>> {
+    pub async fn get_htx(&self, htx_id: B256) -> Result<Vec<u8>> {
         self.get_htx_with_lookback(htx_id, DEFAULT_LOOKBACK_BLOCKS)
             .await
     }
@@ -260,7 +132,7 @@ impl<P: Provider + Clone> NilAVRouterClient<P> {
         &self,
         htx_id: B256,
         lookback_blocks: u64,
-    ) -> anyhow::Result<Vec<u8>> {
+    ) -> Result<Vec<u8>> {
         let from_block = if lookback_blocks == u64::MAX {
             0
         } else {
@@ -277,19 +149,19 @@ impl<P: Provider + Clone> NilAVRouterClient<P> {
 
         let (_event, log) = events
             .first()
-            .ok_or_else(|| anyhow::anyhow!("No HTXSubmitted event found for htxId"))?;
+            .ok_or_else(|| anyhow!("No HTXSubmitted event found for htxId"))?;
 
         // Get the transaction hash from the event log
         let tx_hash = log
             .transaction_hash
-            .ok_or_else(|| anyhow::anyhow!("No transaction hash in log"))?;
+            .ok_or_else(|| anyhow!("No transaction hash in log"))?;
 
         // Fetch the transaction
         let tx = self
             .provider
             .get_transaction_by_hash(tx_hash)
             .await?
-            .ok_or_else(|| anyhow::anyhow!("Transaction not found"))?;
+            .ok_or_else(|| anyhow!("Transaction not found"))?;
 
         // Decode the call data to extract the rawHTX parameter
         // The call data format is: 4-byte function selector + ABI-encoded parameters
@@ -297,7 +169,7 @@ impl<P: Provider + Clone> NilAVRouterClient<P> {
 
         // Skip the function selector (first 4 bytes)
         if input.len() <= 4 {
-            return Err(anyhow::anyhow!("Invalid call data"));
+            return Err(anyhow!("Invalid call data"));
         }
 
         // Decode the bytes parameter using DynSolType
@@ -305,7 +177,7 @@ impl<P: Provider + Clone> NilAVRouterClient<P> {
 
         let htx_bytes = decoded
             .as_bytes()
-            .ok_or_else(|| anyhow::anyhow!("Failed to decode HTX bytes as bytes"))?
+            .ok_or_else(|| anyhow!("Failed to decode HTX bytes as bytes"))?
             .to_vec();
 
         Ok(htx_bytes)
@@ -316,119 +188,69 @@ impl<P: Provider + Clone> NilAVRouterClient<P> {
     // ------------------------------------------------------------------------
 
     /// Start listening for HTX assigned events and process them with a callback
-    pub async fn listen_htx_assigned_events<F, Fut>(
-        self: Arc<Self>,
-        mut callback: F,
-    ) -> anyhow::Result<()>
+    pub async fn listen_htx_assigned_events<F, Fut>(self: Arc<Self>, callback: F) -> Result<()>
     where
         F: FnMut(HTXAssignedFilter) -> Fut + Send,
-        Fut: std::future::Future<Output = anyhow::Result<()>> + Send,
+        Fut: std::future::Future<Output = Result<()>> + Send,
     {
-        let event_stream = self.contract.event_filter::<HTXAssignedFilter>();
-        let subscription = event_stream.subscribe().await?;
-        let mut events = subscription.into_stream();
-
-        while let Some(event_result) = events.next().await {
-            match event_result {
-                Ok((event, _log)) => {
-                    if let Err(e) = callback(event).await {
-                        error!("Error processing HTX assigned event: {}", e);
-                    }
-                }
-                Err(e) => {
-                    error!("Error receiving HTX assigned event: {}", e);
-                }
-            }
-        }
-        Ok(())
+        let subscription = self
+            .contract
+            .event_filter::<HTXAssignedFilter>()
+            .subscribe()
+            .await?;
+        listen_events(subscription.into_stream(), "HTXAssigned", callback).await
     }
 
     /// Start listening for HTX assigned events for a specific node
     pub async fn listen_htx_assigned_for_node<F, Fut>(
         self: Arc<Self>,
         node_address: Address,
-        mut callback: F,
-    ) -> anyhow::Result<()>
+        callback: F,
+    ) -> Result<()>
     where
         F: FnMut(HTXAssignedFilter) -> Fut + Send,
-        Fut: std::future::Future<Output = anyhow::Result<()>> + Send,
+        Fut: std::future::Future<Output = Result<()>> + Send,
     {
-        let event_stream = self.contract.event_filter::<HTXAssignedFilter>();
-        let subscription = event_stream.subscribe().await?;
-        let mut events = subscription.into_stream();
-
-        while let Some(event_result) = events.next().await {
-            match event_result {
-                Ok((event, _log)) if event.node == node_address => {
-                    if let Err(e) = callback(event).await {
-                        error!("Error processing HTX assigned event: {}", e);
-                    }
-                }
-                Ok(_) => {
-                    // Event for different node, ignore
-                }
-                Err(e) => {
-                    error!("Error receiving HTX assigned event: {}", e);
-                }
-            }
-        }
-        Ok(())
+        let subscription = self
+            .contract
+            .event_filter::<HTXAssignedFilter>()
+            .subscribe()
+            .await?;
+        listen_events_filtered(
+            subscription.into_stream(),
+            "HTXAssigned",
+            move |event: &HTXAssignedFilter| event.node == node_address,
+            callback,
+        )
+        .await
     }
 
     /// Start listening for HTX submitted events
-    pub async fn listen_htx_submitted_events<F, Fut>(
-        self: Arc<Self>,
-        mut callback: F,
-    ) -> anyhow::Result<()>
+    pub async fn listen_htx_submitted_events<F, Fut>(self: Arc<Self>, callback: F) -> Result<()>
     where
         F: FnMut(HTXSubmittedFilter) -> Fut + Send,
-        Fut: std::future::Future<Output = anyhow::Result<()>> + Send,
+        Fut: std::future::Future<Output = Result<()>> + Send,
     {
-        let event_stream = self.contract.event_filter::<HTXSubmittedFilter>();
-        let subscription = event_stream.subscribe().await?;
-        let mut events = subscription.into_stream();
-
-        while let Some(event_result) = events.next().await {
-            match event_result {
-                Ok((event, _log)) => {
-                    if let Err(e) = callback(event).await {
-                        error!("Error processing HTX submitted event: {}", e);
-                    }
-                }
-                Err(e) => {
-                    error!("Error receiving HTX submitted event: {}", e);
-                }
-            }
-        }
-        Ok(())
+        let subscription = self
+            .contract
+            .event_filter::<HTXSubmittedFilter>()
+            .subscribe()
+            .await?;
+        listen_events(subscription.into_stream(), "HTXSubmitted", callback).await
     }
 
     /// Start listening for HTX responded events
-    pub async fn listen_htx_responded_events<F, Fut>(
-        self: Arc<Self>,
-        mut callback: F,
-    ) -> anyhow::Result<()>
+    pub async fn listen_htx_responded_events<F, Fut>(self: Arc<Self>, callback: F) -> Result<()>
     where
         F: FnMut(HTXRespondedFilter) -> Fut + Send,
-        Fut: std::future::Future<Output = anyhow::Result<()>> + Send,
+        Fut: std::future::Future<Output = Result<()>> + Send,
     {
-        let event_stream = self.contract.event_filter::<HTXRespondedFilter>();
-        let subscription = event_stream.subscribe().await?;
-        let mut events = subscription.into_stream();
-
-        while let Some(event_result) = events.next().await {
-            match event_result {
-                Ok((event, _log)) => {
-                    if let Err(e) = callback(event).await {
-                        error!("Error processing HTX responded event: {}", e);
-                    }
-                }
-                Err(e) => {
-                    error!("Error receiving HTX responded event: {}", e);
-                }
-            }
-        }
-        Ok(())
+        let subscription = self
+            .contract
+            .event_filter::<HTXRespondedFilter>()
+            .subscribe()
+            .await?;
+        listen_events(subscription.into_stream(), "HTXResponded", callback).await
     }
 
     // ------------------------------------------------------------------------
@@ -437,7 +259,7 @@ impl<P: Provider + Clone> NilAVRouterClient<P> {
 
     /// Get HTX submitted events from recent history (default: last 1000 blocks)
     /// Use get_htx_submitted_events_with_lookback for custom lookback
-    pub async fn get_htx_submitted_events(&self) -> anyhow::Result<Vec<HTXSubmittedFilter>> {
+    pub async fn get_htx_submitted_events(&self) -> Result<Vec<HTXSubmittedFilter>> {
         self.get_htx_submitted_events_with_lookback(DEFAULT_LOOKBACK_BLOCKS)
             .await
     }
@@ -447,24 +269,37 @@ impl<P: Provider + Clone> NilAVRouterClient<P> {
     pub async fn get_htx_submitted_events_with_lookback(
         &self,
         lookback_blocks: u64,
-    ) -> anyhow::Result<Vec<HTXSubmittedFilter>> {
-        let from_block = if lookback_blocks == u64::MAX {
-            0
+    ) -> Result<Vec<HTXSubmittedFilter>> {
+        let current_block = self.get_block_number().await?;
+        let range = if lookback_blocks == u64::MAX {
+            BlockRange::all()
         } else {
-            self.get_from_block(lookback_blocks).await?
+            BlockRange::from_lookback(current_block, lookback_blocks)
         };
+        self.get_htx_submitted_events_in_range(range).await
+    }
 
-        let event_filter = self
+    /// Get HTX submitted events within a specific block range
+    pub async fn get_htx_submitted_events_in_range(
+        &self,
+        range: BlockRange,
+    ) -> Result<Vec<HTXSubmittedFilter>> {
+        let mut filter = self
             .contract
             .event_filter::<HTXSubmittedFilter>()
-            .from_block(from_block);
-        let events = event_filter.query().await?;
+            .from_block(range.from_block);
+
+        if let Some(to_block) = range.to_block {
+            filter = filter.to_block(to_block);
+        }
+
+        let events = filter.query().await?;
         Ok(events.into_iter().map(|(event, _log)| event).collect())
     }
 
     /// Get HTX assigned events from recent history (default: last 1000 blocks)
     /// Use get_htx_assigned_events_with_lookback for custom lookback
-    pub async fn get_htx_assigned_events(&self) -> anyhow::Result<Vec<HTXAssignedFilter>> {
+    pub async fn get_htx_assigned_events(&self) -> Result<Vec<HTXAssignedFilter>> {
         self.get_htx_assigned_events_with_lookback(DEFAULT_LOOKBACK_BLOCKS)
             .await
     }
@@ -474,24 +309,37 @@ impl<P: Provider + Clone> NilAVRouterClient<P> {
     pub async fn get_htx_assigned_events_with_lookback(
         &self,
         lookback_blocks: u64,
-    ) -> anyhow::Result<Vec<HTXAssignedFilter>> {
-        let from_block = if lookback_blocks == u64::MAX {
-            0
+    ) -> Result<Vec<HTXAssignedFilter>> {
+        let current_block = self.get_block_number().await?;
+        let range = if lookback_blocks == u64::MAX {
+            BlockRange::all()
         } else {
-            self.get_from_block(lookback_blocks).await?
+            BlockRange::from_lookback(current_block, lookback_blocks)
         };
+        self.get_htx_assigned_events_in_range(range).await
+    }
 
-        let event_filter = self
+    /// Get HTX assigned events within a specific block range
+    pub async fn get_htx_assigned_events_in_range(
+        &self,
+        range: BlockRange,
+    ) -> Result<Vec<HTXAssignedFilter>> {
+        let mut filter = self
             .contract
             .event_filter::<HTXAssignedFilter>()
-            .from_block(from_block);
-        let events = event_filter.query().await?;
+            .from_block(range.from_block);
+
+        if let Some(to_block) = range.to_block {
+            filter = filter.to_block(to_block);
+        }
+
+        let events = filter.query().await?;
         Ok(events.into_iter().map(|(event, _log)| event).collect())
     }
 
     /// Get HTX responded events from recent history (default: last 1000 blocks)
     /// Use get_htx_responded_events_with_lookback for custom lookback
-    pub async fn get_htx_responded_events(&self) -> anyhow::Result<Vec<HTXRespondedFilter>> {
+    pub async fn get_htx_responded_events(&self) -> Result<Vec<HTXRespondedFilter>> {
         self.get_htx_responded_events_with_lookback(DEFAULT_LOOKBACK_BLOCKS)
             .await
     }
@@ -501,29 +349,31 @@ impl<P: Provider + Clone> NilAVRouterClient<P> {
     pub async fn get_htx_responded_events_with_lookback(
         &self,
         lookback_blocks: u64,
-    ) -> anyhow::Result<Vec<HTXRespondedFilter>> {
-        let from_block = if lookback_blocks == u64::MAX {
-            0
+    ) -> Result<Vec<HTXRespondedFilter>> {
+        let current_block = self.get_block_number().await?;
+        let range = if lookback_blocks == u64::MAX {
+            BlockRange::all()
         } else {
-            self.get_from_block(lookback_blocks).await?
+            BlockRange::from_lookback(current_block, lookback_blocks)
         };
+        self.get_htx_responded_events_in_range(range).await
+    }
 
-        let event_filter = self
+    /// Get HTX responded events within a specific block range
+    pub async fn get_htx_responded_events_in_range(
+        &self,
+        range: BlockRange,
+    ) -> Result<Vec<HTXRespondedFilter>> {
+        let mut filter = self
             .contract
             .event_filter::<HTXRespondedFilter>()
-            .from_block(from_block);
-        let events = event_filter.query().await?;
+            .from_block(range.from_block);
+
+        if let Some(to_block) = range.to_block {
+            filter = filter.to_block(to_block);
+        }
+
+        let events = filter.query().await?;
         Ok(events.into_iter().map(|(event, _log)| event).collect())
     }
-}
-
-// Define deprecated event filter types for backwards compatibility
-#[derive(Debug, Clone)]
-pub struct NodeRegisteredFilter {
-    pub node: Address,
-}
-
-#[derive(Debug, Clone)]
-pub struct NodeDeregisteredFilter {
-    pub node: Address,
 }

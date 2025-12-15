@@ -1,9 +1,6 @@
 use alloy::primitives::Address;
 
-// ============================================================================
-// Module Declarations
-// ============================================================================
-pub mod errors;
+pub mod common;
 pub mod nilav_client;
 pub mod nilav_router;
 pub mod staking_operators;
@@ -23,33 +20,13 @@ pub use test_token::TESTTokenClient;
 // ============================================================================
 
 // NilAVRouter events
-pub use nilav_router::{Assignment, NilAVRouter};
-
-// Re-export NilAVRouter event types with Filter suffix for backwards compatibility
-pub use nilav_router::NilAVRouter::HTXAssigned as HtxassignedFilter;
-pub use nilav_router::NilAVRouter::HTXResponded as HtxrespondedFilter;
-pub use nilav_router::NilAVRouter::HTXSubmitted as HtxsubmittedFilter;
+pub use nilav_router::NilAVRouter;
 
 // StakingOperators events
 pub use staking_operators::StakingOperators;
 
-// Re-export StakingOperators event types with Filter suffix for backwards compatibility
-pub use staking_operators::StakingOperators::Jailed as JailedFilter;
-pub use staking_operators::StakingOperators::OperatorDeactivated as OperatorDeactivatedFilter;
-pub use staking_operators::StakingOperators::OperatorRegistered as OperatorRegisteredFilter;
-pub use staking_operators::StakingOperators::Slashed as SlashedFilter;
-pub use staking_operators::StakingOperators::StakedTo as StakedToFilter;
-pub use staking_operators::StakingOperators::UnstakeDelayUpdated as UnstakeDelayUpdatedFilter;
-pub use staking_operators::StakingOperators::UnstakeRequested as UnstakeRequestedFilter;
-pub use staking_operators::StakingOperators::UnstakedWithdrawn as UnstakedWithdrawnFilter;
-
 // TESTToken events
 pub use test_token::TESTToken;
-
-// Re-export TESTToken event types with Filter suffix for backwards compatibility
-pub use test_token::TESTToken::Approval as ApprovalFilter;
-pub use test_token::TESTToken::OwnershipTransferred as OwnershipTransferredFilter;
-pub use test_token::TESTToken::Transfer as TransferFilter;
 
 // ============================================================================
 // Type Aliases
@@ -68,12 +45,28 @@ pub type PrivateKey = String;
 /// - NilAVRouter: Main routing and HTX verification logic
 /// - StakingOperators: Operator registration and staking
 /// - TESTToken: Test token for staking (mainnet will use real token)
+///
+/// Also includes connection settings for WebSocket reliability.
 #[derive(Clone, Debug)]
 pub struct ContractConfig {
     pub router_contract_address: Address,
     pub staking_contract_address: Address,
     pub token_contract_address: Address,
     pub rpc_url: String,
+    /// Maximum number of WebSocket reconnection attempts (default: u32::MAX for infinite)
+    pub max_ws_retries: u32,
+}
+
+impl Default for ContractConfig {
+    fn default() -> Self {
+        Self {
+            router_contract_address: Address::ZERO,
+            staking_contract_address: Address::ZERO,
+            token_contract_address: Address::ZERO,
+            rpc_url: String::new(),
+            max_ws_retries: u32::MAX,
+        }
+    }
 }
 
 impl ContractConfig {
@@ -95,34 +88,40 @@ impl ContractConfig {
             staking_contract_address,
             token_contract_address,
             rpc_url,
+            max_ws_retries: u32::MAX,
         }
+    }
+
+    /// Set the maximum number of WebSocket reconnection attempts
+    pub fn with_max_ws_retries(mut self, max_retries: u32) -> Self {
+        self.max_ws_retries = max_retries;
+        self
     }
 
     /// Create a configuration with Anvil local testnet defaults
     ///
-    /// Note: This uses placeholder addresses. Actual Anvil deployment
-    /// addresses will differ based on deployment order.
+    /// Uses deterministic Anvil deployment addresses based on standard nonce order:
+    /// - Token deployed first (nonce 0)
+    /// - Staking deployed second (nonce 1)
+    /// - Router deployed third (nonce 2)
     pub fn anvil_config() -> Self {
         Self {
+            // Anvil deterministic addresses for deployer 0xf39F...2266 (account #0)
+            // These assume deployment order: Token -> Staking -> Router
+            token_contract_address: "0x5FbDB2315678afecb367f032d93F642f64180aa3"
+                .parse::<Address>()
+                .expect("Invalid token address"),
+            staking_contract_address: "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512"
+                .parse::<Address>()
+                .expect("Invalid staking address"),
             router_contract_address: "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0"
                 .parse::<Address>()
-                .expect("Invalid contract address"),
-            staking_contract_address: "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0"
-                .parse::<Address>()
-                .expect("Invalid contract address"),
-            token_contract_address: "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0"
-                .parse::<Address>()
-                .expect("Invalid contract address"),
+                .expect("Invalid router address"),
             rpc_url: "http://127.0.0.1:8545".to_string(),
+            max_ws_retries: u32::MAX,
         }
     }
 }
-
-// ============================================================================
-// Error Handling Re-exports
-// ============================================================================
-
-pub use errors::DecodedRevert;
 
 // ============================================================================
 // Tests
