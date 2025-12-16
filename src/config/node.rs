@@ -10,25 +10,25 @@ use crate::config::consts::{
     DEFAULT_ROUTER_CONTRACT_ADDRESS, DEFAULT_RPC_URL, DEFAULT_STAKING_CONTRACT_ADDRESS,
     DEFAULT_TOKEN_CONTRACT_ADDRESS, MIN_ETH_BALANCE, STATE_FILE_NODE,
 };
-use crate::contract_client::NilAVClient;
+use crate::contract_client::NilUVClient;
 use crate::state::StateFile;
 use crate::wallet::{display_wallet_status, generate_wallet, WalletStatus};
 use tracing::{error, info};
 
-/// CLI arguments for the NilAV node
+/// CLI arguments for the NilUV node
 #[derive(Parser, Debug)]
-#[command(name = "nilav_node")]
-#[command(about = "NilAV Node - Real-time HTX verification using WebSocket streaming", long_about = None)]
+#[command(name = "niluv_node")]
+#[command(about = "NilUV verifier node", long_about = None)]
 pub struct CliArgs {
     /// Ethereum RPC endpoint (will be converted to WebSocket)
     #[arg(long, env = "RPC_URL")]
     pub rpc_url: Option<String>,
 
-    /// NilAV router contract address
+    /// NilUV router contract address
     #[arg(long, env = "ROUTER_CONTRACT_ADDRESS")]
     pub router_contract_address: Option<String>,
 
-    /// NilAV staking contract address
+    /// NilUV staking contract address
     #[arg(long, env = "STAKING_CONTRACT_ADDRESS")]
     pub staking_contract_address: Option<String>,
 
@@ -159,7 +159,7 @@ impl NodeConfig {
 /// Validates that the node has sufficient ETH balance and staked TEST tokens
 /// Returns Ok(()) if ready, or Err if validation fails with user-friendly display
 pub async fn validate_node_requirements(
-    client: &NilAVClient,
+    client: &NilUVClient,
     rpc_url: &str,
     was_wallet_created: bool,
 ) -> Result<()> {
@@ -218,7 +218,7 @@ pub async fn validate_node_requirements(
 }
 
 fn default_cache_path() -> PathBuf {
-    temp_dir().join("nilav-cache")
+    temp_dir().join("niluv-cache")
 }
 
 fn default_cert_cache_path() -> PathBuf {

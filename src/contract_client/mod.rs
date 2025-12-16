@@ -1,8 +1,8 @@
 use alloy::primitives::Address;
 
 pub mod common;
-pub mod nilav_client;
-pub mod nilav_router;
+pub mod niluv_client;
+pub mod niluv_router;
 pub mod staking_operators;
 pub mod test_token;
 
@@ -10,8 +10,8 @@ pub mod test_token;
 // Client Type Re-exports
 // ============================================================================
 
-pub use nilav_client::NilAVClient;
-pub use nilav_router::NilAVRouterClient;
+pub use niluv_client::NilUVClient;
+pub use niluv_router::NilUVRouterClient;
 pub use staking_operators::StakingOperatorsClient;
 pub use test_token::TESTTokenClient;
 
@@ -19,8 +19,8 @@ pub use test_token::TESTTokenClient;
 // Contract Event Type Re-exports
 // ============================================================================
 
-// NilAVRouter events
-pub use nilav_router::NilAVRouter;
+// NilUVRouter events
+pub use niluv_router::NilAVRouter;
 
 // StakingOperators events
 pub use staking_operators::StakingOperators;
@@ -39,10 +39,10 @@ pub type PrivateKey = String;
 // Contract Configuration
 // ============================================================================
 
-/// Configuration for connecting to NilAV smart contracts
+/// Configuration for connecting to NilUV smart contracts
 ///
 /// Contains addresses for all three contracts in the system:
-/// - NilAVRouter: Main routing and HTX verification logic
+/// - NilUVRouter: Main routing and HTX verification logic
 /// - StakingOperators: Operator registration and staking
 /// - TESTToken: Test token for staking (mainnet will use real token)
 ///
@@ -74,7 +74,7 @@ impl ContractConfig {
     ///
     /// # Arguments
     /// * `rpc_url` - Ethereum RPC endpoint (HTTP or WebSocket)
-    /// * `router_contract_address` - Address of deployed NilAVRouter contract
+    /// * `router_contract_address` - Address of deployed NilUVRouter contract
     /// * `staking_contract_address` - Address of deployed StakingOperators contract
     /// * `token_contract_address` - Address of deployed TESTToken contract
     pub fn new(
@@ -182,7 +182,7 @@ mod tests {
     /// - `TEST_PRIVATE_KEY`: Private key for signing (default: Anvil account #0)
     ///
     /// Uses hardcoded contract addresses that should match your test deployment.
-    async fn create_test_client() -> Result<NilAVClient, Box<dyn std::error::Error>> {
+    async fn create_test_client() -> Result<NilUVClient, Box<dyn std::error::Error>> {
         // Read configuration from environment (with defaults for local Anvil)
         let rpc_url =
             env::var("TEST_RPC_URL").unwrap_or_else(|_| "http://localhost:8545".to_string());
@@ -204,7 +204,7 @@ mod tests {
 
         // Create client with configuration
         let config = ContractConfig::new(rpc_url, router_address, staking_address, token_address);
-        let client = NilAVClient::new(config, private_key).await?;
+        let client = NilUVClient::new(config, private_key).await?;
 
         Ok(client)
     }

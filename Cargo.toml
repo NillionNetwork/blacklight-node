@@ -1,5 +1,5 @@
 [package]
-name = "nilav"
+name = "niluv"
 version = "0.1.0"
 edition = "2021"
 authors = ["Nillion"]
@@ -39,8 +39,8 @@ name = "nilcc_simulator"
 path = "src/bin/nilcc_simulator.rs"
 
 [[bin]]
-name = "nilav_node"
-path = "src/bin/nilav_node.rs"
+name = "niluv_node"
+path = "src/bin/niluv_node.rs"
 
 [[bin]]
 name = "monitor"
