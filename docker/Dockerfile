@@ -99,14 +99,31 @@ FROM --platform=$TARGETPLATFORM debian:bookworm-slim AS base_release
 
 ARG TARGETPLATFORM
 
-RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/* && \
-    mkdir -p /app
+# Security & UX Trade-off:
+# We install gosu to enable safe privilege dropping in the entrypoint script.
+# The container starts as root to fix permissions on mounted volumes, then drops
+# to appuser before running the application. This prevents permission issues with
+# bind mounts while maintaining container security by not running the app as root.
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    gosu \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd -r appuser -g 10001 \
+    && useradd -r -u 10001 -g appuser appuser \
+    && mkdir -p /app \
+    && chown appuser:appuser /app
+
+# Copy entrypoint script that handles permission fixes and privilege dropping
+COPY docker/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
 WORKDIR /app
 
 # Runtime stage for nilav_node
 FROM base_release AS nilav_node
 COPY --from=builder /out/bin/nilav_node /usr/local/bin/nilav_node
-ENTRYPOINT ["/usr/local/bin/nilav_node"]
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+CMD ["/usr/local/bin/nilav_node"]
 
 # Runtime stage for nilcc_simulator
 FROM base_release AS nilcc_simulator
@@ -115,10 +132,12 @@ COPY --from=builder /app/config /app/config
 COPY --from=builder /app/data /app/data
 ENV CONFIG_PATH=/app/config/config.toml
 ENV HTXS_PATH=/app/data/htxs.json
-ENTRYPOINT ["/usr/local/bin/nilcc_simulator"]
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+CMD ["/usr/local/bin/nilcc_simulator"]
 
 # Runtime stage for monitor
 FROM base_release AS monitor
 COPY --from=builder /out/bin/monitor /usr/local/bin/monitor
-ENTRYPOINT ["/usr/local/bin/monitor"]
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+CMD ["/usr/local/bin/monitor"]
 
