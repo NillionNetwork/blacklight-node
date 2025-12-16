@@ -19,7 +19,7 @@ jobs:
     strategy:
       matrix:
         target:
-          - nilav_node
+          - niluv_node
     steps:
       - name: Checkout
         uses: actions/checkout@v4

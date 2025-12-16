@@ -1,5 +1,5 @@
-# Multi-stage Dockerfile for nilAV project with cross-compilation support
-# Builds all binaries: nilav_node, nilcc_simulator, monitor
+# Multi-stage Dockerfile for nilUV project with cross-compilation support
+# Builds all binaries: niluv_node, nilcc_simulator, monitor
 
 FROM --platform=$BUILDPLATFORM rust:1.91-slim-trixie AS builder
 
@@ -90,7 +90,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     fi && \
     cargo build --release --target $RUST_TARGET --bins && \
     mkdir -p /out/bin && \
-    cp target/$RUST_TARGET/release/nilav_node /out/bin/ && \
+    cp target/$RUST_TARGET/release/niluv_node /out/bin/ && \
     cp target/$RUST_TARGET/release/nilcc_simulator /out/bin/ && \
     cp target/$RUST_TARGET/release/monitor /out/bin/
 
@@ -106,10 +106,10 @@ RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/
 USER appuser
 WORKDIR /app
 
-# Runtime stage for nilav_node
-FROM base_release AS nilav_node
-COPY --from=builder /out/bin/nilav_node /usr/local/bin/nilav_node
-ENTRYPOINT ["/usr/local/bin/nilav_node"]
+# Runtime stage for niluv_node
+FROM base_release AS niluv_node
+COPY --from=builder /out/bin/niluv_node /usr/local/bin/niluv_node
+ENTRYPOINT ["/usr/local/bin/niluv_node"]
 
 # Runtime stage for nilcc_simulator
 FROM base_release AS nilcc_simulator

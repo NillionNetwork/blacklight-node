@@ -1,5 +1,5 @@
 use crate::contract_client::{
-    ContractConfig, NilAVRouterClient, StakingOperatorsClient, TESTTokenClient,
+    ContractConfig, NilUVRouterClient, StakingOperatorsClient, TESTTokenClient,
 };
 
 use alloy::{
@@ -14,15 +14,15 @@ use tokio::sync::Mutex;
 
 /// High-level wrapper bundling all contract clients with a shared Alloy provider.
 #[derive(Clone)]
-pub struct NilAVClient {
+pub struct NilUVClient {
     provider: DynProvider,
     wallet: EthereumWallet,
-    pub router: NilAVRouterClient<DynProvider>,
+    pub router: NilUVRouterClient<DynProvider>,
     pub token: TESTTokenClient<DynProvider>,
     pub staking: StakingOperatorsClient<DynProvider>,
 }
 
-impl NilAVClient {
+impl NilUVClient {
     pub async fn new(config: ContractConfig, private_key: String) -> anyhow::Result<Self> {
         let rpc_url = config.rpc_url.clone();
         let ws_url = rpc_url
@@ -46,7 +46,7 @@ impl NilAVClient {
         let tx_lock = Arc::new(Mutex::new(()));
 
         // Instantiate contract clients using the shared provider
-        let router = NilAVRouterClient::new(provider.clone(), config.clone(), tx_lock.clone());
+        let router = NilUVRouterClient::new(provider.clone(), config.clone(), tx_lock.clone());
         let token = TESTTokenClient::new(provider.clone(), config.clone(), tx_lock.clone());
         let staking = StakingOperatorsClient::new(provider.clone(), config, tx_lock.clone());
 

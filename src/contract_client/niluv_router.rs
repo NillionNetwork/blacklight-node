@@ -28,15 +28,15 @@ pub type HTXAssignedFilter = NilAVRouter::HTXAssigned;
 pub type HTXRespondedFilter = NilAVRouter::HTXResponded;
 pub type HTXSubmittedFilter = NilAVRouter::HTXSubmitted;
 
-/// WebSocket-based client for real-time event streaming and contract interaction with NilAVRouter
+/// WebSocket-based client for real-time event streaming and contract interaction with NilUVRouter
 #[derive(Clone)]
-pub struct NilAVRouterClient<P: Provider + Clone> {
+pub struct NilUVRouterClient<P: Provider + Clone> {
     provider: P,
     contract: NilAVRouter::NilAVRouterInstance<P>,
     tx_lock: Arc<Mutex<()>>,
 }
 
-impl<P: Provider + Clone> NilAVRouterClient<P> {
+impl<P: Provider + Clone> NilUVRouterClient<P> {
     /// Create a new WebSocket client from ContractConfig
     pub fn new(provider: P, config: super::ContractConfig, tx_lock: Arc<Mutex<()>>) -> Self {
         let contract =

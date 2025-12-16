@@ -1,15 +1,15 @@
-# NilAV Docker Setup
+# NilUV Docker Setup
 
-Complete Docker setup for running the NilAV system with Anvil blockchain, smart contracts, and multiple nodes.
+Complete Docker setup for running the NilUV system with Anvil blockchain, smart contracts, and multiple nodes.
 
 ## Services
 
 The docker-compose setup includes:
 
 1. **Anvil** - Local Ethereum testnet (port 8545)
-2. **Contract Deployer** - Deploys the NilAVRouter smart contract
+2. **Contract Deployer** - Deploys the NilUVRouter smart contract
 3. **Simulator** - Submits HTXs to the contract for verification
-4. **5 NilAV Nodes** - Verify HTXs and respond with results
+4. **5 NilUV Nodes** - Verify HTXs and respond with results
 5. **Monitor** (optional) - TUI for monitoring contract events
 
 ## Quick Start
@@ -61,12 +61,12 @@ docker-compose down -v
 └──────┬──────┘
        │
        ├── Deploy Contract
-       │   (NilAVRouter)
+       │   (NilUVRouter)
        │
        ├──────────────────────────────┐
        │                              │
 ┌──────▼──────┐              ┌────────▼────────┐
-│  Simulator  │              │  5 NilAV Nodes  │
+│  Simulator  │              │  5 NilUV Nodes  │
 │             │              │                 │
 │ Submits HTXs├─────────────►│ Verify HTXs    │
 │ periodically│              │ & submit results│
@@ -137,10 +137,10 @@ docker-compose up -d node1
 
 ```bash
 # Get contract address
-cat /tmp/nilav_contract_address.txt  # If saved locally
+cat /tmp/niluv_contract_address.txt  # If saved locally
 
 # Or from the shared volume
-docker run --rm -v nilav_shared-data:/shared alpine cat /shared/contract_address.txt
+docker run --rm -v niluv_shared-data:/shared alpine cat /shared/contract_address.txt
 ```
 
 ## Monitoring
@@ -189,7 +189,7 @@ docker-compose restart <service-name>
 docker-compose logs deployer
 
 # Verify shared volume
-docker run --rm -v nilav_shared-data:/shared alpine ls -la /shared
+docker run --rm -v niluv_shared-data:/shared alpine ls -la /shared
 ```
 
 ### Nodes not registering:
@@ -227,7 +227,7 @@ Data is persisted in Docker volumes:
 
 To inspect node data:
 ```bash
-docker run --rm -v nilav_node1-data:/data alpine ls -la /data
+docker run --rm -v niluv_node1-data:/data alpine ls -la /data
 ```
 
 ## Advanced Usage

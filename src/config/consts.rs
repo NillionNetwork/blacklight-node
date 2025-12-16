@@ -9,9 +9,9 @@ use alloy::primitives::U256;
 // State File Names
 // =============================================================================
 
-pub const STATE_FILE_NODE: &str = "nilav_node.env";
+pub const STATE_FILE_NODE: &str = "niluv_node.env";
 pub const STATE_FILE_SIMULATOR: &str = "nilcc_simulator.env";
-pub const STATE_FILE_MONITOR: &str = "nilav_monitor.env";
+pub const STATE_FILE_MONITOR: &str = "niluv_monitor.env";
 
 // =============================================================================
 // Default Configuration Values

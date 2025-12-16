@@ -12,17 +12,17 @@ use tracing::info;
 /// CLI arguments for the NilCC simulator
 #[derive(Parser, Debug)]
 #[command(name = "nilcc_simulator")]
-#[command(about = "NilAV Server - Submits HTXs to the smart contract", long_about = None)]
+#[command(about = "NilUV Server - Submits HTXs to the smart contract", long_about = None)]
 pub struct CliArgs {
     /// Ethereum RPC endpoint
     #[arg(long, env = "RPC_URL")]
     pub rpc_url: Option<String>,
 
-    /// NilAV router contract address
+    /// NilUV router contract address
     #[arg(long, env = "ROUTER_CONTRACT_ADDRESS")]
     pub router_contract_address: Option<String>,
 
-    /// NilAV staking contract address
+    /// NilUV staking contract address
     #[arg(long, env = "STAKING_CONTRACT_ADDRESS")]
     pub staking_contract_address: Option<String>,
 

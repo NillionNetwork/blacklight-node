@@ -5,7 +5,7 @@ services:
       context: .
       dockerfile: docker/Dockerfile.anvil
       target: foundry
-    container_name: nilav-anvil
+    container_name: niluv-anvil
     environment:
       - RPC_URL=http://localhost:8545
       - PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
@@ -14,7 +14,7 @@ services:
     ports:
       - "8545:8545"
     networks:
-      - nilav-network
+      - niluv-network
     healthcheck:
       test: [ "CMD-SHELL", "curl -sf -X POST -H 'Content-Type: application/json' --data '{\"jsonrpc\":\"2.0\",\"method\":\"eth_blockNumber\",\"params\":[],\"id\":1}' http://localhost:8545 || exit 1" ]
       interval: 5s
@@ -28,7 +28,7 @@ services:
       context: .
       dockerfile: docker/Dockerfile
       target: nilcc_simulator
-    container_name: nilav-simulator
+    container_name: niluv-simulator
     depends_on:
       anvil:
         condition: service_healthy
@@ -43,7 +43,7 @@ services:
       - TOKEN_CONTRACT_ADDRESS=0x5fbdb2315678afecb367f032d93f642f64180aa3
       - RUST_LOG=info
     networks:
-      - nilav-network
+      - niluv-network
     restart: unless-stopped
 
   # NilCC Simulator - Submits HTXs to the contract
@@ -52,7 +52,7 @@ services:
       context: .
       dockerfile: docker/Dockerfile
       target: nilcc_simulator
-    container_name: nilav-simulator-2
+    container_name: niluv-simulator-2
     depends_on:
       anvil:
         condition: service_healthy
@@ -67,16 +67,16 @@ services:
       - TOKEN_CONTRACT_ADDRESS=0x5fbdb2315678afecb367f032d93f642f64180aa3
       - RUST_LOG=info
     networks:
-      - nilav-network
+      - niluv-network
     restart: unless-stopped
 
-  # NilAV Node 1
+  # niluv Node 1
   node1:
     build:
       context: .
       dockerfile: docker/Dockerfile
-      target: nilav_node
-    container_name: nilav-node-1
+      target: niluv_node
+    container_name: niluv-node-1
     depends_on:
       anvil:
         condition: service_healthy
@@ -89,16 +89,16 @@ services:
       - PUBLIC_KEY=0x23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f
       - RUST_LOG=info
     networks:
-      - nilav-network
+      - niluv-network
     restart: unless-stopped
 
-  # NilAV Node 2
+  # niluv Node 2
   node2:
     build:
       context: .
       dockerfile: docker/Dockerfile
-      target: nilav_node
-    container_name: nilav-node-2
+      target: niluv_node
+    container_name: niluv-node-2
     depends_on:
       anvil:
         condition: service_healthy
@@ -112,16 +112,16 @@ services:
       - NODE_ID=node-2
       - RUST_LOG=info
     networks:
-      - nilav-network
+      - niluv-network
     restart: unless-stopped
 
-  # NilAV Node 3
+  # niluv Node 3
   node3:
     build:
       context: .
       dockerfile: docker/Dockerfile
-      target: nilav_node
-    container_name: nilav-node-3
+      target: niluv_node
+    container_name: niluv-node-3
     depends_on:
       anvil:
         condition: service_healthy
@@ -135,16 +135,16 @@ services:
       - NODE_ID=node-3
       - RUST_LOG=info
     networks:
-      - nilav-network
+      - niluv-network
     restart: unless-stopped
 
-  # NilAV Node 4
+  # niluv Node 4
   node4:
     build:
       context: .
       dockerfile: docker/Dockerfile
-      target: nilav_node
-    container_name: nilav-node-4
+      target: niluv_node
+    container_name: niluv-node-4
     depends_on:
       anvil:
         condition: service_healthy
@@ -158,16 +158,16 @@ services:
       - NODE_ID=node-4
       - RUST_LOG=info
     networks:
-      - nilav-network
+      - niluv-network
     restart: unless-stopped
 
-  # NilAV Node 5
+  # niluv Node 5
   node5:
     build:
       context: .
       dockerfile: docker/Dockerfile
-      target: nilav_node
-    container_name: nilav-node-5
+      target: niluv_node
+    container_name: niluv-node-5
     depends_on:
       anvil:
         condition: service_healthy
@@ -181,9 +181,9 @@ services:
       - NODE_ID=node-5
       - RUST_LOG=info
     networks:
-      - nilav-network
+      - niluv-network
     restart: unless-stopped
 
 networks:
-  nilav-network:
+  niluv-network:
     driver: bridge

@@ -3,9 +3,9 @@ use std::time::Duration;
 
 use anyhow::Result;
 use clap::Parser;
-use nilav::{
+use niluv::{
     config::{SimulatorCliArgs, SimulatorConfig},
-    contract_client::{ContractConfig, NilAVClient},
+    contract_client::{ContractConfig, NilUVClient},
     types::Htx,
 };
 use rand::Rng;
@@ -38,7 +38,7 @@ fn load_config() -> Result<SimulatorConfig> {
     Ok(config)
 }
 
-async fn setup_client(config: &SimulatorConfig) -> Result<NilAVClient> {
+async fn setup_client(config: &SimulatorConfig) -> Result<NilUVClient> {
     let contract_config = ContractConfig::new(
         config.rpc_url.clone(),
         config.router_contract_address,
@@ -46,7 +46,7 @@ async fn setup_client(config: &SimulatorConfig) -> Result<NilAVClient> {
         config.token_contract_address,
     );
 
-    let client = NilAVClient::new(contract_config, config.private_key.clone()).await?;
+    let client = NilUVClient::new(contract_config, config.private_key.clone()).await?;
 
     info!(
         contract = %client.router.address(),
@@ -70,7 +70,7 @@ fn load_htxs(path: &str) -> Vec<Htx> {
     htxs
 }
 
-async fn run_submission_loop(client: NilAVClient, htxs: Vec<Htx>, slot_ms: u64) -> Result<()> {
+async fn run_submission_loop(client: NilUVClient, htxs: Vec<Htx>, slot_ms: u64) -> Result<()> {
     let mut ticker = interval(Duration::from_millis(slot_ms));
     let mut slot = 0u64;
     let client = Arc::new(client);
@@ -94,7 +94,7 @@ async fn run_submission_loop(client: NilAVClient, htxs: Vec<Htx>, slot_ms: u64) 
 const MAX_RETRIES: u32 = 3;
 const RETRY_DELAY_MS: u64 = 500;
 
-async fn submit_next_htx(client: &Arc<NilAVClient>, htxs: &Arc<Vec<Htx>>, slot: u64) -> Result<()> {
+async fn submit_next_htx(client: &Arc<NilUVClient>, htxs: &Arc<Vec<Htx>>, slot: u64) -> Result<()> {
     if htxs.is_empty() {
         warn!(slot, "No HTXs available");
         return Ok(());
