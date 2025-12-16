@@ -12,13 +12,17 @@ APP_GID=10001
 # Fix permissions on directories that need to be writable
 # This ensures the application can write to these directories when running as appuser
 # Only fix permissions if the directories exist and are not already owned by appuser
-if [ -d "/app/config" ] && [ "$(stat -c '%u' /app/config)" != "${APP_UID}" ]; then
-    chown -R ${APP_UID}:${APP_GID} /app/config
-fi
 
-if [ -d "/app/data" ] && [ "$(stat -c '%u' /app/data)" != "${APP_UID}" ]; then
-    chown -R ${APP_UID}:${APP_GID} /app/data
-fi
+# Helper function to fix directory ownership if needed
+fix_ownership() {
+    local dir="$1"
+    if [ -d "$dir" ] && [ "$(stat -c '%u' "$dir" 2>/dev/null || echo '')" != "${APP_UID}" ]; then
+        chown -R ${APP_UID}:${APP_GID} "$dir"
+    fi
+}
+
+fix_ownership "/app/config"
+fix_ownership "/app/data"
 
 # Drop privileges and execute the command as appuser
 # gosu is guaranteed to be available (installed in Dockerfile)
