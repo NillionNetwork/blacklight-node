@@ -1,13 +1,14 @@
 use std::env::temp_dir;
 use std::path::PathBuf;
 
+use alloy::primitives::utils::format_ether;
 use alloy::primitives::{Address, U256};
 use anyhow::{Context, Result};
 use clap::Parser;
 
 use crate::config::consts::{
     DEFAULT_ROUTER_CONTRACT_ADDRESS, DEFAULT_RPC_URL, DEFAULT_STAKING_CONTRACT_ADDRESS,
-    DEFAULT_TOKEN_CONTRACT_ADDRESS, STATE_FILE_NODE,
+    DEFAULT_TOKEN_CONTRACT_ADDRESS, MIN_ETH_BALANCE, STATE_FILE_NODE,
 };
 use crate::contract_client::NilAVClient;
 use crate::state::StateFile;
@@ -182,24 +183,35 @@ pub async fn validate_node_requirements(
     // Determine wallet status and display unified banner
     let status = if was_wallet_created {
         WalletStatus::Created
-    } else if eth_balance == U256::ZERO || staked_balance == U256::ZERO {
+    } else if eth_balance < MIN_ETH_BALANCE || staked_balance == U256::ZERO {
         WalletStatus::InsufficientFunds
     } else {
         WalletStatus::Ready
     };
 
     // Display wallet status with all information
-    display_wallet_status(status, address, rpc_url, eth_balance, staked_balance);
+    display_wallet_status(
+        status,
+        address,
+        rpc_url,
+        eth_balance,
+        staked_balance,
+        MIN_ETH_BALANCE,
+    );
 
     // Return error if not ready
     match status {
         WalletStatus::Created => {
             anyhow::bail!(
-                "Account created successfully. Please fund the address with ETH to continue."
+                "Account created successfully. Please fund the address with at least {} ETH to continue.",
+                format_ether(MIN_ETH_BALANCE)
             )
         }
         WalletStatus::InsufficientFunds => {
-            anyhow::bail!("Insufficient funds. Please load ETH to the address and try again.")
+            anyhow::bail!(
+                "Insufficient funds. Please ensure the address has at least {} ETH and try again.",
+                format_ether(MIN_ETH_BALANCE)
+            )
         }
         WalletStatus::Ready => Ok(()),
     }

@@ -3,7 +3,7 @@ use anyhow::Result;
 use clap::Parser;
 use nilav::{
     config::{
-        consts::{INITIAL_RECONNECT_DELAY_SECS, MAX_RECONNECT_DELAY_SECS},
+        consts::{INITIAL_RECONNECT_DELAY_SECS, MAX_RECONNECT_DELAY_SECS, MIN_ETH_BALANCE},
         validate_node_requirements, NodeCliArgs, NodeConfig,
     },
     contract_client::{ContractConfig, NilAVClient},
@@ -18,6 +18,7 @@ use tracing::{debug, error, info, warn};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 use alloy::primitives::utils::format_ether;
+
 // ============================================================================
 // Signal Handling
 // ============================================================================
@@ -89,6 +90,7 @@ async fn process_htx_assignment(
     htx_id: B256,
     verifier: &HtxVerifier,
     verified_counter: Arc<AtomicU64>,
+    shutdown_notify: Arc<Notify>,
 ) -> Result<()> {
     // Retrieve the HTX data from the contract
     let htx_bytes = client.router.get_htx(htx_id).await.map_err(|e| {
@@ -130,6 +132,24 @@ async fn process_htx_assignment(
                 warn!(error = %e, "Failed to fetch status information");
             }
 
+            // Check if balance is below minimum threshold
+            match client.get_balance().await {
+                Ok(balance) => {
+                    if balance < MIN_ETH_BALANCE {
+                        error!(
+                            balance = %format_ether(balance),
+                            min_required = %format_ether(MIN_ETH_BALANCE),
+                            "⚠️ ETH balance below minimum threshold. Initiating shutdown..."
+                        );
+                        shutdown_notify.notify_waiters();
+                        return Err(anyhow::anyhow!("Insufficient ETH balance"));
+                    }
+                }
+                Err(e) => {
+                    warn!(error = %e, "Failed to check balance after transaction");
+                }
+            }
+
             Ok(())
         }
         Err(e) => {
@@ -145,6 +165,7 @@ async fn process_assignment_backlog(
     node_address: Address,
     verifier: &HtxVerifier,
     verified_counter: Arc<AtomicU64>,
+    shutdown_notify: Arc<Notify>,
 ) -> Result<()> {
     info!("Checking for pending assignments from before connection");
 
@@ -177,9 +198,16 @@ async fn process_assignment_backlog(
                 let client_clone = client.clone();
                 let verifier = verifier.clone();
                 let counter = verified_counter.clone();
+                let shutdown_clone = shutdown_notify.clone();
                 tokio::spawn(async move {
-                    if let Err(e) =
-                        process_htx_assignment(client_clone, htx_id, &verifier, counter).await
+                    if let Err(e) = process_htx_assignment(
+                        client_clone,
+                        htx_id,
+                        &verifier,
+                        counter,
+                        shutdown_clone,
+                    )
+                    .await
                     {
                         error!(htx_id = ?htx_id, error = %e, "Failed to process pending HTX");
                     }
@@ -277,11 +305,13 @@ async fn run_event_listener(
 ) -> Result<()> {
     let client_for_callback = client.clone();
     let counter_for_callback = verified_counter.clone();
+    let shutdown_for_callback = shutdown_notify.clone();
 
     let router_arc = Arc::new(client.router.clone());
     let listen_future = router_arc.listen_htx_assigned_for_node(node_address, move |event| {
         let client = client_for_callback.clone();
         let counter = counter_for_callback.clone();
+        let shutdown_clone = shutdown_for_callback.clone();
 
         async move {
             let htx_id = event.htxId;
@@ -293,8 +323,14 @@ async fn run_event_listener(
                     Ok((responded, _result)) if responded => (),
                     Ok(_) => {
                         info!(htx_id = ?htx_id, "📥 HTX received");
-                        if let Err(e) =
-                            process_htx_assignment(client, htx_id, &verifier, counter).await
+                        if let Err(e) = process_htx_assignment(
+                            client,
+                            htx_id,
+                            &verifier,
+                            counter,
+                            shutdown_clone,
+                        )
+                        .await
                         {
                             error!(htx_id = ?htx_id, error = %e, "Failed to process real-time HTX");
                         }
@@ -446,6 +482,7 @@ async fn main() -> Result<()> {
             current_address,
             &verifier,
             verified_counter.clone(),
+            shutdown_notify.clone(),
         )
         .await
         {
