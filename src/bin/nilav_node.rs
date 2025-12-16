@@ -7,7 +7,7 @@ use nilav::{
         validate_node_requirements, NodeCliArgs, NodeConfig,
     },
     contract_client::{ContractConfig, NilAVClient},
-    types::Htx,
+    types::VersionedHtx,
     verification::HtxVerifier,
 };
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -97,7 +97,7 @@ async fn process_htx_assignment(
     })?;
 
     // Parse the HTX data
-    let htx: Htx = match serde_json::from_slice(&htx_bytes) {
+    let htx: VersionedHtx = match serde_json::from_slice(&htx_bytes) {
         Ok(h) => h,
         Err(e) => {
             error!(htx_id = ?htx_id, error = %e, "Failed to parse HTX data");
@@ -106,6 +106,10 @@ async fn process_htx_assignment(
             info!(htx_id = ?htx_id, "✅ HTX verification submitted");
             return Ok(());
         }
+    };
+    #[allow(clippy::infallible_destructuring_match)]
+    let htx = match htx {
+        VersionedHtx::V1(htx) => htx,
     };
 
     // Verify the HTX

@@ -127,7 +127,7 @@ async fn submit_next_htx(client: &Arc<NilAVClient>, htxs: &Arc<Vec<Htx>>, slot: 
             info!(slot, attempt, "Retrying HTX submission");
         }
 
-        match client.router.submit_htx(&htx).await {
+        match client.router.submit_htx(&htx.into()).await {
             Ok(tx_hash) => {
                 info!(slot, tx_hash = ?tx_hash, "HTX submitted");
                 return Ok(());

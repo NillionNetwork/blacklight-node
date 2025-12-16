@@ -1,4 +1,3 @@
-use crate::json::stable_stringify;
 use alloy::primitives::Bytes;
 use serde::{Deserialize, Serialize};
 use serde_with::{hex::Hex, serde_as};
@@ -51,26 +50,26 @@ pub struct Htx {
     pub builder_measurement: BuilderMeasurement,
 }
 
-/// Convert HTX to bytes for on-chain submission.
-/// Uses stable_stringify to ensure deterministic JSON serialization with sorted keys.
-/// This is critical because:
-/// 1. The HTX ID is derived from keccak256(abi.encode(rawHTXHash, sender, blockNumber))
-/// 2. Different JSON key orderings would produce different hashes
-/// 3. Non-deterministic serialization would break verification and assignment matching
-impl TryInto<Bytes> for Htx {
-    type Error = anyhow::Error;
-    fn try_into(self) -> Result<Bytes, Self::Error> {
-        let json = stable_stringify(&self)?;
-        Ok(Bytes::from(json.into_bytes()))
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "version", rename_all = "camelCase")]
+pub enum VersionedHtx {
+    /// The first HTX format version.
+    V1(Htx),
+}
+
+impl From<Htx> for VersionedHtx {
+    fn from(htx: Htx) -> Self {
+        VersionedHtx::V1(htx)
     }
 }
 
-/// Convert HTX reference to bytes for on-chain submission.
-/// See the impl for `Htx` for details on why we use stable_stringify.
-impl TryInto<Bytes> for &Htx {
+impl TryFrom<&VersionedHtx> for Bytes {
     type Error = anyhow::Error;
-    fn try_into(self) -> Result<Bytes, Self::Error> {
-        let json = stable_stringify(self)?;
+
+    fn try_from(htx: &VersionedHtx) -> Result<Self, Self::Error> {
+        // Convert into a json::Value first to ensure keys are sorted
+        let json = serde_json::to_value(htx)?;
+        let json = serde_json::to_string(&json)?;
         Ok(Bytes::from(json.into_bytes()))
     }
 }
@@ -106,20 +105,12 @@ mod tests {
                 url: "https://example.com/builder".to_string(),
             },
         };
+        let htx = VersionedHtx::V1(htx);
 
         // Serialize the same HTX multiple times
-        let bytes1: Result<Bytes, _> = htx.clone().try_into();
-        let bytes2: Result<Bytes, _> = htx.clone().try_into();
-        let bytes3: Result<Bytes, _> = htx.try_into();
-
-        // All should be identical (deterministic)
-        assert!(bytes1.is_ok());
-        assert!(bytes2.is_ok());
-        assert!(bytes3.is_ok());
-
-        let b1 = bytes1.unwrap();
-        let b2 = bytes2.unwrap();
-        let b3 = bytes3.unwrap();
+        let b1 = Bytes::try_from(&htx).unwrap();
+        let b2 = Bytes::try_from(&htx).unwrap();
+        let b3 = Bytes::try_from(&htx).unwrap();
 
         assert_eq!(b1, b2);
         assert_eq!(b2, b3);

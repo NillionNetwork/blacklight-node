@@ -1,5 +1,4 @@
-use crate::config::consts::DEFAULT_LOOKBACK_BLOCKS;
-use crate::types::Htx;
+use crate::{config::consts::DEFAULT_LOOKBACK_BLOCKS, types::VersionedHtx};
 use alloy::{
     consensus::Transaction,
     dyn_abi::DynSolType,
@@ -89,7 +88,7 @@ impl<P: Provider + Clone> NilAVRouterClient<P> {
     // ------------------------------------------------------------------------
 
     /// Submit an HTX for verification
-    pub async fn submit_htx(&self, htx: &Htx) -> Result<B256> {
+    pub async fn submit_htx(&self, htx: &VersionedHtx) -> Result<B256> {
         let raw_htx: alloy::primitives::Bytes = htx.try_into()?;
         let call = self.contract.submitHTX(raw_htx);
 
