@@ -7,6 +7,12 @@ use term_table::table_cell::{Alignment as CellAlignment, TableCell};
 use term_table::{Table, TableStyle};
 use tracing::{info, warn};
 
+fn format_eth_clean(amount: U256) -> String {
+    let formatted = alloy::primitives::utils::format_ether(amount);
+    // Trim trailing zeros after decimal point
+    let trimmed = formatted.trim_end_matches('0').trim_end_matches('.');
+    trimmed.to_string()
+}
 /// Wallet validation status
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WalletStatus {
@@ -53,17 +59,19 @@ pub fn display_wallet_status(
     rpc_url: &str,
     eth_balance: U256,
     staked_balance: U256,
+    min_eth_balance: U256,
 ) {
     let address_str = format!("{:?}", address);
     let eth_formatted = alloy::primitives::utils::format_ether(eth_balance);
     let staked_formatted = alloy::primitives::utils::format_ether(staked_balance);
-    let has_eth = eth_balance > U256::ZERO;
+    let min_eth_formatted = format_eth_clean(min_eth_balance);
+    let has_sufficient_eth = eth_balance >= min_eth_balance;
     let has_stake = staked_balance > U256::ZERO;
 
-    let eth_balance_str = if has_eth {
+    let eth_balance_str = if has_sufficient_eth {
         format!("{} ETH ✅", eth_formatted)
     } else {
-        format!("{} ETH ❌", eth_formatted)
+        format!("{} ETH ❌ (min: {} ETH)", eth_formatted, min_eth_formatted)
     };
     let staked_balance_str = if has_stake {
         format!("{} TEST ✅", staked_formatted)
@@ -128,18 +136,21 @@ pub fn display_wallet_status(
     // Status message based on wallet status and stake
     let status_message = match status {
         WalletStatus::Created => {
-            "❗ Please fund this address with ETH and stake TEST tokens to continue ❗"
+            format!("❗ Please fund this address with at least {} ETH and stake TEST tokens to continue ❗", min_eth_formatted)
         }
         WalletStatus::InsufficientFunds => {
-            if !has_stake && !has_eth {
-                "❗ Please fund this address with ETH and stake TEST tokens to continue ❗"
+            if !has_stake && !has_sufficient_eth {
+                format!("❗ Please fund this address with at least {} ETH and stake TEST tokens to continue ❗", min_eth_formatted)
             } else if !has_stake {
-                "⚠️  Please stake TEST tokens to continue"
+                "⚠️  Please stake TEST tokens to continue".to_string()
             } else {
-                "⚠️  Please fund this address with ETH for gas transactions"
+                format!(
+                    "⚠️  Please fund this address with at least {} ETH for gas transactions",
+                    min_eth_formatted
+                )
             }
         }
-        WalletStatus::Ready => "✅ Ready to operate",
+        WalletStatus::Ready => "✅ Ready to operate".to_string(),
     };
     table.add_row(Row::new(vec![TableCell::builder(status_message)
         .col_span(2)

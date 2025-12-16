@@ -3,6 +3,8 @@
 //! This module provides all CLI and configuration constants used throughout the application.
 //! Values are conditionally compiled based on the build profile (debug vs release).
 
+use alloy::primitives::U256;
+
 // =============================================================================
 // State File Names
 // =============================================================================
@@ -72,3 +74,17 @@ pub const DEFAULT_LOOKBACK_BLOCKS: u64 = 50; // Fewer blocks for release (perfor
 /// Solidity Error(string) function selector
 /// Used for decoding revert messages from contract calls
 pub const ERROR_STRING_SELECTOR: &str = "08c379a0";
+
+// =============================================================================
+// Node Operation Settings
+// =============================================================================
+
+/// Convert ETH to wei at compile time
+const fn eth_to_wei(eth: f64) -> U256 {
+    let wei = (eth * 1_000_000_000_000_000_000.0) as u64;
+    U256::from_limbs([wei, 0, 0, 0])
+}
+
+/// Minimum ETH balance required to continue operating
+/// Node will initiate shutdown if balance falls below this threshold
+pub const MIN_ETH_BALANCE: U256 = eth_to_wei(0.00001);
