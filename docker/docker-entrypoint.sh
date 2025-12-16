@@ -16,8 +16,13 @@ APP_GID=10001
 # Helper function to fix directory ownership if needed
 fix_ownership() {
     local dir="$1"
-    if [ -d "$dir" ] && [ "$(stat -c '%u' "$dir" 2>/dev/null || echo '')" != "${APP_UID}" ]; then
-        chown -R ${APP_UID}:${APP_GID} "$dir"
+    local current_uid
+    
+    if [ -d "$dir" ]; then
+        current_uid=$(stat -c '%u' "$dir" 2>/dev/null || echo '')
+        if [ -n "$current_uid" ] && [ "$current_uid" != "${APP_UID}" ]; then
+            chown -R "${APP_UID}:${APP_GID}" "$dir"
+        fi
     fi
 }
 
