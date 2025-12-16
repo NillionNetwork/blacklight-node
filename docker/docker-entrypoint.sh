@@ -31,4 +31,4 @@ fix_ownership "/app/data"
 
 # Drop privileges and execute the command as appuser
 # gosu is guaranteed to be available (installed in Dockerfile)
-exec gosu ${APP_USER} "$@"
+exec gosu "${APP_USER}" "$@"
