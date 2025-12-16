@@ -7,7 +7,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 NilAV (Nillion Auditor-Verifier) is a Rust-based HTX (Hash Transaction) verification system with both local simulation and blockchain deployment modes. The system uses WebSocket-based event streaming for sub-100ms latency.
 
 **Key Architecture:**
-- **Smart Contract** (Solidity): NilAVRouter manages node registration, HTX submission, and verification assignment
+- **Smart Contracts** (Solidity):
+  - NilAVRouter: Manages HTX submission and stake-weighted verification assignment
+  - StakingOperators: Handles node registration, activation/deactivation, and stake tracking
+  - TESTToken: ERC20 token used for staking (test environment)
 - **Rust Binaries**: Three independent executables that interact with the contract or simulate the network
 - **Event-Driven**: WebSocket streaming replaces polling for real-time responsiveness
 
@@ -38,6 +41,12 @@ cargo test -- --nocapture
 
 # Check compilation without building
 cargo check
+
+# Format code
+cargo fmt
+
+# Format check (CI)
+cargo fmt --all -- --check
 ```
 
 ### Smart Contracts (Foundry Monorepo)
@@ -98,19 +107,28 @@ The verification node that connects to the blockchain and processes HTX assignme
 **Environment configuration** (`nilav_node.env`):
 ```env
 RPC_URL=https://rpc-url-here.com
-CONTRACT_ADDRESS=0xYourContractAddress
+ROUTER_CONTRACT_ADDRESS=0xYourRouterAddress
+STAKING_CONTRACT_ADDRESS=0xYourStakingAddress
+TOKEN_CONTRACT_ADDRESS=0xYourTokenAddress
 PRIVATE_KEY=0xYourPrivateKey
+ARTIFACT_CACHE=/path/to/artifact/cache  # Optional: for HTX verification artifacts
+CERT_CACHE=/path/to/cert/cache          # Optional: for attestation certificates
 ```
 
 **Key behavior:**
 - Connects via WebSocket to blockchain RPC
-- Auto-registers with the contract if not registered
+- Auto-registers with StakingOperators contract if not registered
+- Requires staked TEST tokens to receive assignments
 - Listens for `HTXAssigned` events in real-time
-- Fetches HTX data from transaction calldata
-- Runs verification logic (checks measurement URLs)
+- Fetches HTX data from original transaction calldata via event logs
+- Runs verification logic:
+  - Fetches and verifies attestation reports from nilCC measurement URLs
+  - Generates expected measurement hash from docker-compose hash and metadata
+  - Checks if measurement exists in builder's trusted index
 - Submits verification result (true/false) back to contract
 - Implements exponential backoff reconnection (1s to 60s)
 - Processes historical assignments on reconnect
+- Gracefully deactivates from contract on shutdown (Ctrl+C)
 
 **Run:**
 ```bash
@@ -162,21 +180,35 @@ nilCC Operator                 NilAVRouter Contract              nilAV Node
 
 ### HTX Verification Logic (verify_htx)
 
-The verification process checks if a nilCC measurement exists in the builder's index:
+The verification process validates attestation reports and checks measurements against the builder's trusted index:
 
-1. Fetch nilCC measurement from `htx.nilcc_measurement.url`
-2. Extract measurement value (tries `root.measurement` then `report.measurement`)
-3. Fetch builder index from `htx.builder_measurement.url`
-4. Check if measurement exists in builder index (as object values or array elements)
-5. Returns `Ok(())` if found, `Err(VerificationError)` otherwise
+1. **Fetch Attestation Report**: Download report bundle from `htx.nilcc_measurement.url`
+2. **Generate Expected Measurement**:
+   - Uses `MeasurementGenerator` from `attestation-verification` crate
+   - Inputs: `docker_compose_hash`, `cpu_count`, `vm_type`, and metadata
+   - Requires artifacts cached in `ARTIFACT_CACHE` for the specified `nilcc_version`
+3. **Verify Report**: Validates the attestation report against expected measurement using AMD SEV-SNP verification
+4. **Check Builder Index**:
+   - Fetch builder's trusted index from `htx.builder_measurement.url`
+   - Verify the measurement hash exists in the index (as object values or array elements)
+5. Returns `Ok(report)` if all checks pass, `Err(VerificationError)` otherwise
+
+**Verification Dependencies:**
+- `attestation-verification` crate (from NilCC repository)
+- Cached artifacts in `ARTIFACT_CACHE` (downloaded from S3: `https://nilcc.s3.eu-west-1.amazonaws.com`)
+- AMD certificate chain in `CERT_CACHE`
 
 ### Event Streaming Architecture
 
-The `NilAVWsClient` (src/contract_client/mod.rs) uses ethers-rs WebSocket provider:
-- Subscribes to contract events (`HTXAssigned`, `HTXSubmitted`, `HTXResponded`)
-- Maintains persistent connection with keepalive pings
+The contract clients (src/contract_client/) use Alloy framework for WebSocket connectivity:
+- **NilAVRouterClient**: Subscribes to HTX events (`HTXAssigned`, `HTXSubmitted`, `HTXResponded`)
+- **StakingOperatorsClient**: Manages operator registration and stake tracking
+- **TESTTokenClient**: Handles token approvals and transfers for staking
+- All clients share a single WebSocket provider for efficiency
+- Maintains persistent connection with automatic reconnection on disconnect
 - Auto-converts HTTP RPC URLs to WebSocket (http -> ws, https -> wss)
-- Implements `DEFAULT_LOOKBACK_BLOCKS = 50` to avoid querying from block 0
+- Implements `DEFAULT_LOOKBACK_BLOCKS = 1000` for historical event queries
+- Uses transaction mutex (`tx_lock`) to prevent nonce conflicts in concurrent operations
 
 ### Configuration System
 
@@ -186,6 +218,22 @@ Each binary has its own config struct in `src/config/`:
 - `MonitorConfig` - for monitor
 
 Config loading priority: CLI args > Environment variables > Config files > Defaults
+
+### Transaction Management
+
+**Gas Estimation & Buffers:**
+- `submitHTX`: Estimates gas, then adds 50% buffer for variable node selection costs
+- Other transactions: Use automatic gas estimation from Alloy
+
+**Retry Logic (Simulator):**
+- Max retries: 3 attempts with 500ms delay between retries
+- Only retries on-chain reverts (state race conditions)
+- Fails immediately on simulation errors
+- Adds random nonce to `workload_id` to ensure HTX uniqueness per submission
+
+**Nonce Management:**
+- Uses `tx_lock` (Arc<Mutex<()>>) to serialize transactions from the same signer
+- Prevents nonce conflicts in concurrent operations
 
 ## Key Data Types
 
@@ -211,23 +259,41 @@ HTX serialization uses `stable_stringify` (from `src/json.rs`) which canonicaliz
 Without canonicalization, the same HTX could serialize with different key orderings, producing different hashes and breaking the entire verification flow.
 
 ### Smart Contract Assignment (NilAVRouter.sol)
+
+The NilAVRouter uses stake-weighted multi-node assignment:
+
 ```solidity
+struct NodeResponse {
+    bool responded;
+    bool result;
+}
+
 struct Assignment {
-    address node;      // nilAV node chosen for this HTX
-    bool responded;    // has the node responded?
-    bool result;       // True/False from the node
+    address[] nodes;                                // Array of nodes assigned to this HTX
+    mapping(address => NodeResponse) responses;     // Track each node's response
+    uint256 requiredStake;                          // Minimum stake required (50% of total)
+    uint256 assignedStake;                          // Total stake of assigned nodes
+    uint256 respondedCount;                         // Number of nodes that have responded
 }
 ```
 
+**Node Selection Algorithm** (`_selectNodesByStake`):
+- Uses Fisher-Yates shuffle for randomized selection
+- Continues selecting nodes until `assignedStake >= requiredStake`
+- `requiredStake = totalStake * MIN_STAKE_BPS / BPS_DENOMINATOR` (50% by default)
+- Pseudo-random seed from `keccak256(block.prevrandao, htxId)`
+- Multiple nodes can be assigned to a single HTX for redundancy
+
 ## Contract ABI Generation
 
-The project uses `ethers-rs` `abigen!` macro to generate type-safe contract bindings:
+The project uses Alloy's `sol!` macro to generate type-safe contract bindings:
 
 ```rust
-abigen!(
+sol!(
+    #[sol(rpc)]
+    #[derive(Debug)]
     NilAVRouter,
-    "./contracts/out/NilAVRouter.sol/NilAVRouter.json",
-    event_derives(serde::Deserialize, serde::Serialize)
+    "./contracts/out/NilAVRouter.sol/NilAVRouter.json"
 );
 ```
 
@@ -241,6 +307,12 @@ Then rebuild Rust to regenerate bindings:
 ```bash
 cargo build
 ```
+
+**Contract Clients:**
+- `NilAVRouterClient` (src/contract_client/nilav_router.rs)
+- `StakingOperatorsClient` (src/contract_client/staking_operators.rs)
+- `TESTTokenClient` (src/contract_client/test_token.rs)
+- `NilAVClient` (src/contract_client/nilav_client.rs) - Unified client wrapping all three
 
 ## Contract Structure
 
@@ -258,17 +330,38 @@ contracts/
 │   └── libraries/         # Shared utility libraries
 ├── test/                  # All tests
 │   ├── NilAVRouter.t.sol
+│   ├── StakingOperators.t.sol
 │   └── integration/       # Integration tests
 ├── script/                # Deployment scripts
 │   ├── DeployRouter.s.sol
 │   ├── DeployStaking.s.sol
 │   ├── deploy.sh
-│   └── deploy_local.sh
+│   ├── deploy_local.sh
+│   ├── fund_operator.sh
+│   └── transfer_and_stake.sh
 ├── lib/                   # Dependencies
 │   ├── forge-std/
 │   └── openzeppelin-contracts/
 └── out/                   # Compiled artifacts
 ```
+
+### StakingOperators Contract
+
+Manages node operator registration and staking:
+
+**Key Functions:**
+- `registerOperator(string name)`: Register as an operator (requires TEST token approval)
+- `activateOperator()`: Activate after staking required amount
+- `deactivateOperator()`: Deactivate to stop receiving assignments (stake remains locked)
+- `withdrawStake()`: Withdraw stake after deactivation
+- `stakeOf(address)`: Query operator's staked amount
+- `isActiveOperator(address)`: Check if operator is active
+- `getActiveOperators()`: Get array of all active operator addresses
+- `totalStaked()`: Get total amount staked across all operators
+
+**Access Control:**
+- Only the StakingOperators contract owner can set minimum stake amount
+- Operators manage their own registration, activation, and deactivation
 
 ## Error Handling Patterns
 
@@ -279,7 +372,9 @@ The codebase decodes Solidity `Error(string)` reverts using `decode_error_string
 The `VerificationError` enum provides detailed error context:
 - `NilccUrl` / `BuilderUrl` - HTTP fetch failures
 - `NilccJson` / `BuilderJson` - JSON parsing failures
-- `MissingMeasurement` - Missing required field
+- `FetchReport` - Failed to fetch attestation report bundle
+- `VerifyReport` - Attestation report verification failed
+- `MeasurementHash` - Failed to generate expected measurement hash
 - `NotInBuilderIndex` - Measurement not found in builder index
 
 ## Development Workflow
@@ -296,22 +391,29 @@ docker compose up anvil
 3. Run node:
 ```bash
 RPC_URL=http://localhost:8545 \
-CONTRACT_ADDRESS=0x5FbDB2315678afecb367f032d93F642f64180aa3 \
+ROUTER_CONTRACT_ADDRESS=0x9fe46736679d2d9a65f0992f2272de9f3c7fa6e0 \
+STAKING_CONTRACT_ADDRESS=0xe7f1725e7734ce288f8367e1bb143e90bb3f0512 \
+TOKEN_CONTRACT_ADDRESS=0x5fbdb2315678afecb367f032d93f642f64180aa3 \
 cargo run --bin nilav_node
 ```
 
 4. Submit HTXs:
 ```bash
 RPC_URL=http://localhost:8545 \
+ROUTER_CONTRACT_ADDRESS=0x9fe46736679d2d9a65f0992f2272de9f3c7fa6e0 \
+STAKING_CONTRACT_ADDRESS=0xe7f1725e7734ce288f8367e1bb143e90bb3f0512 \
+TOKEN_CONTRACT_ADDRESS=0x5fbdb2315678afecb367f032d93f642f64180aa3 \
 cargo run --bin nilcc_simulator
 ```
 
 ### Production Deployment
 
-Configure `nilav_node.env` for deployed contract:
+Configure `nilav_node.env` for deployed contracts:
 ```env
 RPC_URL=https://rpc-nilav-shzvox09l5.t.conduit.xyz
-CONTRACT_ADDRESS=0x4f071c297EF53565A86c634C9AAf5faCa89f6209
+ROUTER_CONTRACT_ADDRESS=0x4f071c297EF53565A86c634C9AAf5faCa89f6209
+STAKING_CONTRACT_ADDRESS=0xYourStakingAddress
+TOKEN_CONTRACT_ADDRESS=0xYourTokenAddress
 PRIVATE_KEY=0xYourPrivateKey
 ```
 
@@ -324,53 +426,56 @@ cargo run --release --bin nilav_node
 
 ### GitHub Actions
 
-The repository includes two automated workflows:
+The repository includes automated workflows:
 
-#### 1. Build Binaries (`.github/workflows/build.yml`)
+#### 1. CI Tests (`.github/workflows/test.yml`)
 
-Triggers on version tags (`v*.*.*`) and builds native binaries for multiple platforms:
+Runs on every push to `main` and all pull requests:
 
-- **Platforms**: Linux (x64), macOS (Intel & ARM), Windows (x64)
-- **Artifacts**: `nilav_node`, `nilcc_simulator`, `monitor`
-- **Distribution**: Archives uploaded to GitHub Releases (`.tar.gz` for Unix, `.zip` for Windows)
+- **Rust format check**: `cargo fmt --all -- --check`
+- **Smart contract compilation**: `forge build` in contracts directory
+- **Rust tests**: `cargo test --all`
+- **Caching**: Uses Rust cache and Foundry cache for faster builds
 
-```bash
-# Create a release
-git tag v1.0.0
-git push origin v1.0.0
-# Workflow automatically builds and publishes release artifacts
-```
+This workflow ensures code quality and prevents breaking changes.
 
 #### 2. Docker Build & Push (`.github/workflows/docker.yml`)
 
-Triggers on version tags or manual dispatch. Builds and pushes three Docker images to GHCR:
+Triggers on version tags (`v*.*.*`) or manual dispatch. Builds and pushes Docker image to GHCR:
 
-- **Images**: `nilav_node`, `nilcc_simulator`, `monitor`
-- **Registry**: `ghcr.io/nillionnetwork/nilav/<image-name>`
-- **Tags**: 
-  - `latest` - most recent release
+- **Image**: `nilav_node` (currently only building node image)
+- **Registry**: `ghcr.io/nillionnetwork/nilav/nilav_node`
+- **Tags**:
+  - `latest` - most recent tag from default branch
   - `v1.0.0`, `v1.0`, `v1` - semantic version tags
-  - `main-sha256abc` - commit-specific tags
+  - `sha-abc123` - commit SHA tags
 - **Platforms**: linux/amd64, linux/arm64
 
 ```bash
 # Images are automatically built and pushed on release tags
 # To manually trigger: Go to Actions → docker-build-push → Run workflow
 
+# Create and push a version tag to trigger build
+git tag v1.0.0
+git push origin v1.0.0
+
 # Pull and use images
 docker pull ghcr.io/nillionnetwork/nilav/nilav_node:latest
 docker run --rm \
   -e RPC_URL=https://rpc-nilav-shzvox09l5.t.conduit.xyz \
-  -e CONTRACT_ADDRESS=0x4f071c297EF53565A86c634C9AAf5faCa89f6209 \
+  -e ROUTER_CONTRACT_ADDRESS=0x4f071c297EF53565A86c634C9AAf5faCa89f6209 \
+  -e STAKING_CONTRACT_ADDRESS=0xYourStakingAddress \
+  -e TOKEN_CONTRACT_ADDRESS=0xYourTokenAddress \
   -e PRIVATE_KEY=0xYourPrivateKey \
   ghcr.io/nillionnetwork/nilav/nilav_node:latest
 ```
 
 **Build Process:**
 1. Multi-stage Dockerfile compiles Rust binaries with Foundry support
-2. Each binary gets its own minimal Debian-based runtime image
-3. Build caches are used for faster subsequent builds
-4. Images include attestation for supply chain security
+2. Separate build stages for each binary (nilav_node, nilcc_simulator, monitor)
+3. Minimal Debian-based runtime images for smaller image sizes
+4. Build caches (GitHub Actions cache) for faster subsequent builds
+5. Cross-platform builds for amd64 and arm64 architectures
 
 ## Important Notes
 
@@ -378,8 +483,10 @@ docker run --rm \
 - **Private Keys**: Never commit private keys. Use environment variables or `.env` files (gitignored)
 - **Reconnection Logic**: Nodes implement exponential backoff (1s → 60s max) with automatic historical event processing
 - **HTX ID Derivation**: `htxId = keccak256(abi.encode(rawHTXHash, msg.sender, block.number))`
-- **Node Selection**: Current implementation uses pseudo-random selection via `block.prevrandao` (not production-secure)
-- **Contract is a Stub**: The NilAVRouter contract lacks access controls, secure randomness, and timeout/reassignment logic
+- **Node Selection**: Uses stake-weighted selection via Fisher-Yates shuffle with `block.prevrandao` seed (not production-secure)
+- **Multi-Node Assignment**: Each HTX is assigned to multiple nodes (≥50% of total stake) for redundancy
+- **Staking Requirement**: Nodes must stake TEST tokens and activate in StakingOperators contract to receive assignments
+- **Contract Limitations**: The contracts lack timeout/reassignment logic and use `block.prevrandao` for randomness (not production-grade)
 
 ## Logging
 
