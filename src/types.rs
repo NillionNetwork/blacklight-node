@@ -74,6 +74,25 @@ impl TryFrom<&VersionedHtx> for Bytes {
     }
 }
 
+// Phala HTX types
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AttestData {
+    pub quote: String,
+    #[serde(rename = "event_log")]
+    pub event_log: String,
+    #[serde(rename = "vm_config")]
+    pub vm_config: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HtxPhala {
+    #[serde(rename = "app_compose")]
+    pub app_compose: String,
+    #[serde(rename = "attest_data")]
+    pub attest_data: AttestData,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -138,5 +157,26 @@ mod tests {
         assert!(builder_meas_pos < nilcc_meas_pos);
         assert!(nilcc_meas_pos < nilcc_op_pos);
         assert!(nilcc_op_pos < workload_pos);
+    }
+
+    #[test]
+    fn test_htx_phala_serialization() {
+        let htx_phala = HtxPhala {
+            app_compose: "test-compose-config".to_string(),
+            attest_data: AttestData {
+                quote: "test-quote-hex".to_string(),
+                event_log: r#"[{"event":"compose-hash","event_payload":"abc123"}]"#.to_string(),
+                vm_config: r#"{}"#.to_string(),
+            },
+        };
+
+        let json = serde_json::to_string(&htx_phala).unwrap();
+        assert!(json.contains("\"app_compose\""));
+        assert!(json.contains("\"attest_data\""));
+        assert!(json.contains("test-compose-config"));
+
+        let deserialized: HtxPhala = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.app_compose, "test-compose-config");
+        assert_eq!(deserialized.attest_data.quote, "test-quote-hex");
     }
 }
