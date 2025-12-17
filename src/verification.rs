@@ -7,8 +7,9 @@ use attestation_verification::sev::firmware::guest::AttestationReport;
 use attestation_verification::{
     DefaultCertificateFetcher, MeasurementGenerator, ReportBundle, ReportFetcher, ReportVerifier,
 };
+use dcap_qvl::collateral::get_collateral_and_verify;
 use reqwest::Client;
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 
 const ARTIFACTS_URL: &str = "https://nilcc.s3.eu-west-1.amazonaws.com";
 
@@ -181,14 +182,13 @@ impl HtxVerifier {
         Ok(bundle.report)
     }
 
-    /// Verify a Phala HTX by checking compose hash, quote, and platform verification.
+    /// Verify a Phala HTX by checking compose hash and quote.
     ///
     /// Steps:
     /// 1. Calculate SHA-256 hash of app_compose
     /// 2. Extract attested hash from event_log (compose-hash event)
     /// 3. Verify hashes match
-    /// 4. Verify quote via Phala cloud API
-    /// 5. Verify via local platform service (phala-verifier:8080/verify)
+    /// 4. Verify quote locally using dcap-qvl (get_collateral_and_verify)
     ///
     /// Returns Ok(()) if verification succeeds, Err(VerificationError) otherwise.
     pub async fn verify_htx_phala(&self, htx: &HtxPhala) -> Result<(), VerificationError> {
@@ -220,69 +220,15 @@ impl HtxVerifier {
             return Err(VerificationError::PhalaComposeHashMismatch);
         }
 
-        // 4. Verify quote via Phala cloud API
-        let client = Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
-            .build()
-            .expect("Failed to build HTTP client");
+        // 4. Verify quote locally using dcap-qvl
+        let quote_bytes = hex::decode(&htx.attest_data.quote)
+            .map_err(|e| VerificationError::PhalaQuoteVerify(format!("invalid quote hex: {e}")))?;
 
-        let verify_resp = client
-            .post("https://cloud-api.phala.network/api/v1/attestations/verify")
-            .json(&serde_json::json!({ "hex": htx.attest_data.quote }))
-            .send()
+        get_collateral_and_verify(&quote_bytes, None)
             .await
-            .map_err(|e| VerificationError::PhalaQuoteVerify(e.to_string()))?;
-
-        let verify_result: serde_json::Value = verify_resp
-            .json()
-            .await
-            .map_err(|e| VerificationError::PhalaQuoteVerify(e.to_string()))?;
-
-        let verified = verify_result
-            .get("quote")
-            .and_then(|v| v.get("verified"))
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-
-        if !verified {
-            return Err(VerificationError::PhalaQuoteVerify(
-                "Hardware verification failed".to_string(),
-            ));
-        }
-
-        // 5. Verify via local platform service
-        // Use environment variable or default to service name in Docker network
-        let platform_verify_url = std::env::var("PHALA_PLATFORM_VERIFY_URL")
-            .unwrap_or_else(|_| "http://phala-verifier:8080/verify".to_string());
-
-        let attest_data = serde_json::json!({
-            "quote": htx.attest_data.quote,
-            "event_log": htx.attest_data.event_log,
-            "vm_config": htx.attest_data.vm_config,
-        });
-
-        let platform_resp = client
-            .post(&platform_verify_url)
-            .json(&attest_data)
-            .send()
-            .await
-            .map_err(|e| VerificationError::PhalaPlatformVerify(e.to_string()))?;
-
-        let platform_result: serde_json::Value = platform_resp
-            .json()
-            .await
-            .map_err(|e| VerificationError::PhalaPlatformVerify(e.to_string()))?;
-
-        let is_valid = platform_result
-            .get("is_valid")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-
-        if !is_valid {
-            return Err(VerificationError::PhalaPlatformVerify(
-                "Platform verification failed".to_string(),
-            ));
-        }
+            .map_err(|e| {
+                VerificationError::PhalaQuoteVerify(format!("quote verification failed: {e}"))
+            })?;
 
         Ok(())
     }

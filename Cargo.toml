@@ -13,6 +13,7 @@ attestation-verification = { git = "https://github.com/NillionNetwork/nilcc", re
 base64 = "0.22"
 clap = { version = "4.5", features = ["derive", "env", "string"] }
 crossterm = "0.29.0"
+dcap-qvl = "0.3.4"
 futures-util = "0.3"
 getrandom = "0.3"
 hex = "0.4"
