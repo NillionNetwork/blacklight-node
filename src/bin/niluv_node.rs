@@ -116,8 +116,9 @@ async fn process_htx_assignment(
         },
         Err(e) => {
             error!(htx_id = ?htx_id, error = %e, "Failed to parse HTX data");
+            // Respond with false if we can't parse the data
             client.router.respond_htx(htx_id, false).await?;
-            warn!(htx_id = ?htx_id, "HTX not verified (parse error) | tx: submitted");
+            info!(htx_id = ?htx_id, "✅ HTX verification submitted");
             return Ok(());
         }
     };
