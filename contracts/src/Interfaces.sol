@@ -1,102 +1,99 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-/* -------------------------------------------------------------------------- */
-/*                                Staking Ops                                 */
-/* -------------------------------------------------------------------------- */
-
-interface IStakingOperators {
-    struct OperatorInfo {
-        bool active;
-        string metadataURI;
-    }
-
-    // Views
-    function stakeOf(address operator) external view returns (uint256);
-    function totalStaked() external view returns (uint256);
-    function isJailed(address operator) external view returns (bool);
-    function isActiveOperator(address operator) external view returns (bool);
-    function getOperatorInfo(address operator) external view returns (OperatorInfo memory);
-    function getActiveOperators() external view returns (address[] memory);
-    function operatorStaker(address operator) external view returns (address);
-    function stakingToken() external view returns (address);
-    function unstakeDelay() external view returns (uint256);
-
-    // Staking
-    function stakeTo(address operator, uint256 amount) external;
-    function requestUnstake(address operator, uint256 amount) external;
-    function withdrawUnstaked(address operator) external;
-
-    // Operator registry
-    function registerOperator(string calldata metadataURI) external;
-    function deactivateOperator() external;
-
-    // Slashing / jailing (governance-controlled)
-    function slash(address operator, uint256 amount) external;
-    function jail(address operator, uint64 untilTimestamp) external;
-}
-
-/* -------------------------------------------------------------------------- */
-/*                              Committee Selector                             */
-/* -------------------------------------------------------------------------- */
-
-interface ICommitteeSelector {
-    function selectCommittee(
-        bytes32 workloadKey,
-        uint8 round,
-        uint32 committeeSize
-    ) external view returns (address[] memory members);
-}
-
-/* -------------------------------------------------------------------------- */
-/*                               Slashing Policy                               */
-/* -------------------------------------------------------------------------- */
-
-interface ISlashingPolicy {
-    enum Outcome {
-        ValidThreshold,
-        InvalidThreshold,
-        Inconclusive
-    }
-
-    function onRoundFinalized(
-        bytes32 workloadKey,
-        uint8 round,
-        Outcome outcome,
-        address[] calldata committeeMembers
-    ) external;
-}
-
-/* -------------------------------------------------------------------------- */
-/*                               Reward Policy                                 */
-/* -------------------------------------------------------------------------- */
+/// @notice Minimal shared interfaces used by the RC contracts.
+/// @dev Keep this file synchronized with the concrete implementations.
 
 interface IRewardPolicy {
-    function onWorkloadValidated(
+    function spendableBudget() external view returns (uint256);
+    function accrueWeights(
         bytes32 workloadKey,
         uint8 round,
-        address[] calldata committeeMembers
+        address[] calldata recipients,
+        uint256[] calldata weights
     ) external;
+    function claim() external;
 }
 
-/* -------------------------------------------------------------------------- */
-/*                               Protocol Config                               */
-/* -------------------------------------------------------------------------- */
-
 interface IProtocolConfig {
+    // Committee sizing
+    function baseCommitteeSize() external view returns (uint32);
+    function committeeSizeGrowthBps() external view returns (uint32);
+    function maxCommitteeSize() external view returns (uint32);
+
+    // Escalation
+    function maxEscalations() external view returns (uint8);
+
     // Modules
     function stakingOps() external view returns (address);
     function committeeSelector() external view returns (address);
     function slashingPolicy() external view returns (address);
     function rewardPolicy() external view returns (address);
 
-    // Params
-    /// @notice Minimum stake required for an operator to be considered active.
-    /// @dev Used by the staking module to gate operator activation/eligibility.
-    function minOperatorStake() external view returns (uint256);
+    // Voting / timing params
+    function quorumBps() external view returns (uint16);
     function verificationBps() external view returns (uint16);
     function responseWindow() external view returns (uint256);
-    function maxEscalations() external view returns (uint8);
-    function baseCommitteeSize() external view returns (uint32);
-    function committeeSizeGrowthBps() external view returns (uint32);
+    function jailDuration() external view returns (uint256);
+
+    // Misc
+    function maxVoteBatchSize() external view returns (uint256);
+    function minOperatorStake() external view returns (uint256);
+}
+
+interface ISlashingPolicy {
+    enum Outcome { Inconclusive, ValidThreshold, InvalidThreshold }
+
+    function onRoundFinalized(
+        bytes32 workloadKey,
+        uint8 round,
+        Outcome outcome,
+        bytes32 committeeRoot,
+        uint32 committeeSize
+    ) external;
+}
+
+interface ICommitteeSelector {
+    function selectCommittee(
+        bytes32 workloadKey,
+        uint8 round,
+        uint32 committeeSize,
+        uint32 snapshotId
+    ) external view returns (address[] memory members);
+}
+
+interface IStakingOperators {
+    struct Tranche { uint256 amount; uint64 releaseTime; }
+    struct OperatorInfo { bool active; string metadataURI; }
+
+    function unstakeDelay() external view returns (uint256);
+    function workloadManager() external view returns (address);
+    function operatorStaker(address operator) external view returns (address);
+
+    function setSnapshotter(address newSnapshotter) external;
+    function setWorkloadManager(address newWorkloadManager) external;
+
+    function snapshot() external returns (uint32 snapshotId);
+    function stakeAt(address operator, uint32 snapshotId) external view returns (uint256);
+
+    function stakingToken() external view returns (address);
+    function stakeOf(address operator) external view returns (uint256);
+    function totalStaked() external view returns (uint256);
+    function isJailed(address operator) external view returns (bool);
+
+    function getActiveOperators() external view returns (address[] memory);
+    function isActiveOperator(address operator) external view returns (bool);
+
+    function getOperatorInfo(address operator) external view returns (OperatorInfo memory);
+
+    function stakeTo(address operator, uint256 amount) external;
+    function requestUnstake(address operator, uint256 amount) external;
+    function withdrawUnstaked(address operator) external;
+
+    function registerOperator(string calldata metadataURI) external;
+    function deactivateOperator() external;
+    function reactivateOperator() external;
+
+    function slash(address operator, uint256 amount) external;
+    function jail(address operator, uint64 untilTimestamp) external;
 }

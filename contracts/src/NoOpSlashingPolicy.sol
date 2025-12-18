@@ -3,15 +3,15 @@ pragma solidity ^0.8.20;
 
 import "./Interfaces.sol";
 
-/// @title NoOpSlashingPolicy
-/// @notice v1 slashing policy (deliberately does nothing for now)
+/// @notice Slashing policy stub that intentionally performs no action.
 contract NoOpSlashingPolicy is ISlashingPolicy {
     function onRoundFinalized(
-        bytes32,
-        uint8,
-        Outcome,
-        address[] calldata
-    ) external pure override {
-        // intentionally empty
+        bytes32, /* workloadKey */
+        uint8,   /* round */
+        Outcome, /* outcome */
+        bytes32, /* committeeRoot */
+        uint32   /* committeeSize */
+    ) external override {
+        // no-op
     }
 }

@@ -4,7 +4,7 @@ pragma solidity ^0.8.20;
 import "forge-std/Script.sol";
 import "forge-std/console2.sol";
 
-import "../src/TESTToken.sol";
+import "../src/mocks/TESTToken.sol";
 import "../src/StakingOperators.sol";
 
 /// @notice Deploys TEST token + staking contract.
