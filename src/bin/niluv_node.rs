@@ -1,4 +1,4 @@
-use alloy::primitives::{Address, B256};
+use alloy::primitives::Address;
 use anyhow::Result;
 use clap::Parser;
 use niluv::{
@@ -6,7 +6,10 @@ use niluv::{
         consts::{INITIAL_RECONNECT_DELAY_SECS, MAX_RECONNECT_DELAY_SECS, MIN_ETH_BALANCE},
         validate_node_requirements, NodeCliArgs, NodeConfig,
     },
-    contract_client::{ContractConfig, NilUVClient},
+    contract_client::{
+        heartbeat_manager::{RoundStartedEvent, Verdict},
+        ContractConfig, NilUVClient,
+    },
     types::Htx,
     verification::HtxVerifier,
 };
@@ -87,19 +90,15 @@ async fn print_status(client: &NilUVClient, verified_count: u64) -> Result<()> {
 /// Process a single HTX assignment - verifies and submits result
 async fn process_htx_assignment(
     client: Arc<NilUVClient>,
-    htx_id: B256,
+    event: RoundStartedEvent,
     verifier: &HtxVerifier,
     verified_counter: Arc<AtomicU64>,
     shutdown_notify: Arc<Notify>,
+    node_address: Address,
 ) -> Result<()> {
-    // Retrieve the HTX data from the contract
-    let htx_bytes = client.router.get_htx(htx_id).await.map_err(|e| {
-        error!(htx_id = ?htx_id, error = %e, "Failed to get HTX data");
-        e
-    })?;
-
+    let htx_id = event.heartbeatKey;
     // Parse the HTX data - UnifiedHtx automatically detects provider field
-    let verification_result = match serde_json::from_slice::<Htx>(&htx_bytes) {
+    let verification_result = match serde_json::from_slice::<Htx>(&event.rawHTX) {
         Ok(htx) => match htx {
             Htx::Nillion(htx) => {
                 info!(htx_id = ?htx_id, "Detected nilCC HTX");
@@ -112,16 +111,26 @@ async fn process_htx_assignment(
         },
         Err(e) => {
             error!(htx_id = ?htx_id, error = %e, "Failed to parse HTX data");
-            // Respond with false if we can't parse the data
-            client.router.respond_htx(htx_id, false).await?;
+            // TODO: we need to distinguish inconclusive here
+            client
+                .manager
+                .respond_htx(event, Verdict::Failure, node_address)
+                .await?;
             info!(htx_id = ?htx_id, "✅ HTX verification submitted");
             return Ok(());
         }
     };
-    let result = verification_result.is_ok();
+    let verdict = match verification_result {
+        Ok(_) => Verdict::Success,
+        Err(_) => Verdict::Failure,
+    };
 
     // Submit the verification result
-    match client.router.respond_htx(htx_id, result).await {
+    match client
+        .manager
+        .respond_htx(event, verdict, node_address)
+        .await
+    {
         Ok(tx_hash) => {
             let count = verified_counter.fetch_add(1, Ordering::SeqCst) + 1;
 
@@ -175,10 +184,10 @@ async fn process_assignment_backlog(
 ) -> Result<()> {
     info!("Checking for pending assignments from before connection");
 
-    let assigned_events = client.router.get_htx_assigned_events().await?;
+    let assigned_events = client.manager.get_htx_assigned_events().await?;
     let pending: Vec<_> = assigned_events
-        .iter()
-        .filter(|e| e.node == node_address)
+        .into_iter()
+        .filter(|e| e.members.contains(&node_address))
         .collect();
 
     if pending.is_empty() {
@@ -192,14 +201,14 @@ async fn process_assignment_backlog(
     );
 
     for event in pending {
-        let htx_id = event.htxId;
+        let htx_id = event.heartbeatKey;
 
         // Check if already responded
-        match client.router.has_node_responded(htx_id, node_address).await {
-            Ok((responded, _result)) if responded => {
+        match client.manager.get_node_vote(htx_id, node_address).await {
+            Ok(Some(_)) => {
                 debug!(htx_id = ?htx_id, "Already responded HTX, skipping");
             }
-            Ok(_) => {
+            Ok(None) => {
                 info!(htx_id = ?htx_id, "📥 HTX received (backlog)");
                 let client_clone = client.clone();
                 let verifier = verifier.clone();
@@ -208,10 +217,11 @@ async fn process_assignment_backlog(
                 tokio::spawn(async move {
                     if let Err(e) = process_htx_assignment(
                         client_clone,
-                        htx_id,
+                        event,
                         &verifier,
                         counter,
                         shutdown_clone,
+                        node_address,
                     )
                     .await
                     {
@@ -265,7 +275,7 @@ async fn create_client_with_retry(
 
     let contract_config = ContractConfig::new(
         config.rpc_url.clone(),
-        config.router_contract_address,
+        config.manager_contract_address,
         config.staking_contract_address,
         config.token_contract_address,
     );
@@ -313,28 +323,29 @@ async fn run_event_listener(
     let counter_for_callback = verified_counter.clone();
     let shutdown_for_callback = shutdown_notify.clone();
 
-    let router_arc = Arc::new(client.router.clone());
-    let listen_future = router_arc.listen_htx_assigned_for_node(node_address, move |event| {
+    let manager = Arc::new(client.manager.clone());
+    let listen_future = manager.listen_htx_assigned_for_node(node_address, move |event| {
         let client = client_for_callback.clone();
         let counter = counter_for_callback.clone();
         let shutdown_clone = shutdown_for_callback.clone();
 
         async move {
-            let htx_id = event.htxId;
+            let htx_id = event.heartbeatKey;
             let node_addr = client.signer_address();
             let verifier = verifier.clone();
             tokio::spawn(async move {
                 // Check if already responded
-                match client.router.has_node_responded(htx_id, node_addr).await {
-                    Ok((responded, _result)) if responded => (),
-                    Ok(_) => {
+                match client.manager.get_node_vote(htx_id, node_addr).await {
+                    Ok(Some(_)) => (),
+                    Ok(None) => {
                         info!(htx_id = ?htx_id, "📥 HTX received");
                         if let Err(e) = process_htx_assignment(
                             client,
-                            htx_id,
+                            event,
                             &verifier,
                             counter,
                             shutdown_clone,
+                            node_address,
                         )
                         .await
                         {
@@ -384,7 +395,7 @@ async fn deactivate_node_on_shutdown(
 
     let contract_config = ContractConfig::new(
         config.rpc_url.clone(),
-        config.router_contract_address,
+        config.manager_contract_address,
         config.staking_contract_address,
         config.token_contract_address,
     );
@@ -428,7 +439,7 @@ async fn main() -> Result<()> {
     // Create initial client to validate requirements
     let contract_config = ContractConfig::new(
         config.rpc_url.clone(),
-        config.router_contract_address,
+        config.manager_contract_address,
         config.staking_contract_address,
         config.token_contract_address,
     );

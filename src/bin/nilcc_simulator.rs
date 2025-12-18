@@ -41,7 +41,7 @@ fn load_config() -> Result<SimulatorConfig> {
 async fn setup_client(config: &SimulatorConfig) -> Result<NilUVClient> {
     let contract_config = ContractConfig::new(
         config.rpc_url.clone(),
-        config.router_contract_address,
+        config.manager_contract_address,
         config.staking_contract_address,
         config.token_contract_address,
     );
@@ -49,7 +49,7 @@ async fn setup_client(config: &SimulatorConfig) -> Result<NilUVClient> {
     let client = NilUVClient::new(contract_config, config.private_key.clone()).await?;
 
     info!(
-        contract = %client.router.address(),
+        contract = %client.manager.address(),
         signer = %client.signer_address(),
         "Connected to contract"
     );
@@ -108,7 +108,7 @@ async fn submit_next_htx(
         return Ok(());
     }
 
-    let node_count = client.router.node_count().await?;
+    let node_count = client.manager.node_count().await?;
     if node_count.is_zero() {
         warn!(slot, "No nodes registered");
         return Ok(());
@@ -135,7 +135,7 @@ async fn submit_next_htx(
             info!(slot, attempt, "Retrying HTX submission");
         }
 
-        match client.router.submit_htx(&NillionHtx::V1(htx).into()).await {
+        match client.manager.submit_htx(&NillionHtx::V1(htx).into()).await {
             Ok(tx_hash) => {
                 info!(slot, tx_hash = ?tx_hash, "HTX submitted");
                 return Ok(());

@@ -1,10 +1,12 @@
-use crate::{config::consts::DEFAULT_LOOKBACK_BLOCKS, types::Htx};
+use crate::{
+    config::consts::DEFAULT_LOOKBACK_BLOCKS,
+    contract_client::heartbeat_manager::HearbeatManager::HearbeatManagerInstance, types::Htx,
+};
 use alloy::{
-    consensus::Transaction,
-    dyn_abi::DynSolType,
-    primitives::{Address, B256, U256},
+    primitives::{keccak256, Address, B256, U256},
     providers::Provider,
     sol,
+    sol_types::SolValue,
 };
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -14,33 +16,70 @@ use crate::contract_client::common::event_helper::{
     listen_events, listen_events_filtered, BlockRange,
 };
 use crate::contract_client::common::tx_helper::{send_and_confirm, send_with_gas_and_confirm};
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Context, Result};
 
-sol!(
+sol! {
+    interface ISlashingPolicy {
+        enum Outcome { Inconclusive, ValidThreshold, InvalidThreshold }
+    }
+
     #[sol(rpc)]
-    #[derive(Debug)]
-    NilAVRouter,
-    "./contracts/out/NilAVRouter.sol/NilAVRouter.json"
-);
+    contract HearbeatManager {
+        error ZeroAddress();
+        error NotPending();
+        error RoundClosed();
+        error RoundAlreadyFinalized();
+        error NotInCommittee();
+        error ZeroStake();
+        error BeforeDeadline();
+        error AlreadyResponded();
+        error InvalidVerdict();
+        error CommitteeNotStarted();
+        error InvalidRound();
+        error EmptyCommittee();
+        error InvalidSignature();
+        error InvalidBatchSize();
+        error RoundNotFinalized();
+        error SnapshotBlockUnavailable(uint64 snapshotId);
+        error RewardsAlreadyDone();
+        error InvalidOutcome();
+        error UnsortedVoters();
+        error InvalidVoterInList();
+        error InvalidVoterCount(uint256 got, uint256 expected);
+        error InvalidVoterWeightSum(uint256 got, uint256 expected);
+        error RawHTXHashMismatch();
+        error InvalidCommitteeMember(address member);
 
-// Type aliases for event types to match old ethers naming convention
-pub type HTXAssignedFilter = NilAVRouter::HTXAssigned;
-pub type HTXRespondedFilter = NilAVRouter::HTXResponded;
-pub type HTXSubmittedFilter = NilAVRouter::HTXSubmitted;
+        event HeartbeatEnqueued(bytes32 indexed heartbeatKey, bytes rawHTX, address indexed submitter);
+        event RoundStarted(bytes32 indexed heartbeatKey, uint8 round, bytes32 committeeRoot, uint64 snapshotId, uint64 startedAt, uint64 deadline, address[] members, bytes rawHTX);
+        event OperatorVoted(bytes32 indexed heartbeatKey, uint8 round, address indexed operator, uint8 verdict, uint256 weight);
 
-/// WebSocket-based client for real-time event streaming and contract interaction with NilUVRouter
+        function submitHeartbeat(bytes calldata rawHTX, uint64 snapshotId) external whenNotPaused nonReentrant returns (bytes32 heartbeatKey);
+        function submitVerdict(bytes32 heartbeatKey, uint8 verdict, bytes32[] calldata memberProof);
+        function getVotePacked(bytes32 heartbeatKey, uint8 round, address operator) external view returns (uint256);
+        function nodeCount() external view returns (uint256);
+        function getNodes() external view returns (address[] memory);
+    }
+}
+
+pub type RoundStartedEvent = HearbeatManager::RoundStarted;
+pub type OperatorVotedEvent = HearbeatManager::OperatorVoted;
+pub type HeartbeatEnqueuedEvent = HearbeatManager::HeartbeatEnqueued;
+
+/// WebSocket-based client for real-time event streaming and contract interaction with
+/// HeartbeatManager
 #[derive(Clone)]
-pub struct NilUVRouterClient<P: Provider + Clone> {
+pub struct HeartbeatManagerClient<P: Provider + Clone> {
     provider: P,
-    contract: NilAVRouter::NilAVRouterInstance<P>,
+    contract: HearbeatManagerInstance<P>,
     tx_lock: Arc<Mutex<()>>,
 }
 
-impl<P: Provider + Clone> NilUVRouterClient<P> {
+impl<P: Provider + Clone> HeartbeatManagerClient<P> {
     /// Create a new WebSocket client from ContractConfig
     pub fn new(provider: P, config: super::ContractConfig, tx_lock: Arc<Mutex<()>>) -> Self {
         let contract =
-            NilAVRouter::NilAVRouterInstance::new(config.router_contract_address, provider.clone());
+            HearbeatManagerInstance::new(config.manager_contract_address, provider.clone());
         Self {
             provider,
             contract,
@@ -60,13 +99,6 @@ impl<P: Provider + Clone> NilUVRouterClient<P> {
     /// Get the current block number
     pub async fn get_block_number(&self) -> Result<u64> {
         Ok(self.provider.get_block_number().await?)
-    }
-
-    /// Get the starting block for event queries based on lookback limit
-    /// Returns max(0, current_block - lookback_blocks)
-    async fn get_from_block(&self, lookback_blocks: u64) -> Result<u64> {
-        let current_block = self.get_block_number().await?;
-        Ok(current_block.saturating_sub(lookback_blocks))
     }
 
     // ------------------------------------------------------------------------
@@ -89,97 +121,58 @@ impl<P: Provider + Clone> NilUVRouterClient<P> {
 
     /// Submit an HTX for verification
     pub async fn submit_htx(&self, htx: &Htx) -> Result<B256> {
+        let snapshot_id = self.contract.provider().get_block_number().await?;
+        let snapshot_id = snapshot_id.saturating_sub(1);
         let raw_htx = alloy::primitives::Bytes::try_from(htx)?;
-        let call = self.contract.submitHTX(raw_htx);
+        let call = self.contract.submitHeartbeat(raw_htx, snapshot_id);
 
         // Estimate gas and add 50% buffer for variable node selection
         let estimated_gas = call.estimate_gas().await.map_err(|e| {
             let decoded = decode_any_error(&e);
-            anyhow!("submitHTX would revert: {}", decoded)
+            anyhow!("submitHeartbeat would revert: {decoded}")
         })?;
         let gas_with_buffer = estimated_gas.saturating_add(estimated_gas / 2);
 
-        send_with_gas_and_confirm(call, &self.tx_lock, "submitHTX", gas_with_buffer).await
+        send_with_gas_and_confirm(call, &self.tx_lock, "submitHeartbeat", gas_with_buffer).await
     }
 
     /// Respond to an HTX assignment (called by assigned node)
-    pub async fn respond_htx(&self, htx_id: B256, result: bool) -> Result<B256> {
-        let call = self.contract.respondHTX(htx_id, result);
-        send_and_confirm(call, &self.tx_lock, "respondHTX").await
+    pub async fn respond_htx(
+        &self,
+        event: RoundStartedEvent,
+        verdict: Verdict,
+        submitter_address: Address,
+    ) -> Result<B256> {
+        let proofs = self.compute_merkle_proof(&event, submitter_address)?;
+        let verdict = match verdict {
+            Verdict::Success => 1,
+            Verdict::Failure => 2,
+            Verdict::Inconclusive => 3,
+        };
+        let call = self
+            .contract
+            .submitVerdict(event.heartbeatKey, verdict, proofs);
+        send_and_confirm(call, &self.tx_lock, "submitVerdict").await
     }
 
     /// Check if a specific node has responded to an HTX
-    pub async fn has_node_responded(&self, htx_id: B256, node: Address) -> Result<(bool, bool)> {
-        Ok(self
-            .contract
-            .hasNodeResponded(htx_id, node)
-            .call()
-            .await?
-            .into())
-    }
-
-    /// Get HTX bytes from the original submission transaction call data
-    /// Default lookback: 1000 blocks. Use get_htx_with_lookback for custom lookback.
-    pub async fn get_htx(&self, htx_id: B256) -> Result<Vec<u8>> {
-        self.get_htx_with_lookback(htx_id, DEFAULT_LOOKBACK_BLOCKS)
-            .await
-    }
-
-    /// Get HTX bytes with custom block lookback limit
-    /// Set lookback to u64::MAX to search entire history
-    pub async fn get_htx_with_lookback(
+    pub async fn get_node_vote(
         &self,
-        htx_id: B256,
-        lookback_blocks: u64,
-    ) -> Result<Vec<u8>> {
-        let from_block = if lookback_blocks == u64::MAX {
-            0
-        } else {
-            self.get_from_block(lookback_blocks).await?
-        };
-
-        // Find the transaction that submitted this HTX by querying the HTXSubmitted event
-        let event_filter = self
+        workload_key: B256,
+        node: Address,
+    ) -> Result<Option<Verdict>> {
+        let vote = self
             .contract
-            .event_filter::<HTXSubmittedFilter>()
-            .topic1(htx_id)
-            .from_block(from_block);
-        let events = event_filter.query().await?;
-
-        let (_event, log) = events
-            .first()
-            .ok_or_else(|| anyhow!("No HTXSubmitted event found for htxId"))?;
-
-        // Get the transaction hash from the event log
-        let tx_hash = log
-            .transaction_hash
-            .ok_or_else(|| anyhow!("No transaction hash in log"))?;
-
-        // Fetch the transaction
-        let tx = self
-            .provider
-            .get_transaction_by_hash(tx_hash)
-            .await?
-            .ok_or_else(|| anyhow!("Transaction not found"))?;
-
-        // Decode the call data to extract the rawHTX parameter
-        // The call data format is: 4-byte function selector + ABI-encoded parameters
-        let input = tx.inner.input();
-
-        // Skip the function selector (first 4 bytes)
-        if input.len() <= 4 {
-            return Err(anyhow!("Invalid call data"));
+            .getVotePacked(workload_key, 0, node)
+            .call()
+            .await?;
+        match u8::try_from(vote).context("invalid vote")? {
+            0 => Ok(None),
+            1 => Ok(Some(Verdict::Success)),
+            2 => Ok(Some(Verdict::Failure)),
+            3 => Ok(Some(Verdict::Inconclusive)),
+            other => bail!("invalid vote: {other}"),
         }
-
-        // Decode the bytes parameter using DynSolType
-        let decoded = DynSolType::Bytes.abi_decode(&input[4..])?;
-
-        let htx_bytes = decoded
-            .as_bytes()
-            .ok_or_else(|| anyhow!("Failed to decode HTX bytes as bytes"))?
-            .to_vec();
-
-        Ok(htx_bytes)
     }
 
     // ------------------------------------------------------------------------
@@ -189,15 +182,15 @@ impl<P: Provider + Clone> NilUVRouterClient<P> {
     /// Start listening for HTX assigned events and process them with a callback
     pub async fn listen_htx_assigned_events<F, Fut>(self: Arc<Self>, callback: F) -> Result<()>
     where
-        F: FnMut(HTXAssignedFilter) -> Fut + Send,
+        F: FnMut(RoundStartedEvent) -> Fut + Send,
         Fut: std::future::Future<Output = Result<()>> + Send,
     {
         let subscription = self
             .contract
-            .event_filter::<HTXAssignedFilter>()
+            .event_filter::<RoundStartedEvent>()
             .subscribe()
             .await?;
-        listen_events(subscription.into_stream(), "HTXAssigned", callback).await
+        listen_events(subscription.into_stream(), "RoundStarted", callback).await
     }
 
     /// Start listening for HTX assigned events for a specific node
@@ -207,18 +200,18 @@ impl<P: Provider + Clone> NilUVRouterClient<P> {
         callback: F,
     ) -> Result<()>
     where
-        F: FnMut(HTXAssignedFilter) -> Fut + Send,
+        F: FnMut(RoundStartedEvent) -> Fut + Send,
         Fut: std::future::Future<Output = Result<()>> + Send,
     {
         let subscription = self
             .contract
-            .event_filter::<HTXAssignedFilter>()
+            .event_filter::<RoundStartedEvent>()
             .subscribe()
             .await?;
         listen_events_filtered(
             subscription.into_stream(),
-            "HTXAssigned",
-            move |event: &HTXAssignedFilter| event.node == node_address,
+            "RoundStarted",
+            move |event: &RoundStartedEvent| event.members.contains(&node_address),
             callback,
         )
         .await
@@ -227,29 +220,29 @@ impl<P: Provider + Clone> NilUVRouterClient<P> {
     /// Start listening for HTX submitted events
     pub async fn listen_htx_submitted_events<F, Fut>(self: Arc<Self>, callback: F) -> Result<()>
     where
-        F: FnMut(HTXSubmittedFilter) -> Fut + Send,
+        F: FnMut(HeartbeatEnqueuedEvent) -> Fut + Send,
         Fut: std::future::Future<Output = Result<()>> + Send,
     {
         let subscription = self
             .contract
-            .event_filter::<HTXSubmittedFilter>()
+            .event_filter::<HeartbeatEnqueuedEvent>()
             .subscribe()
             .await?;
-        listen_events(subscription.into_stream(), "HTXSubmitted", callback).await
+        listen_events(subscription.into_stream(), "WorkloadEnqueued", callback).await
     }
 
     /// Start listening for HTX responded events
     pub async fn listen_htx_responded_events<F, Fut>(self: Arc<Self>, callback: F) -> Result<()>
     where
-        F: FnMut(HTXRespondedFilter) -> Fut + Send,
+        F: FnMut(OperatorVotedEvent) -> Fut + Send,
         Fut: std::future::Future<Output = Result<()>> + Send,
     {
         let subscription = self
             .contract
-            .event_filter::<HTXRespondedFilter>()
+            .event_filter::<OperatorVotedEvent>()
             .subscribe()
             .await?;
-        listen_events(subscription.into_stream(), "HTXResponded", callback).await
+        listen_events(subscription.into_stream(), "OperatorVoted", callback).await
     }
 
     // ------------------------------------------------------------------------
@@ -258,7 +251,7 @@ impl<P: Provider + Clone> NilUVRouterClient<P> {
 
     /// Get HTX submitted events from recent history (default: last 1000 blocks)
     /// Use get_htx_submitted_events_with_lookback for custom lookback
-    pub async fn get_htx_submitted_events(&self) -> Result<Vec<HTXSubmittedFilter>> {
+    pub async fn get_htx_submitted_events(&self) -> Result<Vec<HeartbeatEnqueuedEvent>> {
         self.get_htx_submitted_events_with_lookback(DEFAULT_LOOKBACK_BLOCKS)
             .await
     }
@@ -268,7 +261,7 @@ impl<P: Provider + Clone> NilUVRouterClient<P> {
     pub async fn get_htx_submitted_events_with_lookback(
         &self,
         lookback_blocks: u64,
-    ) -> Result<Vec<HTXSubmittedFilter>> {
+    ) -> Result<Vec<HeartbeatEnqueuedEvent>> {
         let current_block = self.get_block_number().await?;
         let range = if lookback_blocks == u64::MAX {
             BlockRange::all()
@@ -282,10 +275,10 @@ impl<P: Provider + Clone> NilUVRouterClient<P> {
     pub async fn get_htx_submitted_events_in_range(
         &self,
         range: BlockRange,
-    ) -> Result<Vec<HTXSubmittedFilter>> {
+    ) -> Result<Vec<HeartbeatEnqueuedEvent>> {
         let mut filter = self
             .contract
-            .event_filter::<HTXSubmittedFilter>()
+            .event_filter::<HeartbeatEnqueuedEvent>()
             .from_block(range.from_block);
 
         if let Some(to_block) = range.to_block {
@@ -298,7 +291,7 @@ impl<P: Provider + Clone> NilUVRouterClient<P> {
 
     /// Get HTX assigned events from recent history (default: last 1000 blocks)
     /// Use get_htx_assigned_events_with_lookback for custom lookback
-    pub async fn get_htx_assigned_events(&self) -> Result<Vec<HTXAssignedFilter>> {
+    pub async fn get_htx_assigned_events(&self) -> Result<Vec<RoundStartedEvent>> {
         self.get_htx_assigned_events_with_lookback(DEFAULT_LOOKBACK_BLOCKS)
             .await
     }
@@ -308,7 +301,7 @@ impl<P: Provider + Clone> NilUVRouterClient<P> {
     pub async fn get_htx_assigned_events_with_lookback(
         &self,
         lookback_blocks: u64,
-    ) -> Result<Vec<HTXAssignedFilter>> {
+    ) -> Result<Vec<RoundStartedEvent>> {
         let current_block = self.get_block_number().await?;
         let range = if lookback_blocks == u64::MAX {
             BlockRange::all()
@@ -322,10 +315,10 @@ impl<P: Provider + Clone> NilUVRouterClient<P> {
     pub async fn get_htx_assigned_events_in_range(
         &self,
         range: BlockRange,
-    ) -> Result<Vec<HTXAssignedFilter>> {
+    ) -> Result<Vec<RoundStartedEvent>> {
         let mut filter = self
             .contract
-            .event_filter::<HTXAssignedFilter>()
+            .event_filter::<RoundStartedEvent>()
             .from_block(range.from_block);
 
         if let Some(to_block) = range.to_block {
@@ -338,7 +331,7 @@ impl<P: Provider + Clone> NilUVRouterClient<P> {
 
     /// Get HTX responded events from recent history (default: last 1000 blocks)
     /// Use get_htx_responded_events_with_lookback for custom lookback
-    pub async fn get_htx_responded_events(&self) -> Result<Vec<HTXRespondedFilter>> {
+    pub async fn get_htx_responded_events(&self) -> Result<Vec<OperatorVotedEvent>> {
         self.get_htx_responded_events_with_lookback(DEFAULT_LOOKBACK_BLOCKS)
             .await
     }
@@ -348,7 +341,7 @@ impl<P: Provider + Clone> NilUVRouterClient<P> {
     pub async fn get_htx_responded_events_with_lookback(
         &self,
         lookback_blocks: u64,
-    ) -> Result<Vec<HTXRespondedFilter>> {
+    ) -> Result<Vec<OperatorVotedEvent>> {
         let current_block = self.get_block_number().await?;
         let range = if lookback_blocks == u64::MAX {
             BlockRange::all()
@@ -362,10 +355,10 @@ impl<P: Provider + Clone> NilUVRouterClient<P> {
     pub async fn get_htx_responded_events_in_range(
         &self,
         range: BlockRange,
-    ) -> Result<Vec<HTXRespondedFilter>> {
+    ) -> Result<Vec<OperatorVotedEvent>> {
         let mut filter = self
             .contract
-            .event_filter::<HTXRespondedFilter>()
+            .event_filter::<OperatorVotedEvent>()
             .from_block(range.from_block);
 
         if let Some(to_block) = range.to_block {
@@ -375,4 +368,86 @@ impl<P: Provider + Clone> NilUVRouterClient<P> {
         let events = filter.query().await?;
         Ok(events.into_iter().map(|(event, _log)| event).collect())
     }
+
+    fn compute_merkle_proof(
+        &self,
+        event: &RoundStartedEvent,
+        my_address: Address,
+    ) -> anyhow::Result<Vec<B256>> {
+        let mut sorted_members = event.members.clone();
+        sorted_members.sort();
+
+        // Generate leaves
+        let leaves: Vec<_> = sorted_members
+            .iter()
+            .map(|&member| {
+                let encoded = (
+                    [0xa1],
+                    self.contract.address(),
+                    event.heartbeatKey,
+                    U256::from(event.round),
+                    member,
+                )
+                    .abi_encode_packed();
+
+                keccak256(encoded)
+            })
+            .collect();
+
+        let mut target_index = sorted_members
+            .iter()
+            .position(|&member| member == my_address)
+            .ok_or_else(|| anyhow!("Could not find our address in members"))?;
+
+        // 3. Build Merkle proof (bottom-up, siblings from leaf to root)
+        let mut proof: Vec<B256> = Vec::new();
+        let mut current_layer = leaves;
+
+        while current_layer.len() > 1 {
+            let mut next_layer = Vec::new();
+
+            for i in (0..current_layer.len()).step_by(2) {
+                let left = current_layer[i];
+                let right = if i + 1 < current_layer.len() {
+                    current_layer[i + 1]
+                } else {
+                    // Duplicate last node when odd length (matches Solidity)
+                    left
+                };
+
+                // Check if our target is in this pair
+                let is_left = i == target_index;
+                let is_right = i + 1 < current_layer.len() && i + 1 == target_index;
+
+                if is_left || is_right {
+                    let sibling = if is_left { right } else { left };
+                    proof.push(sibling);
+
+                    // Move target up to parent index
+                    target_index = i / 2;
+                }
+
+                // Commutative hash: sort pair before hashing
+                let parent = hash_pair(left, right);
+                next_layer.push(parent);
+            }
+
+            current_layer = next_layer;
+        }
+
+        Ok(proof)
+    }
+}
+
+pub enum Verdict {
+    Success,
+    Failure,
+    Inconclusive,
+}
+
+fn hash_pair(a: B256, b: B256) -> B256 {
+    let (first, second) = if a < b { (a, b) } else { (b, a) };
+
+    let encoded = (first, second).abi_encode_packed();
+    keccak256(encoded)
 }

@@ -63,7 +63,7 @@ pub fn display_wallet_status(
 ) {
     let address_str = format!("{:?}", address);
     let eth_formatted = alloy::primitives::utils::format_ether(eth_balance);
-    let staked_formatted = alloy::primitives::utils::format_ether(staked_balance);
+    let staked_formatted = alloy::primitives::utils::format_units(staked_balance, 6).unwrap();
     let min_eth_formatted = format_eth_clean(min_eth_balance);
     let has_sufficient_eth = eth_balance >= min_eth_balance;
     let has_stake = staked_balance > U256::ZERO;

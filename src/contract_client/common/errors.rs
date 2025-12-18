@@ -261,15 +261,6 @@ pub fn decode_revert(data: &Bytes) -> DecodedRevert {
 /// A human-readable error message string.
 fn format_staking_error(err: &StakingOperatorsErrors) -> String {
     match err {
-        StakingOperatorsErrors::AccessControlBadConfirmation(_) => {
-            "Access control: bad confirmation".to_string()
-        }
-        StakingOperatorsErrors::AccessControlUnauthorizedAccount(e) => {
-            format!(
-                "Access control: unauthorized account {} for role {}",
-                e.account, e.neededRole
-            )
-        }
         StakingOperatorsErrors::DifferentStaker(_) => "Different staker".to_string(),
         StakingOperatorsErrors::InsufficientStake(_) => "Insufficient stake".to_string(),
         StakingOperatorsErrors::NoStake(_) => "No stake".to_string(),
@@ -279,12 +270,6 @@ fn format_staking_error(err: &StakingOperatorsErrors) -> String {
         StakingOperatorsErrors::NotStaker(_) => "Not a staker".to_string(),
         StakingOperatorsErrors::OperatorJailed(_) => "Operator is jailed".to_string(),
         StakingOperatorsErrors::PendingUnbonding(_) => "Pending unbonding exists".to_string(),
-        StakingOperatorsErrors::ReentrancyGuardReentrantCall(_) => {
-            "Reentrancy detected".to_string()
-        }
-        StakingOperatorsErrors::SafeERC20FailedOperation(e) => {
-            format!("ERC20 operation failed for token {}", e.token)
-        }
         StakingOperatorsErrors::UnbondingExists(_) => "Unbonding already exists".to_string(),
         StakingOperatorsErrors::ZeroAddress(_) => "Zero address not allowed".to_string(),
         StakingOperatorsErrors::ZeroAmount(_) => "Zero amount not allowed".to_string(),

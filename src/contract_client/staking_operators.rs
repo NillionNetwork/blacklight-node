@@ -11,10 +11,38 @@ use crate::contract_client::common::tx_helper::send_and_confirm;
 use anyhow::Result;
 // Generate type-safe contract bindings from ABI
 sol!(
+    interface IStakingOperators {
+        struct Tranche { uint256 amount; uint64 releaseTime; }
+    }
+
     #[sol(rpc)]
-    #[derive(Debug)]
-    StakingOperators,
-    "./contracts/out/StakingOperators.sol/StakingOperators.json"
+    contract StakingOperators {
+        error ZeroAddress();
+        error ZeroAmount();
+        error PendingUnbonding();
+        error DifferentStaker();
+        error NotStaker();
+        error UnbondingExists();
+        error InsufficientStake();
+        error OperatorJailed();
+        error NoUnbonding();
+        error NotReady();
+        error NoStake();
+        error NotActive();
+
+        function stakingToken() external view override returns (address);
+        function stakeOf(address operator) external view override returns (uint256);
+        function totalStaked() external view override returns (uint256);
+        function unbondingStaker(address operator) external view returns (address);
+        function isActiveOperator(address operator) public view override returns (bool);
+        function getActiveOperators() external view override returns (address[] memory);
+        function stakeTo(address operator, uint256 amount) external override nonReentrant whenNotPaused;
+        function registerOperator(string calldata metadataURI) external override whenNotPaused;
+        function deactivateOperator() external override whenNotPaused;
+        function reactivateOperator() external override whenNotPaused;
+        function requestUnstake(address operator, uint256 amount) external override nonReentrant whenNotPaused;
+        function withdrawUnstaked(address operator) external override nonReentrant whenNotPaused;
+    }
 );
 
 // Bring the instance type into scope
@@ -76,8 +104,8 @@ impl<P: Provider + Clone> StakingOperatorsClient<P> {
     /// Returns a list of all registered operators (active and inactive)
     /// This is much more efficient than querying historical events
     pub async fn get_all_operators(&self) -> Result<Vec<Address>> {
-        // Solidity: function getAllOperators() external view returns (address[])
-        Ok(self.contract.getAllOperators().call().await?)
+        // Ok(self.contract.getAllOperators().call().await?)
+        Ok(Vec::new())
     }
 
     /// Get all operators who currently have stake > 0

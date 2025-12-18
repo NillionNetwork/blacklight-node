@@ -1,12 +1,14 @@
 {
+    "provider": "nillion",
+    "version": "v1",
     "workload_id": { "current": "1001", "previous": "1000" },
-    "nilCC_operator": { "id": 4, "name": "Latitude" },
+    "operator": { "id": 4, "name": "Latitude" },
     "builder": { "id": 94323, "name": "Nillion" },
-    "nilCC_measurement": {
+    "workload_measurement": {
       "url": "https://nilgpt.xyz/nilcc/api/v2/report",
-      "nilcc_version": "0.2.1",
-      "cpu_count": 4,
-      "GPUs": 1,
+      "artifacts_version": "0.2.1",
+      "cpus": 4,
+      "gpus": 1,
       "docker_compose_hash": "724ad766d1dc767394b842fdf319e89fcf2d1b462939070f5651ab54f97ce259"
     },
     "builder_measurement": {
