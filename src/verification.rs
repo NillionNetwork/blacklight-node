@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::types::{Htx, HtxPhala};
+use crate::types::{NillionHtx, PhalaHtx};
 use anyhow::Context;
 use attestation_verification::sev::firmware::guest::AttestationReport;
 use attestation_verification::{
@@ -79,7 +79,7 @@ impl HtxVerifier {
         })
     }
 
-    /// Verify an HTX by checking if the nilCC measurement exists in the builder index.
+    /// Verify a nillion HTX by checking if the nilCC measurement exists in the builder index.
     ///
     /// Steps:
     /// 1. Fetch the nilCC measurement from the HTX's nilcc_measurement.url
@@ -88,7 +88,8 @@ impl HtxVerifier {
     /// 4. Check if the measurement exists in the builder index (as object values or array elements)
     ///
     /// Returns Ok(()) if verification succeeds, Err(VerificationError) otherwise.
-    pub async fn verify_htx(&self, htx: &Htx) -> Result<(), VerificationError> {
+    pub async fn verify_nillion_htx(&self, htx: &NillionHtx) -> Result<(), VerificationError> {
+        let NillionHtx::V1(htx) = htx;
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(10))
             .connect_timeout(std::time::Duration::from_secs(5))
@@ -97,8 +98,8 @@ impl HtxVerifier {
 
         let report = self
             .verify_report(
-                &htx.nilcc_measurement.url,
-                htx.nilcc_measurement.docker_compose_hash,
+                &htx.workload_measurement.url,
+                htx.workload_measurement.docker_compose_hash,
             )
             .await?;
 
@@ -191,7 +192,8 @@ impl HtxVerifier {
     /// 4. Verify quote locally using dcap-qvl (get_collateral_and_verify)
     ///
     /// Returns Ok(()) if verification succeeds, Err(VerificationError) otherwise.
-    pub async fn verify_htx_phala(&self, htx: &HtxPhala) -> Result<(), VerificationError> {
+    pub async fn verify_phala_htx(&self, htx: &PhalaHtx) -> Result<(), VerificationError> {
+        let PhalaHtx::V1(htx) = htx;
         // 1. Calculate SHA-256 hash of app_compose
         let mut hasher = Sha256::new();
         hasher.update(htx.app_compose.as_bytes());

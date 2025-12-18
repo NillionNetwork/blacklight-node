@@ -131,7 +131,8 @@ impl ContractConfig {
 mod tests {
     use super::*;
     use crate::types::{
-        Builder, BuilderMeasurement, Htx, NilCcMeasurement, NilCcOperator, VersionedHtx, WorkloadId,
+        Builder, BuilderMeasurement, NilCcOperator, NillionHtx, NillionHtxV1, WorkloadId,
+        WorkloadMeasurement,
     };
     use std::env;
 
@@ -242,12 +243,12 @@ mod tests {
         }
 
         // Create minimal test HTX
-        let htx = VersionedHtx::V1(Htx {
+        let htx = NillionHtx::V1(NillionHtxV1 {
             workload_id: WorkloadId {
                 current: "1".into(),
                 previous: Some("0".into()),
             },
-            nilcc_operator: Some(NilCcOperator {
+            operator: Some(NilCcOperator {
                 id: 1,
                 name: "test".into(),
             }),
@@ -255,10 +256,10 @@ mod tests {
                 id: 1,
                 name: "test".into(),
             }),
-            nilcc_measurement: NilCcMeasurement {
+            workload_measurement: WorkloadMeasurement {
                 url: "https://test.com".into(),
-                nilcc_version: "0.0.0".into(),
-                cpu_count: 1,
+                artifacts_version: "0.0.0".into(),
+                cpus: 1,
                 gpus: 0,
                 docker_compose_hash: [0; 32],
             },

@@ -7,7 +7,7 @@ use niluv::{
         validate_node_requirements, NodeCliArgs, NodeConfig,
     },
     contract_client::{ContractConfig, NilUVClient},
-    types::{UnifiedHtx, VersionedHtx},
+    types::Htx,
     verification::HtxVerifier,
 };
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -99,19 +99,15 @@ async fn process_htx_assignment(
     })?;
 
     // Parse the HTX data - UnifiedHtx automatically detects provider field
-    let verification_result = match serde_json::from_slice::<UnifiedHtx>(&htx_bytes) {
-        Ok(unified_htx) => match unified_htx {
-            UnifiedHtx::Nilcc(versioned_htx) => {
-                #[allow(clippy::infallible_destructuring_match)]
-                let htx = match versioned_htx {
-                    VersionedHtx::V1(htx) => htx,
-                };
+    let verification_result = match serde_json::from_slice::<Htx>(&htx_bytes) {
+        Ok(htx) => match htx {
+            Htx::Nillion(htx) => {
                 info!(htx_id = ?htx_id, "Detected nilCC HTX");
-                verifier.verify_htx(&htx).await
+                verifier.verify_nillion_htx(&htx).await
             }
-            UnifiedHtx::Phala(htx_phala) => {
+            Htx::Phala(htx) => {
                 info!(htx_id = ?htx_id, "Detected Phala HTX");
-                verifier.verify_htx_phala(&htx_phala).await
+                verifier.verify_phala_htx(&htx).await
             }
         },
         Err(e) => {

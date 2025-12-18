@@ -6,7 +6,7 @@ use clap::Parser;
 use niluv::{
     config::{SimulatorCliArgs, SimulatorConfig},
     contract_client::{ContractConfig, NilUVClient},
-    types::{Htx, VersionedHtx},
+    types::{NillionHtx, NillionHtxV1},
 };
 use rand::Rng;
 use tokio::time::interval;
@@ -57,9 +57,9 @@ async fn setup_client(config: &SimulatorConfig) -> Result<NilUVClient> {
     Ok(client)
 }
 
-fn load_htxs(path: &str) -> Vec<Htx> {
+fn load_htxs(path: &str) -> Vec<NillionHtxV1> {
     let htxs_json = std::fs::read_to_string(path).unwrap_or_else(|_| "[]".to_string());
-    let htxs: Vec<Htx> = serde_json::from_str(&htxs_json).unwrap_or_default();
+    let htxs: Vec<NillionHtxV1> = serde_json::from_str(&htxs_json).unwrap_or_default();
 
     if htxs.is_empty() {
         warn!(path = %path, "No HTXs loaded");
@@ -70,7 +70,11 @@ fn load_htxs(path: &str) -> Vec<Htx> {
     htxs
 }
 
-async fn run_submission_loop(client: NilUVClient, htxs: Vec<Htx>, slot_ms: u64) -> Result<()> {
+async fn run_submission_loop(
+    client: NilUVClient,
+    htxs: Vec<NillionHtxV1>,
+    slot_ms: u64,
+) -> Result<()> {
     let mut ticker = interval(Duration::from_millis(slot_ms));
     let mut slot = 0u64;
     let client = Arc::new(client);
@@ -94,7 +98,11 @@ async fn run_submission_loop(client: NilUVClient, htxs: Vec<Htx>, slot_ms: u64) 
 const MAX_RETRIES: u32 = 3;
 const RETRY_DELAY_MS: u64 = 500;
 
-async fn submit_next_htx(client: &Arc<NilUVClient>, htxs: &Arc<Vec<Htx>>, slot: u64) -> Result<()> {
+async fn submit_next_htx(
+    client: &Arc<NilUVClient>,
+    htxs: &Arc<Vec<NillionHtxV1>>,
+    slot: u64,
+) -> Result<()> {
     if htxs.is_empty() {
         warn!(slot, "No HTXs available");
         return Ok(());
@@ -127,11 +135,7 @@ async fn submit_next_htx(client: &Arc<NilUVClient>, htxs: &Arc<Vec<Htx>>, slot: 
             info!(slot, attempt, "Retrying HTX submission");
         }
 
-        match client
-            .router
-            .submit_htx(&VersionedHtx::V1(htx).into())
-            .await
-        {
+        match client.router.submit_htx(&NillionHtx::V1(htx).into()).await {
             Ok(tx_hash) => {
                 info!(slot, tx_hash = ?tx_hash, "HTX submitted");
                 return Ok(());
