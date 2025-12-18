@@ -7,7 +7,7 @@ pragma solidity ^0.8.20;
 interface IRewardPolicy {
     function spendableBudget() external view returns (uint256);
     function accrueWeights(
-        bytes32 workloadKey,
+        bytes32 heartbeatKey,
         uint8 round,
         address[] calldata recipients,
         uint256[] calldata weights
@@ -45,7 +45,7 @@ interface ISlashingPolicy {
     enum Outcome { Inconclusive, ValidThreshold, InvalidThreshold }
 
     function onRoundFinalized(
-        bytes32 workloadKey,
+        bytes32 heartbeatKey,
         uint8 round,
         Outcome outcome,
         bytes32 committeeRoot,
@@ -55,7 +55,7 @@ interface ISlashingPolicy {
 
 interface ICommitteeSelector {
     function selectCommittee(
-        bytes32 workloadKey,
+        bytes32 heartbeatKey,
         uint8 round,
         uint32 committeeSize,
         uint64 snapshotId
@@ -67,11 +67,11 @@ interface IStakingOperators {
     struct OperatorInfo { bool active; string metadataURI; }
 
     function unstakeDelay() external view returns (uint256);
-    function workloadManager() external view returns (address);
+    function heartbeatManager() external view returns (address);
     function operatorStaker(address operator) external view returns (address);
 
     function setSnapshotter(address newSnapshotter) external;
-    function setWorkloadManager(address newWorkloadManager) external;
+    function setHeartbeatManager(address newHeartbeatManager) external;
 
     function snapshot() external returns (uint64 snapshotId);
     function stakeAt(address operator, uint64 snapshotId) external view returns (uint256);

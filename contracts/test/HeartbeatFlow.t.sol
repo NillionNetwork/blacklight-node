@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import "./helpers/RCFixture.sol";
+import "./helpers/BlacklightFixture.sol";
 
-contract WorkloadFlowTest is RCFixture {
+contract HeartbeatFlowTest is BlacklightFixture {
     function setUp() public {
         uint256[] memory stakes = new uint256[](2);
         stakes[0] = 150e18;
@@ -22,21 +22,21 @@ contract WorkloadFlowTest is RCFixture {
         );
     }
 
-    function testFullWorkloadFlow() public {
+    function testFullHeartbeatFlow() public {
         rewardToken.mint(governance, 1_000e18);
         vm.prank(governance);
         rewardToken.approve(address(rewardPolicy), type(uint256).max);
         vm.prank(governance);
         rewardPolicy.fund(1_000e18);
 
-        (bytes32 wk, uint8 round, , , address[] memory members) = _submitPointerAndGetRound();
+        (bytes32 hbKey, uint8 round, , , address[] memory members) = _submitPointerAndGetRound();
         assertEq(members.length, 2);
 
         // Single valid vote (50%) meets quorum/verification thresholds.
-        _vote(wk, round, members, members[0], 1);
+        _vote(hbKey, round, members, members[0], 1);
 
-        (WorkloadManager.WorkloadStatus status, , , , , ) = manager.workloads(wk);
-        assertEq(uint8(status), uint8(WorkloadManager.WorkloadStatus.Verified));
+        (HeartbeatManager.HeartbeatStatus status, , , , , ) = manager.heartbeats(hbKey);
+        assertEq(uint8(status), uint8(HeartbeatManager.HeartbeatStatus.Verified));
 
         // Unlock funded rewards before distribution.
         vm.warp(block.timestamp + 1 days + 1);
@@ -44,7 +44,7 @@ contract WorkloadFlowTest is RCFixture {
         address[] memory voters = new address[](1);
         voters[0] = members[0];
 
-        manager.distributeRewards(wk, round, voters);
+        manager.distributeRewards(hbKey, round, voters);
 
         uint256 beforeClaim = rewardToken.balanceOf(members[0]);
         vm.prank(members[0]);

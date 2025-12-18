@@ -72,7 +72,7 @@ contract WeightedCommitteeSelector is ICommitteeSelector {
     }
 
     function selectCommittee(
-        bytes32 workloadKey,
+        bytes32 heartbeatKey,
         uint8 round,
         uint32 committeeSize,
         uint64 snapshotId
@@ -135,7 +135,7 @@ contract WeightedCommitteeSelector is ICommitteeSelector {
             if (remainingVP == 0) break;
 
             bytes32 seed = keccak256(abi.encodePacked(
-                bh, address(this), workloadKey, round, snapshotId, picked
+                bh, address(this), heartbeatKey, round, snapshotId, picked
             ));
             uint256 r = uint256(seed) % remainingVP;
 

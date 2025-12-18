@@ -4,8 +4,8 @@ pragma solidity ^0.8.20;
 /// @notice Test-only Merkle utilities compatible with OpenZeppelin MerkleProof.
 /// @dev Pair hashing is commutative (sorted), matching OZ MerkleProof and the on-chain contracts.
 library MerkleTestUtils {
-    function leaf(address workloadManager, bytes32 workloadKey, uint8 round, address member) internal pure returns (bytes32) {
-        return keccak256(abi.encodePacked(bytes1(0xA1), workloadManager, workloadKey, round, member));
+    function leaf(address heartbeatManager, bytes32 heartbeatKey, uint8 round, address member) internal pure returns (bytes32) {
+        return keccak256(abi.encodePacked(bytes1(0xA1), heartbeatManager, heartbeatKey, round, member));
     }
 
     function hashPair(bytes32 a, bytes32 b) internal pure returns (bytes32) {
@@ -29,7 +29,7 @@ library MerkleTestUtils {
         return leaves[0];
     }
 
-    function buildLeaves(address workloadManager, bytes32 workloadKey, uint8 round, address[] memory members)
+    function buildLeaves(address heartbeatManager, bytes32 heartbeatKey, uint8 round, address[] memory members)
         internal
         pure
         returns (bytes32[] memory leaves)
@@ -37,7 +37,7 @@ library MerkleTestUtils {
         uint256 n = members.length;
         leaves = new bytes32[](n);
         for (uint256 i = 0; i < n; ) {
-            leaves[i] = leaf(workloadManager, workloadKey, round, members[i]);
+            leaves[i] = leaf(heartbeatManager, heartbeatKey, round, members[i]);
             unchecked { ++i; }
         }
     }

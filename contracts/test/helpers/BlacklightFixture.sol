@@ -7,13 +7,13 @@ import "../../src/mocks/MockERC20.sol";
 import "../../src/ProtocolConfig.sol";
 import "../../src/StakingOperators.sol";
 import "../../src/WeightedCommitteeSelector.sol";
-import "../../src/WorkloadManager.sol";
+import "../../src/HeartbeatManager.sol";
 import "../../src/RewardPolicy.sol";
 import "../../src/JailingPolicy.sol";
 
 import "./MerkleTestUtils.sol";
 
-abstract contract RCFixture is Test {
+abstract contract BlacklightFixture is Test {
     using MerkleTestUtils for bytes32[];
     using MerkleTestUtils for address[];
 
@@ -23,7 +23,7 @@ abstract contract RCFixture is Test {
     ProtocolConfig internal config;
     StakingOperators internal stakingOps;
     WeightedCommitteeSelector internal selector;
-    WorkloadManager internal manager;
+    HeartbeatManager internal manager;
     RewardPolicy internal rewardPolicy;
     JailingPolicy internal jailingPolicy;
 
@@ -73,7 +73,7 @@ abstract contract RCFixture is Test {
             1e18 // minOperatorStake
         );
 
-        manager = new WorkloadManager(config, governance);
+        manager = new HeartbeatManager(config, governance);
         rewardPolicy = new RewardPolicy(IERC20(address(rewardToken)), address(manager), governance, 1 days, 0);
         jailingPolicy = new JailingPolicy(address(manager));
 
@@ -83,7 +83,7 @@ abstract contract RCFixture is Test {
         // wire staking ops (admin)
         vm.startPrank(admin);
         stakingOps.setProtocolConfig(config);
-        stakingOps.setWorkloadManager(address(manager));
+        stakingOps.setHeartbeatManager(address(manager));
         stakingOps.setSnapshotter(address(manager));
         stakingOps.grantRole(stakingOps.SLASHER_ROLE(), address(jailingPolicy));
         vm.stopPrank();
@@ -118,22 +118,22 @@ abstract contract RCFixture is Test {
 
     function _submitRawHTXAndGetRound()
         internal
-        returns (bytes32 workloadKey, uint8 round, bytes32 root, uint64 snapshotId, address[] memory members)
+        returns (bytes32 heartbeatKey, uint8 round, bytes32 root, uint64 snapshotId, address[] memory members)
     {
         vm.recordLogs();
         bytes memory rawHTX = _defaultRawHTX(1);
-        workloadKey = manager.deriveWorkloadKey(rawHTX);
-        (snapshotId, members) = _prepareCommittee(workloadKey, 1, 0);
+        heartbeatKey = manager.deriveHeartbeatKey(rawHTX);
+        (snapshotId, members) = _prepareCommittee(heartbeatKey, 1, 0);
         address[] memory expectedMembers = members;
-        manager.submitWorkload(rawHTX, snapshotId);
+        manager.submitHeartbeat(rawHTX, snapshotId);
 
         Vm.Log[] memory logs = vm.getRecordedLogs();
         bytes32 sig = keccak256("RoundStarted(bytes32,uint8,bytes32,uint64,uint64,uint64,address[],bytes)");
 
         for (uint256 i = 0; i < logs.length; i++) {
             if (logs[i].topics.length > 0 && logs[i].topics[0] == sig) {
-                bytes32 wk = bytes32(logs[i].topics[1]);
-                if (wk != workloadKey) continue;
+                bytes32 hbKey = bytes32(logs[i].topics[1]);
+                if (hbKey != heartbeatKey) continue;
 
                 bytes memory emittedRaw;
                 (round, root, snapshotId, , , members, emittedRaw) =
@@ -144,7 +144,41 @@ abstract contract RCFixture is Test {
                     assertEq(members[j], expectedMembers[j]);
                 }
                 assertEq(keccak256(emittedRaw), keccak256(rawHTX));
-                return (workloadKey, round, root, snapshotId, members);
+                return (heartbeatKey, round, root, snapshotId, members);
+            }
+        }
+        fail("RoundStarted not found");
+    }
+
+    function _submitRawHTXAndGetRound(uint64 id)
+        internal
+        returns (bytes32 heartbeatKey, uint8 round, bytes32 root, uint64 snapshotId, address[] memory members)
+    {
+        vm.recordLogs();
+        bytes memory rawHTX = _defaultRawHTX(id);
+        heartbeatKey = manager.deriveHeartbeatKey(rawHTX);
+        (snapshotId, members) = _prepareCommittee(heartbeatKey, 1, 0);
+        address[] memory expectedMembers = members;
+        manager.submitHeartbeat(rawHTX, snapshotId);
+
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 sig = keccak256("RoundStarted(bytes32,uint8,bytes32,uint64,uint64,uint64,address[],bytes)");
+
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].topics.length > 0 && logs[i].topics[0] == sig) {
+                bytes32 hbKey = bytes32(logs[i].topics[1]);
+                if (hbKey != heartbeatKey) continue;
+
+                bytes memory emittedRaw;
+                (round, root, snapshotId, , , members, emittedRaw) =
+                    abi.decode(logs[i].data, (uint8, bytes32, uint64, uint64, uint64, address[], bytes));
+
+                assertEq(members.length, expectedMembers.length);
+                for (uint256 j = 0; j < members.length; j++) {
+                    assertEq(members[j], expectedMembers[j]);
+                }
+                assertEq(keccak256(emittedRaw), keccak256(rawHTX));
+                return (heartbeatKey, round, root, snapshotId, members);
             }
         }
         fail("RoundStarted not found");
@@ -152,19 +186,19 @@ abstract contract RCFixture is Test {
 
     function _submitPointerAndGetRound()
         internal
-        returns (bytes32 workloadKey, uint8 round, bytes32 root, uint64 snapshotId, address[] memory members)
+        returns (bytes32 heartbeatKey, uint8 round, bytes32 root, uint64 snapshotId, address[] memory members)
     {
         return _submitRawHTXAndGetRound();
     }
 
-    function _prepareCommittee(bytes32 workloadKey, uint8 round, uint8 escalationLevel)
+    function _prepareCommittee(bytes32 heartbeatKey, uint8 round, uint8 escalationLevel)
         internal
         view
         returns (uint64 snapshotId, address[] memory members)
     {
         snapshotId = uint64(block.number - 1);
         uint32 targetSize = _computeCommitteeSize(escalationLevel);
-        members = selector.selectCommittee(workloadKey, round, targetSize, snapshotId);
+        members = selector.selectCommittee(heartbeatKey, round, targetSize, snapshotId);
         require(members.length > 0, "empty committee");
         _sortMembers(members);
     }
@@ -194,7 +228,7 @@ abstract contract RCFixture is Test {
         }
     }
 
-    function _proofForMember(bytes32 workloadKey, uint8 round, address[] memory members, address member)
+    function _proofForMember(bytes32 heartbeatKey, uint8 round, address[] memory members, address member)
         internal
         view
         returns (bytes32[] memory proof)
@@ -202,25 +236,25 @@ abstract contract RCFixture is Test {
         (bool found, uint256 idx) = MerkleTestUtils.indexOf(members, member);
         require(found, "member not found");
 
-        bytes32[] memory leaves = MerkleTestUtils.buildLeaves(address(manager), workloadKey, round, members);
+        bytes32[] memory leaves = MerkleTestUtils.buildLeaves(address(manager), heartbeatKey, round, members);
         proof = MerkleTestUtils.proofForIndex(leaves, idx);
     }
 
-    function _vote(bytes32 workloadKey, uint8 round, address[] memory members, address voter, uint8 verdict) internal {
-        bytes32[] memory proof = _proofForMember(workloadKey, round, members, voter);
+    function _vote(bytes32 heartbeatKey, uint8 round, address[] memory members, address voter, uint8 verdict) internal {
+        bytes32[] memory proof = _proofForMember(heartbeatKey, round, members, voter);
         vm.prank(voter);
-        manager.submitVerdict(workloadKey, verdict, proof);
+        manager.submitVerdict(heartbeatKey, verdict, proof);
     }
 
-    function _batchedVote(bytes32 workloadKey, uint8 round, address[] memory members, uint256 pk, address voter, uint8 verdict) internal {
-        bytes32[] memory proof = _proofForMember(workloadKey, round, members, voter);
-        bytes32 digest = manager.voteDigest(workloadKey, round, verdict);
+    function _batchedVote(bytes32 heartbeatKey, uint8 round, address[] memory members, uint256 pk, address voter, uint8 verdict) internal {
+        bytes32[] memory proof = _proofForMember(heartbeatKey, round, members, voter);
+        bytes32 digest = manager.voteDigest(heartbeatKey, round, verdict);
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, digest);
 
-        WorkloadManager.SignedBatchedVote[] memory batch = new WorkloadManager.SignedBatchedVote[](1);
-        batch[0] = WorkloadManager.SignedBatchedVote({
+        HeartbeatManager.SignedBatchedVote[] memory batch = new HeartbeatManager.SignedBatchedVote[](1);
+        batch[0] = HeartbeatManager.SignedBatchedVote({
             operator: voter,
-            workloadKey: workloadKey,
+            heartbeatKey: heartbeatKey,
             round: round,
             verdict: verdict,
             memberProof: proof,

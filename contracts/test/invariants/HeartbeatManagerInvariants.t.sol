@@ -8,29 +8,29 @@ import "../../src/mocks/MockERC20.sol";
 import "../../src/ProtocolConfig.sol";
 import "../../src/StakingOperators.sol";
 import "../../src/WeightedCommitteeSelector.sol";
-import "../../src/WorkloadManager.sol";
+import "../../src/HeartbeatManager.sol";
 import "../../src/RewardPolicy.sol";
 import "../../src/JailingPolicy.sol";
 
 import "../helpers/MerkleTestUtils.sol";
 
-contract WorkloadHandler is Test {
+contract HeartbeatHandler is Test {
     using MerkleTestUtils for bytes32[];
     using MerkleTestUtils for address[];
 
-    WorkloadManager public manager;
+    HeartbeatManager public manager;
     StakingOperators public stakingOps;
 
-    bytes32 public workloadKey;
+    bytes32 public heartbeatKey;
     uint8 public round;
     uint64 public snapshotId;
     address[] public members;
     bytes public rawHTX;
 
-    constructor(WorkloadManager _manager, StakingOperators _stakingOps, bytes32 _workloadKey, uint8 _round, uint64 _snapshotId, address[] memory _members, bytes memory _rawHTX) {
+    constructor(HeartbeatManager _manager, StakingOperators _stakingOps, bytes32 _heartbeatKey, uint8 _round, uint64 _snapshotId, address[] memory _members, bytes memory _rawHTX) {
         manager = _manager;
         stakingOps = _stakingOps;
-        workloadKey = _workloadKey;
+        heartbeatKey = _heartbeatKey;
         round = _round;
         snapshotId = _snapshotId;
         members = _members;
@@ -53,37 +53,37 @@ contract WorkloadHandler is Test {
         address voter = members[idx];
 
         // read round info
-        (, , , , , , , , , , uint64 deadline, bool finalized, , , , , , , , ) = manager.rounds(workloadKey, round);
+        (, , , , , , , , , , uint64 deadline, bool finalized, , , , , , , , ) = manager.rounds(heartbeatKey, round);
         if (finalized) return;
         if (block.timestamp > deadline) return;
         if (verdict == 0 || verdict > 3) verdict = 1;
 
-        uint256 packed = manager.getVotePacked(workloadKey, round, voter);
+        uint256 packed = manager.getVotePacked(heartbeatKey, round, voter);
         if ((packed & (1 << 2)) != 0) return;
 
         bytes32[] memory proof = _proof(voter);
         vm.prank(voter);
-        manager.submitVerdict(workloadKey, verdict, proof);
+        manager.submitVerdict(heartbeatKey, verdict, proof);
     }
 
     function escalateIfNeeded() external {
-        (, , , , , , , , , , uint64 deadline, bool finalized, , , , , , , , ) = manager.rounds(workloadKey, round);
+        (, , , , , , , , , , uint64 deadline, bool finalized, , , , , , , , ) = manager.rounds(heartbeatKey, round);
         if (finalized) return;
         if (block.timestamp <= deadline) return;
 
-        // may expire the workload (maxEscalations=0 in this invariant setup)
-        manager.escalateOrExpire(workloadKey, rawHTX);
+        // may expire the heartbeat (maxEscalations=0 in this invariant setup)
+        manager.escalateOrExpire(heartbeatKey, rawHTX);
     }
 
     function _proof(address member) internal view returns (bytes32[] memory proof) {
         (bool found, uint256 idx) = MerkleTestUtils.indexOf(members, member);
         require(found, "member not found");
-        bytes32[] memory leaves = MerkleTestUtils.buildLeaves(address(manager), workloadKey, round, members);
+        bytes32[] memory leaves = MerkleTestUtils.buildLeaves(address(manager), heartbeatKey, round, members);
         proof = MerkleTestUtils.proofForIndex(leaves, idx);
     }
 }
 
-contract WorkloadManagerInvariants is StdInvariant, Test {
+contract HeartbeatManagerInvariants is StdInvariant, Test {
     using MerkleTestUtils for bytes32[];
     using MerkleTestUtils for address[];
 
@@ -93,11 +93,11 @@ contract WorkloadManagerInvariants is StdInvariant, Test {
     ProtocolConfig config;
     StakingOperators stakingOps;
     WeightedCommitteeSelector selector;
-    WorkloadManager manager;
+    HeartbeatManager manager;
     RewardPolicy rewardPolicy;
     JailingPolicy jailingPolicy;
 
-    WorkloadHandler handler;
+    HeartbeatHandler handler;
 
     address admin = address(0xA11CE);
 
@@ -128,7 +128,7 @@ contract WorkloadManagerInvariants is StdInvariant, Test {
             1e18
         );
 
-        manager = new WorkloadManager(config, address(this));
+        manager = new HeartbeatManager(config, address(this));
         rewardPolicy = new RewardPolicy(IERC20(address(rewardToken)), address(manager), address(this), 1 days, 0);
         jailingPolicy = new JailingPolicy(address(manager));
         config.setModules(address(stakingOps), address(selector), address(jailingPolicy), address(rewardPolicy));
@@ -136,7 +136,7 @@ contract WorkloadManagerInvariants is StdInvariant, Test {
         vm.startPrank(admin);
         stakingOps.setProtocolConfig(config);
         stakingOps.setSnapshotter(address(manager));
-        stakingOps.setWorkloadManager(address(manager));
+        stakingOps.setHeartbeatManager(address(manager));
         stakingOps.grantRole(stakingOps.SLASHER_ROLE(), address(jailingPolicy));
         vm.stopPrank();
 
@@ -158,17 +158,17 @@ contract WorkloadManagerInvariants is StdInvariant, Test {
         vm.roll(block.number + 3);
         vm.warp(block.timestamp + 1);
 
-        // start workload and capture committee list from logs
+        // start heartbeat and capture committee list from logs
         bytes memory rawHTX = abi.encodePacked("raw-htx-invariant");
-        bytes32 wk = manager.deriveWorkloadKey(rawHTX);
+        bytes32 hbKey = manager.deriveHeartbeatKey(rawHTX);
 
         vm.recordLogs();
         uint32 targetSize = config.baseCommitteeSize();
         uint64 snap = uint64(block.number - 1);
-        address[] memory membersOffchain = selector.selectCommittee(wk, 1, targetSize, snap);
+        address[] memory membersOffchain = selector.selectCommittee(hbKey, 1, targetSize, snap);
         require(membersOffchain.length == targetSize, "empty committee");
         _sortMembers(membersOffchain);
-        manager.submitWorkload(rawHTX, snap);
+        manager.submitHeartbeat(rawHTX, snap);
         Vm.Log[] memory logs = vm.getRecordedLogs();
 
         bytes32 sig = keccak256("RoundStarted(bytes32,uint8,bytes32,uint64,uint64,uint64,address[],bytes)");
@@ -177,7 +177,7 @@ contract WorkloadManagerInvariants is StdInvariant, Test {
         uint8 round;
         uint64 snapshotId;
         for (uint256 i = 0; i < logs.length; i++) {
-            if (logs[i].topics.length > 0 && logs[i].topics[0] == sig && bytes32(logs[i].topics[1]) == wk) {
+            if (logs[i].topics.length > 0 && logs[i].topics[0] == sig && bytes32(logs[i].topics[1]) == hbKey) {
                 bytes memory emittedRaw;
                 (round, , snapshotId, , , members, emittedRaw) =
                     abi.decode(logs[i].data, (uint8, bytes32, uint64, uint64, uint64, address[], bytes));
@@ -191,7 +191,7 @@ contract WorkloadManagerInvariants is StdInvariant, Test {
         }
         require(members.length == 20, "missing members");
 
-        handler = new WorkloadHandler(manager, stakingOps, wk, round, snapshotId, members, rawHTX);
+        handler = new HeartbeatHandler(manager, stakingOps, hbKey, round, snapshotId, members, rawHTX);
         targetContract(address(handler));
     }
 
@@ -209,11 +209,11 @@ contract WorkloadManagerInvariants is StdInvariant, Test {
     }
 
     function invariant_roundAccountingSums() public {
-        bytes32 wk = handler.workloadKey();
+        bytes32 hbKey = handler.heartbeatKey();
         uint8 r = handler.round();
 
         (uint256 validStake, uint256 invalidStake, uint256 errorStake, uint256 totalResponded, uint256 committeeTotal,
-            uint32 validVotesCount, uint32 committeeSize, uint64 snapshotId, , , , , , , , , , , , ) = manager.rounds(wk, r);
+            uint32 validVotesCount, uint32 committeeSize, uint64 snapshotId, , , , , , , , , , , , ) = manager.rounds(hbKey, r);
 
         assertEq(validStake + invalidStake + errorStake, totalResponded, "stake buckets don't sum to responded");
         assertLe(totalResponded, committeeTotal, "responded exceeds committee total");
@@ -229,14 +229,14 @@ contract WorkloadManagerInvariants is StdInvariant, Test {
         address[] memory members = handler.getMembers();
         uint32 count;
         for (uint256 i = 0; i < members.length; i++) {
-            uint256 packed = manager.getVotePacked(wk, r, members[i]);
+            uint256 packed = manager.getVotePacked(hbKey, r, members[i]);
             if ((packed & (1 << 2)) != 0 && uint8(packed & 0x3) == 1) count++;
         }
         assertEq(count, validVotesCount, "validVotesCount mismatch");
     }
 
     function invariant_voteWeightsMatchSnapshotStake() public {
-        bytes32 wk = handler.workloadKey();
+        bytes32 hbKey = handler.heartbeatKey();
         uint8 r = handler.round();
         uint64 snap = handler.snapshotId();
 
@@ -244,7 +244,7 @@ contract WorkloadManagerInvariants is StdInvariant, Test {
 
         for (uint256 i = 0; i < members.length; i++) {
             address op = members[i];
-            uint256 packed = manager.getVotePacked(wk, r, op);
+            uint256 packed = manager.getVotePacked(hbKey, r, op);
 
             bool responded = (packed & (1 << 2)) != 0;
             if (!responded) {
@@ -258,11 +258,11 @@ contract WorkloadManagerInvariants is StdInvariant, Test {
     }
 
     function invariant_committeeTotalStakeMatchesSumStakeAtSnapshot() public {
-        bytes32 wk = handler.workloadKey();
+        bytes32 hbKey = handler.heartbeatKey();
         uint8 r = handler.round();
         uint64 snap = handler.snapshotId();
 
-        ( , , , , uint256 committeeTotal, , , , , , , , , , , , , , , ) = manager.rounds(wk, r);
+        ( , , , , uint256 committeeTotal, , , , , , , , , , , , , , , ) = manager.rounds(hbKey, r);
 
         address[] memory members = handler.getMembers();
         uint256 sum;

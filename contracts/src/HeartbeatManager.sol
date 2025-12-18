@@ -10,10 +10,10 @@ import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import "@openzeppelin/contracts/utils/math/Math.sol";
 import "./Interfaces.sol";
 
-/// @title WorkloadManager
-/// @notice Manages workload verification rounds with stake-weighted committees and Merkle proofs.
-/// @dev Rounds start automatically on workload submission (grindable selection surface accepted for this version).
-contract WorkloadManager is Pausable, ReentrancyGuard, Ownable, EIP712 {
+/// @title HeartbeatManager
+/// @notice Manages heartbeat verification rounds with stake-weighted committees and Merkle proofs.
+/// @dev Rounds start automatically on heartbeat submission (grindable selection surface accepted for this version).
+contract HeartbeatManager is Pausable, ReentrancyGuard, Ownable, EIP712 {
     using ECDSA for bytes32;
 
     error ZeroAddress();
@@ -51,12 +51,12 @@ contract WorkloadManager is Pausable, ReentrancyGuard, Ownable, EIP712 {
     uint256 private constant MAX_VOTE_BATCH_HARD_LIMIT = 500;
 
     bytes32 private constant VOTE_TYPEHASH =
-        keccak256("Vote(bytes32 workloadKey,uint8 round,uint8 verdict,uint64 snapshotId,bytes32 committeeRoot)");
+        keccak256("Vote(bytes32 heartbeatKey,uint8 round,uint8 verdict,uint64 snapshotId,bytes32 committeeRoot)");
 
-    enum WorkloadStatus { None, Pending, Verified, Invalid, Expired }
+    enum HeartbeatStatus { None, Pending, Verified, Invalid, Expired }
 
-    struct Workload {
-        WorkloadStatus status;
+    struct Heartbeat {
+        HeartbeatStatus status;
         uint8 currentRound;
         uint8 escalationLevel;
         uint8 maxEscalationsSnapshot;
@@ -95,7 +95,7 @@ contract WorkloadManager is Pausable, ReentrancyGuard, Ownable, EIP712 {
 
     struct SignedBatchedVote {
         address operator;
-        bytes32 workloadKey;
+        bytes32 heartbeatKey;
         uint8 round;
         uint8 verdict;
         bytes32[] memberProof;
@@ -106,7 +106,7 @@ contract WorkloadManager is Pausable, ReentrancyGuard, Ownable, EIP712 {
 
     IProtocolConfig public config;
 
-    mapping(bytes32 => Workload) public workloads;
+    mapping(bytes32 => Heartbeat) public heartbeats;
     mapping(bytes32 => mapping(uint8 => RoundInfo)) public rounds;
     mapping(bytes32 => mapping(uint8 => mapping(address => uint256))) internal votePacked;
 
@@ -115,17 +115,17 @@ contract WorkloadManager is Pausable, ReentrancyGuard, Ownable, EIP712 {
     mapping(bytes32 => mapping(uint8 => bool)) public slashingNotified;
 
     event ConfigUpdated(address config);
-    event WorkloadEnqueued(bytes32 indexed workloadKey, bytes rawHTX, address indexed submitter);
-    event RoundStarted(bytes32 indexed workloadKey, uint8 round, bytes32 committeeRoot, uint64 snapshotId, uint64 startedAt, uint64 deadline, address[] members, bytes rawHTX);
-    event OperatorVoted(bytes32 indexed workloadKey, uint8 round, address indexed operator, uint8 verdict, uint256 weight);
-    event WorkloadStatusChanged(bytes32 indexed workloadKey, WorkloadStatus oldStatus, WorkloadStatus newStatus, uint8 round);
-    event RoundFinalized(bytes32 indexed workloadKey, uint8 round, ISlashingPolicy.Outcome outcome);
-    event SlashingCallbackFailed(bytes32 indexed workloadKey, uint8 indexed round, bytes lowLevelData);
-    event RewardDistributionAbandoned(bytes32 indexed workloadKey, uint8 indexed round);
+    event HeartbeatEnqueued(bytes32 indexed heartbeatKey, bytes rawHTX, address indexed submitter);
+    event RoundStarted(bytes32 indexed heartbeatKey, uint8 round, bytes32 committeeRoot, uint64 snapshotId, uint64 startedAt, uint64 deadline, address[] members, bytes rawHTX);
+    event OperatorVoted(bytes32 indexed heartbeatKey, uint8 round, address indexed operator, uint8 verdict, uint256 weight);
+    event HeartbeatStatusChanged(bytes32 indexed heartbeatKey, HeartbeatStatus oldStatus, HeartbeatStatus newStatus, uint8 round);
+    event RoundFinalized(bytes32 indexed heartbeatKey, uint8 round, ISlashingPolicy.Outcome outcome);
+    event SlashingCallbackFailed(bytes32 indexed heartbeatKey, uint8 indexed round, bytes lowLevelData);
+    event RewardDistributionAbandoned(bytes32 indexed heartbeatKey, uint8 indexed round);
 
     constructor(IProtocolConfig _config, address _owner)
         Ownable(_owner)
-        EIP712("WorkloadManager", "1")
+        EIP712("HeartbeatManager", "1")
     {
         if (address(_config) == address(0)) revert ZeroAddress();
         config = _config;
@@ -141,13 +141,13 @@ contract WorkloadManager is Pausable, ReentrancyGuard, Ownable, EIP712 {
     function pause() external onlyOwner { _pause(); }
     function unpause() external onlyOwner { _unpause(); }
 
-    function _deriveWorkloadKey(bytes calldata rawHTX) internal pure returns (bytes32) {
+    function _deriveHeartbeatKey(bytes calldata rawHTX) internal pure returns (bytes32) {
         bytes32 rawHash = keccak256(rawHTX);
-        return keccak256(abi.encodePacked("WORKLOAD_KEY_V1", rawHash));
+        return keccak256(abi.encodePacked("HEARTBEAT_KEY_V1", rawHash));
     }
 
-    function deriveWorkloadKey(bytes calldata rawHTX) external pure returns (bytes32) {
-        return _deriveWorkloadKey(rawHTX);
+    function deriveHeartbeatKey(bytes calldata rawHTX) external pure returns (bytes32) {
+        return _deriveHeartbeatKey(rawHTX);
     }
 
     function _computeCommitteeSize(uint8 escalationLevel) internal view returns (uint32) {
@@ -162,8 +162,8 @@ contract WorkloadManager is Pausable, ReentrancyGuard, Ownable, EIP712 {
         return uint32(size);
     }
 
-    function _snapshotRoundConfig(bytes32 workloadKey, uint8 round) internal {
-        RoundInfo storage r = rounds[workloadKey][round];
+    function _snapshotRoundConfig(bytes32 heartbeatKey, uint8 round) internal {
+        RoundInfo storage r = rounds[heartbeatKey][round];
         if (r.stakingOps != address(0)) return;
 
         r.stakingOps = config.stakingOps();
@@ -177,42 +177,42 @@ contract WorkloadManager is Pausable, ReentrancyGuard, Ownable, EIP712 {
         r.jailDurationSec   = uint64(config.jailDuration());
     }
 
-    function submitWorkload(bytes calldata rawHTX, uint64 snapshotId)
+    function submitHeartbeat(bytes calldata rawHTX, uint64 snapshotId)
         external
         whenNotPaused
         nonReentrant
-        returns (bytes32 workloadKey)
+        returns (bytes32 heartbeatKey)
     {
-        workloadKey = _deriveWorkloadKey(rawHTX);
+        heartbeatKey = _deriveHeartbeatKey(rawHTX);
         if (snapshotId == 0) revert SnapshotBlockUnavailable(snapshotId);
 
-        Workload storage w = workloads[workloadKey];
+        Heartbeat storage w = heartbeats[heartbeatKey];
         bytes32 rawHash = keccak256(rawHTX);
-        if (w.status == WorkloadStatus.None) {
-            w.status = WorkloadStatus.Pending;
+        if (w.status == HeartbeatStatus.None) {
+            w.status = HeartbeatStatus.Pending;
             w.createdAt = uint64(block.timestamp);
             w.currentRound = 1;
             w.escalationLevel = 0;
             w.maxEscalationsSnapshot = config.maxEscalations();
             w.rawHTXHash = rawHash;
 
-            _startRound(workloadKey, 1, snapshotId, rawHTX);
+            _startRound(heartbeatKey, 1, snapshotId, rawHTX);
 
-            emit WorkloadStatusChanged(workloadKey, WorkloadStatus.None, WorkloadStatus.Pending, 1);
+            emit HeartbeatStatusChanged(heartbeatKey, HeartbeatStatus.None, HeartbeatStatus.Pending, 1);
         } else {
             if (w.rawHTXHash != rawHash) revert RawHTXHashMismatch();
         }
 
-        emit WorkloadEnqueued(workloadKey, rawHTX, msg.sender);
+        emit HeartbeatEnqueued(heartbeatKey, rawHTX, msg.sender);
     }
 
-    function _startRound(bytes32 workloadKey, uint8 round, uint64 explicitSnapshotId, bytes calldata rawHTX) internal returns (address[] memory members) {
-        Workload storage w = workloads[workloadKey];
-        if (w.status != WorkloadStatus.Pending) revert NotPending();
+    function _startRound(bytes32 heartbeatKey, uint8 round, uint64 explicitSnapshotId, bytes calldata rawHTX) internal returns (address[] memory members) {
+        Heartbeat storage w = heartbeats[heartbeatKey];
+        if (w.status != HeartbeatStatus.Pending) revert NotPending();
 
-        _snapshotRoundConfig(workloadKey, round);
+        _snapshotRoundConfig(heartbeatKey, round);
 
-        RoundInfo storage r = rounds[workloadKey][round];
+        RoundInfo storage r = rounds[heartbeatKey][round];
 
         IStakingOperators stakingOps = IStakingOperators(r.stakingOps);
         ICommitteeSelector selector  = ICommitteeSelector(r.selector);
@@ -227,7 +227,7 @@ contract WorkloadManager is Pausable, ReentrancyGuard, Ownable, EIP712 {
         r.snapshotId = snapshotId;
 
         uint32 targetSize = _computeCommitteeSize(w.escalationLevel);
-        members = selector.selectCommittee(workloadKey, round, targetSize, snapshotId);
+        members = selector.selectCommittee(heartbeatKey, round, targetSize, snapshotId);
         uint256 len = members.length;
         if (len == 0) revert EmptyCommittee();
 
@@ -247,7 +247,7 @@ contract WorkloadManager is Pausable, ReentrancyGuard, Ownable, EIP712 {
             if (stake == 0) revert InvalidCommitteeMember(op); // unexpected given weighted selection; safer to fail-fast
             totalStake += stake;
 
-            leaves[i] = keccak256(abi.encodePacked(bytes1(0xA1), address(this), workloadKey, round, op));
+            leaves[i] = keccak256(abi.encodePacked(bytes1(0xA1), address(this), heartbeatKey, round, op));
             unchecked { ++i; }
         }
 
@@ -258,15 +258,15 @@ contract WorkloadManager is Pausable, ReentrancyGuard, Ownable, EIP712 {
         r.startedAt = uint64(block.timestamp);
         r.deadline = uint64(block.timestamp + uint256(r.responseWindowSec));
 
-        emit RoundStarted(workloadKey, round, r.committeeRoot, r.snapshotId, r.startedAt, r.deadline, members, rawHTX);
+        emit RoundStarted(heartbeatKey, round, r.committeeRoot, r.snapshotId, r.startedAt, r.deadline, members, rawHTX);
     }
 
-    function submitVerdict(bytes32 workloadKey, uint8 verdict, bytes32[] calldata memberProof)
+    function submitVerdict(bytes32 heartbeatKey, uint8 verdict, bytes32[] calldata memberProof)
         external
         whenNotPaused
         nonReentrant
     {
-        _submitVerdict(msg.sender, workloadKey, verdict, memberProof, 0);
+        _submitVerdict(msg.sender, heartbeatKey, verdict, memberProof, 0);
     }
 
     function submitVerdictsBatched(SignedBatchedVote[] calldata votes)
@@ -283,53 +283,53 @@ contract WorkloadManager is Pausable, ReentrancyGuard, Ownable, EIP712 {
         for (uint256 i = 0; i < len; ) {
             SignedBatchedVote calldata v = votes[i];
             _verifyVoteSig(v);
-            _submitVerdict(v.operator, v.workloadKey, v.verdict, v.memberProof, v.round);
+            _submitVerdict(v.operator, v.heartbeatKey, v.verdict, v.memberProof, v.round);
             unchecked { ++i; }
         }
     }
 
     function _verifyVoteSig(SignedBatchedVote calldata v) internal view {
-        RoundInfo storage r = rounds[v.workloadKey][v.round];
+        RoundInfo storage r = rounds[v.heartbeatKey][v.round];
         if (r.committeeRoot == bytes32(0) || r.snapshotId == 0) revert CommitteeNotStarted();
 
-        bytes32 structHash = keccak256(abi.encode(VOTE_TYPEHASH, v.workloadKey, v.round, v.verdict, r.snapshotId, r.committeeRoot));
+        bytes32 structHash = keccak256(abi.encode(VOTE_TYPEHASH, v.heartbeatKey, v.round, v.verdict, r.snapshotId, r.committeeRoot));
         bytes32 digest = _hashTypedDataV4(structHash);
 
         address signer = ECDSA.recover(digest, v.sigV, v.sigR, v.sigS);
         if (signer == address(0) || signer != v.operator) revert InvalidSignature();
     }
 
-    function voteDigest(bytes32 workloadKey, uint8 round, uint8 verdict) external view returns (bytes32) {
-        RoundInfo storage r = rounds[workloadKey][round];
+    function voteDigest(bytes32 heartbeatKey, uint8 round, uint8 verdict) external view returns (bytes32) {
+        RoundInfo storage r = rounds[heartbeatKey][round];
         if (r.committeeRoot == bytes32(0) || r.snapshotId == 0) revert CommitteeNotStarted();
-        bytes32 structHash = keccak256(abi.encode(VOTE_TYPEHASH, workloadKey, round, verdict, r.snapshotId, r.committeeRoot));
+        bytes32 structHash = keccak256(abi.encode(VOTE_TYPEHASH, heartbeatKey, round, verdict, r.snapshotId, r.committeeRoot));
         return _hashTypedDataV4(structHash);
     }
 
     function _submitVerdict(
         address operator,
-        bytes32 workloadKey,
+        bytes32 heartbeatKey,
         uint8 verdict,
         bytes32[] calldata memberProof,
         uint8 explicitRound
     ) internal {
         if (verdict == 0 || verdict > 3) revert InvalidVerdict();
 
-        Workload storage w = workloads[workloadKey];
-        if (w.status != WorkloadStatus.Pending) revert NotPending();
+        Heartbeat storage w = heartbeats[heartbeatKey];
+        if (w.status != HeartbeatStatus.Pending) revert NotPending();
 
         uint8 round = explicitRound == 0 ? w.currentRound : explicitRound;
         if (round != w.currentRound) revert InvalidRound();
 
-        RoundInfo storage r = rounds[workloadKey][round];
+        RoundInfo storage r = rounds[heartbeatKey][round];
         if (r.committeeRoot == bytes32(0)) revert CommitteeNotStarted();
         if (block.timestamp > r.deadline) revert RoundClosed();
         if (r.finalized) revert RoundAlreadyFinalized();
 
-        bytes32 leaf = keccak256(abi.encodePacked(bytes1(0xA1), address(this), workloadKey, round, operator));
+        bytes32 leaf = keccak256(abi.encodePacked(bytes1(0xA1), address(this), heartbeatKey, round, operator));
         if (!MerkleProof.verifyCalldata(memberProof, r.committeeRoot, leaf)) revert NotInCommittee();
 
-        uint256 packed = votePacked[workloadKey][round][operator];
+        uint256 packed = votePacked[heartbeatKey][round][operator];
         if (_responded(packed)) revert AlreadyResponded();
 
         IStakingOperators stakingOps = IStakingOperators(r.stakingOps);
@@ -337,7 +337,7 @@ contract WorkloadManager is Pausable, ReentrancyGuard, Ownable, EIP712 {
         if (weight == 0 || weight > WEIGHT_MASK_224) revert ZeroStake();
 
         uint256 newPacked = uint256(verdict) | RESPONDED_BIT | (weight << WEIGHT_SHIFT);
-        votePacked[workloadKey][round][operator] = newPacked;
+        votePacked[heartbeatKey][round][operator] = newPacked;
 
         r.totalRespondedStake += weight;
 
@@ -350,12 +350,12 @@ contract WorkloadManager is Pausable, ReentrancyGuard, Ownable, EIP712 {
             r.errorStake += weight;
         }
 
-        emit OperatorVoted(workloadKey, round, operator, verdict, weight);
+        emit OperatorVoted(heartbeatKey, round, operator, verdict, weight);
 
-        _maybeFinalizeRound(workloadKey, round, w, r);
+        _maybeFinalizeRound(heartbeatKey, round, w, r);
     }
 
-    function _maybeFinalizeRound(bytes32 workloadKey, uint8 round, Workload storage w, RoundInfo storage r) internal {
+    function _maybeFinalizeRound(bytes32 heartbeatKey, uint8 round, Heartbeat storage w, RoundInfo storage r) internal {
         uint256 total = r.committeeTotalStake;
         if (total == 0) return;
 
@@ -366,19 +366,19 @@ contract WorkloadManager is Pausable, ReentrancyGuard, Ownable, EIP712 {
         uint256 invalidBps = Math.mulDiv(r.invalidStake, 10_000, total);
 
         if (validBps >= r.verificationBps) {
-            _finalizeRound(workloadKey, round, w, r, ISlashingPolicy.Outcome.ValidThreshold);
+            _finalizeRound(heartbeatKey, round, w, r, ISlashingPolicy.Outcome.ValidThreshold);
         } else if (invalidBps >= r.verificationBps) {
-            _finalizeRound(workloadKey, round, w, r, ISlashingPolicy.Outcome.InvalidThreshold);
+            _finalizeRound(heartbeatKey, round, w, r, ISlashingPolicy.Outcome.InvalidThreshold);
         }
     }
 
-    function escalateOrExpire(bytes32 workloadKey, bytes calldata rawHTX) external whenNotPaused nonReentrant {
-        Workload storage w = workloads[workloadKey];
-        if (w.status != WorkloadStatus.Pending) revert NotPending();
+    function escalateOrExpire(bytes32 heartbeatKey, bytes calldata rawHTX) external whenNotPaused nonReentrant {
+        Heartbeat storage w = heartbeats[heartbeatKey];
+        if (w.status != HeartbeatStatus.Pending) revert NotPending();
         if (w.rawHTXHash == bytes32(0) || keccak256(rawHTX) != w.rawHTXHash) revert RawHTXHashMismatch();
 
         uint8 round = w.currentRound;
-        RoundInfo storage r = rounds[workloadKey][round];
+        RoundInfo storage r = rounds[heartbeatKey][round];
         if (r.finalized) revert RoundAlreadyFinalized();
         if (r.committeeRoot == bytes32(0)) revert CommitteeNotStarted();
         if (block.timestamp <= r.deadline) revert BeforeDeadline();
@@ -397,76 +397,76 @@ contract WorkloadManager is Pausable, ReentrancyGuard, Ownable, EIP712 {
         }
 
         if (outcome == ISlashingPolicy.Outcome.ValidThreshold || outcome == ISlashingPolicy.Outcome.InvalidThreshold) {
-            _finalizeRound(workloadKey, round, w, r, outcome);
+            _finalizeRound(heartbeatKey, round, w, r, outcome);
             return;
         }
 
         if (w.escalationLevel < w.maxEscalationsSnapshot) {
-            _finalizeRound(workloadKey, round, w, r, ISlashingPolicy.Outcome.Inconclusive);
+            _finalizeRound(heartbeatKey, round, w, r, ISlashingPolicy.Outcome.Inconclusive);
             unchecked { ++w.escalationLevel; ++w.currentRound; }
-            _startRound(workloadKey, w.currentRound, 0, rawHTX);
+            _startRound(heartbeatKey, w.currentRound, 0, rawHTX);
         } else {
-            _finalizeRound(workloadKey, round, w, r, ISlashingPolicy.Outcome.Inconclusive);
-            WorkloadStatus old = w.status;
-            w.status = WorkloadStatus.Expired;
-            emit WorkloadStatusChanged(workloadKey, old, w.status, round);
+            _finalizeRound(heartbeatKey, round, w, r, ISlashingPolicy.Outcome.Inconclusive);
+            HeartbeatStatus old = w.status;
+            w.status = HeartbeatStatus.Expired;
+            emit HeartbeatStatusChanged(heartbeatKey, old, w.status, round);
         }
     }
 
     function _finalizeRound(
-        bytes32 workloadKey,
+        bytes32 heartbeatKey,
         uint8 round,
-        Workload storage w,
+        Heartbeat storage w,
         RoundInfo storage r,
         ISlashingPolicy.Outcome outcome
     ) internal {
         if (r.finalized) revert RoundAlreadyFinalized();
 
         r.finalized = true;
-        roundOutcome[workloadKey][round] = outcome;
+        roundOutcome[heartbeatKey][round] = outcome;
 
         if (outcome == ISlashingPolicy.Outcome.ValidThreshold) {
-            WorkloadStatus old = w.status;
-            w.status = WorkloadStatus.Verified;
-            emit WorkloadStatusChanged(workloadKey, old, w.status, round);
+            HeartbeatStatus old = w.status;
+            w.status = HeartbeatStatus.Verified;
+            emit HeartbeatStatusChanged(heartbeatKey, old, w.status, round);
         } else if (outcome == ISlashingPolicy.Outcome.InvalidThreshold) {
-            WorkloadStatus old2 = w.status;
-            w.status = WorkloadStatus.Invalid;
-            emit WorkloadStatusChanged(workloadKey, old2, w.status, round);
+            HeartbeatStatus old2 = w.status;
+            w.status = HeartbeatStatus.Invalid;
+            emit HeartbeatStatusChanged(heartbeatKey, old2, w.status, round);
         }
 
-        emit RoundFinalized(workloadKey, round, outcome);
+        emit RoundFinalized(heartbeatKey, round, outcome);
 
-        _notifySlashing(workloadKey, round, r, outcome);
+        _notifySlashing(heartbeatKey, round, r, outcome);
     }
 
-    function _notifySlashing(bytes32 workloadKey, uint8 round, RoundInfo storage r, ISlashingPolicy.Outcome outcome) internal {
-        if (slashingNotified[workloadKey][round]) return;
-        try ISlashingPolicy(r.slashing).onRoundFinalized(workloadKey, round, outcome, r.committeeRoot, r.committeeSize) {
-            slashingNotified[workloadKey][round] = true;
+    function _notifySlashing(bytes32 heartbeatKey, uint8 round, RoundInfo storage r, ISlashingPolicy.Outcome outcome) internal {
+        if (slashingNotified[heartbeatKey][round]) return;
+        try ISlashingPolicy(r.slashing).onRoundFinalized(heartbeatKey, round, outcome, r.committeeRoot, r.committeeSize) {
+            slashingNotified[heartbeatKey][round] = true;
         } catch (bytes memory err) {
-            emit SlashingCallbackFailed(workloadKey, round, err);
+            emit SlashingCallbackFailed(heartbeatKey, round, err);
         }
     }
 
-    function retrySlashing(bytes32 workloadKey, uint8 round) external whenNotPaused nonReentrant {
-        RoundInfo storage r = rounds[workloadKey][round];
+    function retrySlashing(bytes32 heartbeatKey, uint8 round) external whenNotPaused nonReentrant {
+        RoundInfo storage r = rounds[heartbeatKey][round];
         if (!r.finalized) revert RoundNotFinalized();
-        if (slashingNotified[workloadKey][round]) return;
+        if (slashingNotified[heartbeatKey][round]) return;
 
-        ISlashingPolicy.Outcome outcome = roundOutcome[workloadKey][round];
-        _notifySlashing(workloadKey, round, r, outcome);
+        ISlashingPolicy.Outcome outcome = roundOutcome[heartbeatKey][round];
+        _notifySlashing(heartbeatKey, round, r, outcome);
     }
 
-    function distributeRewards(bytes32 workloadKey, uint8 round, address[] calldata sortedVoters)
+    function distributeRewards(bytes32 heartbeatKey, uint8 round, address[] calldata sortedVoters)
         external
         whenNotPaused
         nonReentrant
     {
-        RoundInfo storage r = rounds[workloadKey][round];
+        RoundInfo storage r = rounds[heartbeatKey][round];
         if (!r.finalized) revert RoundNotFinalized();
-        if (rewardsDone[workloadKey][round]) revert RewardsAlreadyDone();
-        if (roundOutcome[workloadKey][round] != ISlashingPolicy.Outcome.ValidThreshold) revert InvalidOutcome();
+        if (rewardsDone[heartbeatKey][round]) revert RewardsAlreadyDone();
+        if (roundOutcome[heartbeatKey][round] != ISlashingPolicy.Outcome.ValidThreshold) revert InvalidOutcome();
 
         uint256 n = sortedVoters.length;
         if (n != uint256(r.validVotesCount)) revert InvalidVoterCount(n, r.validVotesCount);
@@ -480,7 +480,7 @@ contract WorkloadManager is Pausable, ReentrancyGuard, Ownable, EIP712 {
             if (op <= last) revert UnsortedVoters();
             last = op;
 
-            uint256 packed = votePacked[workloadKey][round][op];
+            uint256 packed = votePacked[heartbeatKey][round][op];
             if ((packed & RESPONDED_BIT) == 0) revert InvalidVoterInList();
             if (uint8(packed & 0x3) != 1) revert InvalidVoterInList();
 
@@ -493,13 +493,13 @@ contract WorkloadManager is Pausable, ReentrancyGuard, Ownable, EIP712 {
 
         if (sumWeights != r.validStake) revert InvalidVoterWeightSum(sumWeights, r.validStake);
 
-        IRewardPolicy(r.reward).accrueWeights(workloadKey, round, sortedVoters, weights);
-        rewardsDone[workloadKey][round] = true;
+        IRewardPolicy(r.reward).accrueWeights(heartbeatKey, round, sortedVoters, weights);
+        rewardsDone[heartbeatKey][round] = true;
     }
 
-    function abandonRewardDistribution(bytes32 workloadKey, uint8 round) external onlyOwner {
-        rewardsDone[workloadKey][round] = true;
-        emit RewardDistributionAbandoned(workloadKey, round);
+    function abandonRewardDistribution(bytes32 heartbeatKey, uint8 round) external onlyOwner {
+        rewardsDone[heartbeatKey][round] = true;
+        emit RewardDistributionAbandoned(heartbeatKey, round);
     }
 
     // --- Merkle helpers (commutative pair hashing, compatible with OZ MerkleProof) ---
@@ -545,17 +545,17 @@ contract WorkloadManager is Pausable, ReentrancyGuard, Ownable, EIP712 {
 
     // --- Views for policies/off-chain ---
 
-    function getVotePacked(bytes32 workloadKey, uint8 round, address operator) external view returns (uint256) {
-        return votePacked[workloadKey][round][operator];
+    function getVotePacked(bytes32 heartbeatKey, uint8 round, address operator) external view returns (uint256) {
+        return votePacked[heartbeatKey][round][operator];
     }
 
-    function getRoundForPolicy(bytes32 workloadKey, uint8 round)
+    function getRoundForPolicy(bytes32 heartbeatKey, uint8 round)
         external
         view
         returns (bool, ISlashingPolicy.Outcome, bytes32, address, uint64)
     {
-        RoundInfo storage r = rounds[workloadKey][round];
-        return (r.finalized, roundOutcome[workloadKey][round], r.committeeRoot, r.stakingOps, r.jailDurationSec);
+        RoundInfo storage r = rounds[heartbeatKey][round];
+        return (r.finalized, roundOutcome[heartbeatKey][round], r.committeeRoot, r.stakingOps, r.jailDurationSec);
     }
 
     function nodeCount() external view returns (uint256) {

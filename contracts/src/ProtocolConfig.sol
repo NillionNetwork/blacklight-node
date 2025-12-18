@@ -121,7 +121,7 @@ contract ProtocolConfig is IProtocolConfig, Ownable {
     }
 
     function _validateMaxVoteBatch(uint256 maxBatch) internal pure {
-        // 0 = unlimited (still limited by WorkloadManager hard limit); otherwise require sane cap.
+        // 0 = unlimited (still limited by HeartbeatManager hard limit); otherwise require sane cap.
         if (maxBatch != 0 && maxBatch > 500) revert InvalidMaxVoteBatchSize(maxBatch);
     }
 

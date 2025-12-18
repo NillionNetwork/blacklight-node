@@ -4,9 +4,9 @@ pragma solidity ^0.8.20;
 import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 import "./Interfaces.sol";
 
-interface IWorkloadManagerPolicyView {
-    function getVotePacked(bytes32 workloadKey, uint8 round, address operator) external view returns (uint256);
-    function getRoundForPolicy(bytes32 workloadKey, uint8 round)
+interface IHeartbeatManagerPolicyView {
+    function getVotePacked(bytes32 heartbeatKey, uint8 round, address operator) external view returns (uint256);
+    function getRoundForPolicy(bytes32 heartbeatKey, uint8 round)
         external
         view
         returns (bool finalized, ISlashingPolicy.Outcome outcome, bytes32 committeeRoot, address stakingOps, uint64 jailDurationSec);
@@ -16,7 +16,7 @@ interface IWorkloadManagerPolicyView {
 /// @notice No-slash policy: non-voters + incorrect voters can be jailed (forced inactive).
 /// @dev Designed to be called permissionlessly after rounds finalize.
 contract JailingPolicy is ISlashingPolicy {
-    error NotWorkloadManager();
+    error NotHeartbeatManager();
     error RoundNotFinalized();
     error NotInCommittee();
     error AlreadyEnforced();
@@ -28,7 +28,7 @@ contract JailingPolicy is ISlashingPolicy {
     uint256 private constant RESPONDED_BIT = 1 << 2;
     uint256 private constant VERDICT_MASK = 0x3;
 
-    address public immutable workloadManager;
+    address public immutable heartbeatManager;
 
     struct RoundRecord {
         bool set;
@@ -43,7 +43,7 @@ contract JailingPolicy is ISlashingPolicy {
     mapping(bytes32 => mapping(uint8 => mapping(address => bool))) public enforced;
 
     event RoundRecorded(
-        bytes32 indexed workloadKey,
+        bytes32 indexed heartbeatKey,
         uint8 indexed round,
         Outcome outcome,
         bytes32 committeeRoot,
@@ -51,20 +51,20 @@ contract JailingPolicy is ISlashingPolicy {
         uint64 jailDurationSec,
         uint32 committeeSize
     );
-    event JailEnforced(bytes32 indexed workloadKey, uint8 indexed round, address indexed operator, uint64 until);
+    event JailEnforced(bytes32 indexed heartbeatKey, uint8 indexed round, address indexed operator, uint64 until);
 
-    constructor(address _workloadManager) {
-        if (_workloadManager == address(0)) revert NotWorkloadManager();
-        workloadManager = _workloadManager;
+    constructor(address _heartbeatManager) {
+        if (_heartbeatManager == address(0)) revert NotHeartbeatManager();
+        heartbeatManager = _heartbeatManager;
     }
 
-    function recordRound(bytes32 workloadKey, uint8 round, uint32 committeeSize) public {
+    function recordRound(bytes32 heartbeatKey, uint8 round, uint32 committeeSize) public {
         (bool finalized, Outcome o2, bytes32 root2, address stakingOps, uint64 jailDurationSec) =
-            IWorkloadManagerPolicyView(workloadManager).getRoundForPolicy(workloadKey, round);
+            IHeartbeatManagerPolicyView(heartbeatManager).getRoundForPolicy(heartbeatKey, round);
 
         if (!finalized || root2 == bytes32(0)) revert RoundNotFinalized();
 
-        RoundRecord storage rr = roundRecord[workloadKey][round];
+        RoundRecord storage rr = roundRecord[heartbeatKey][round];
         if (rr.set) return; // idempotent
 
         rr.set = true;
@@ -74,41 +74,41 @@ contract JailingPolicy is ISlashingPolicy {
         rr.jailDurationSec = jailDurationSec;
         rr.committeeSize = committeeSize;
 
-        emit RoundRecorded(workloadKey, round, o2, root2, stakingOps, jailDurationSec, committeeSize);
+        emit RoundRecorded(heartbeatKey, round, o2, root2, stakingOps, jailDurationSec, committeeSize);
     }
 
     function onRoundFinalized(
-        bytes32 workloadKey,
+        bytes32 heartbeatKey,
         uint8 round,
         Outcome /*outcome*/,
         bytes32 /*committeeRoot*/,
         uint32 committeeSize
     ) external override {
-        if (msg.sender != workloadManager) revert NotWorkloadManager();
-        recordRound(workloadKey, round, committeeSize);
+        if (msg.sender != heartbeatManager) revert NotHeartbeatManager();
+        recordRound(heartbeatKey, round, committeeSize);
     }
 
-    function enforceJail(bytes32 workloadKey, uint8 round, address operator, bytes32[] calldata memberProof) public {
-        RoundRecord memory rr = roundRecord[workloadKey][round];
+    function enforceJail(bytes32 heartbeatKey, uint8 round, address operator, bytes32[] calldata memberProof) public {
+        RoundRecord memory rr = roundRecord[heartbeatKey][round];
         if (!rr.set) revert RoundNotFinalized();
-        if (enforced[workloadKey][round][operator]) revert AlreadyEnforced();
+        if (enforced[heartbeatKey][round][operator]) revert AlreadyEnforced();
         if (rr.jailDurationSec == 0) revert ZeroJailDuration();
 
         // membership proof
-        bytes32 leaf = keccak256(abi.encodePacked(bytes1(0xA1), workloadManager, workloadKey, round, operator));
+        bytes32 leaf = keccak256(abi.encodePacked(bytes1(0xA1), heartbeatManager, heartbeatKey, round, operator));
         if (!MerkleProof.verifyCalldata(memberProof, rr.committeeRoot, leaf)) revert NotInCommittee();
 
-        if (!_isJailable(workloadKey, round, rr.outcome, operator)) revert NotJailable();
+        if (!_isJailable(heartbeatKey, round, rr.outcome, operator)) revert NotJailable();
 
-        enforced[workloadKey][round][operator] = true;
+        enforced[heartbeatKey][round][operator] = true;
         uint64 until = uint64(block.timestamp + uint256(rr.jailDurationSec));
         IStakingOperators(rr.stakingOps).jail(operator, until);
 
-        emit JailEnforced(workloadKey, round, operator, until);
+        emit JailEnforced(heartbeatKey, round, operator, until);
     }
 
     function enforceJailMany(
-        bytes32 workloadKey,
+        bytes32 heartbeatKey,
         uint8 round,
         address[] calldata operators,
         bytes32[][] calldata proofs
@@ -116,15 +116,15 @@ contract JailingPolicy is ISlashingPolicy {
         uint256 n = operators.length;
         if (n != proofs.length) revert NotInCommittee();
         for (uint256 i = 0; i < n; ) {
-            enforceJail(workloadKey, round, operators[i], proofs[i]);
+            enforceJail(heartbeatKey, round, operators[i], proofs[i]);
             unchecked { ++i; }
         }
     }
 
     /// @notice Enforce jailing using the full sorted committee list (no individual proofs required).
     /// @dev Recomputes the committee root and checks it matches the recorded root.
-    function enforceJailFromMembers(bytes32 workloadKey, uint8 round, address[] calldata sortedMembers) external {
-        RoundRecord memory rr = roundRecord[workloadKey][round];
+    function enforceJailFromMembers(bytes32 heartbeatKey, uint8 round, address[] calldata sortedMembers) external {
+        RoundRecord memory rr = roundRecord[heartbeatKey][round];
         if (!rr.set) revert RoundNotFinalized();
         if (rr.jailDurationSec == 0) revert ZeroJailDuration();
         if (sortedMembers.length != rr.committeeSize) revert UnsortedMembers();
@@ -138,7 +138,7 @@ contract JailingPolicy is ISlashingPolicy {
             address op = sortedMembers[i];
             if (op == address(0) || op <= last) revert UnsortedMembers();
             last = op;
-            leaves[i] = keccak256(abi.encodePacked(bytes1(0xA1), workloadManager, workloadKey, round, op));
+            leaves[i] = keccak256(abi.encodePacked(bytes1(0xA1), heartbeatManager, heartbeatKey, round, op));
             unchecked { ++i; }
         }
 
@@ -147,20 +147,20 @@ contract JailingPolicy is ISlashingPolicy {
 
         for (uint256 i = 0; i < n; ) {
             address op = sortedMembers[i];
-            if (!enforced[workloadKey][round][op]) {
-                if (_isJailable(workloadKey, round, rr.outcome, op)) {
-                    enforced[workloadKey][round][op] = true;
+            if (!enforced[heartbeatKey][round][op]) {
+                if (_isJailable(heartbeatKey, round, rr.outcome, op)) {
+                    enforced[heartbeatKey][round][op] = true;
                     uint64 until = uint64(block.timestamp + uint256(rr.jailDurationSec));
                     IStakingOperators(rr.stakingOps).jail(op, until);
-                    emit JailEnforced(workloadKey, round, op, until);
+                    emit JailEnforced(heartbeatKey, round, op, until);
                 }
             }
             unchecked { ++i; }
         }
     }
 
-    function _isJailable(bytes32 workloadKey, uint8 round, Outcome outcome, address operator) internal view returns (bool) {
-        uint256 packed = IWorkloadManagerPolicyView(workloadManager).getVotePacked(workloadKey, round, operator);
+    function _isJailable(bytes32 heartbeatKey, uint8 round, Outcome outcome, address operator) internal view returns (bool) {
+        uint256 packed = IHeartbeatManagerPolicyView(heartbeatManager).getVotePacked(heartbeatKey, round, operator);
         bool responded = (packed & RESPONDED_BIT) != 0;
 
         if (!responded) return true; // non-voter always jailable

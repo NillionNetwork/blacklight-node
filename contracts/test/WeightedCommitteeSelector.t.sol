@@ -44,7 +44,7 @@ contract WeightedCommitteeSelectorTest is Test {
         vm.roll(block.number + 1);
         uint64 snap = stakingOps.snapshot();
 
-        address[] memory members = selector.selectCommittee(bytes32("wk"), 1, 10, snap);
+        address[] memory members = selector.selectCommittee(bytes32("hbKey"), 1, 10, snap);
 
         assertLe(members.length, 10);
         // uniqueness
@@ -77,7 +77,7 @@ contract WeightedCommitteeSelectorTest is Test {
         vm.roll(block.number + 1);
         uint64 snap = stakingOps.snapshot();
 
-        address[] memory members = selector.selectCommittee(bytes32("wk"), 1, 8, snap);
+        address[] memory members = selector.selectCommittee(bytes32("hbKey"), 1, 8, snap);
 
         // Determine the 8 highest-stake operators
         bool[20] memory isTop;
@@ -103,7 +103,7 @@ contract WeightedCommitteeSelectorTest is Test {
         vm.roll(block.number + 1);
         uint64 snap = stakingOps.snapshot();
 
-        address[] memory members = selector.selectCommittee(bytes32("wk"), 1, 150, snap);
+        address[] memory members = selector.selectCommittee(bytes32("hbKey"), 1, 150, snap);
         assertEq(members.length, 150);
 
         // uniqueness check
@@ -125,7 +125,7 @@ contract WeightedCommitteeSelectorTest is Test {
         assertEq(blockhash(uint256(snap)), bytes32(0));
         vm.prevrandao(bytes32(uint256(1234)));
 
-        address[] memory members = selector.selectCommittee(bytes32("wk"), 1, 3, snap);
+        address[] memory members = selector.selectCommittee(bytes32("hbKey"), 1, 3, snap);
         assertEq(members.length, 3);
         for (uint256 i = 0; i < members.length; i++) {
             assertTrue(stakingOps.isActiveOperator(members[i]), "inactive selected");

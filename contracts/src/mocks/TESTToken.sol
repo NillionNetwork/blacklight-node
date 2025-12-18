@@ -11,4 +11,9 @@ contract TESTToken is ERC20, Ownable {
     function mint(address to, uint256 amount) external onlyOwner {
         _mint(to, amount);
     }
+
+    function decimals() public pure override returns (uint8) {
+        return 6;
+    }
 }
+

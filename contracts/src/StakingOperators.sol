@@ -54,7 +54,7 @@ contract StakingOperators is IStakingOperators, AccessControl, ReentrancyGuard, 
 
     uint64 public currentSnapshotId;
     address public snapshotter;
-    address public override workloadManager;
+    address public override heartbeatManager;
 
     mapping(address => address) public override operatorStaker;
     mapping(address => Unbonding) private _unbondings;
@@ -77,7 +77,7 @@ contract StakingOperators is IStakingOperators, AccessControl, ReentrancyGuard, 
     event UnstakeDelayUpdated(uint256 oldDelay, uint256 newDelay);
     event ProtocolConfigUpdated(address oldConfig, address newConfig);
     event SnapshotterUpdated(address oldSnapshotter, address newSnapshotter);
-    event WorkloadManagerUpdated(address oldWorkloadManager, address newWorkloadManager);
+    event HeartbeatManagerUpdated(address oldHeartbeatManager, address newHeartbeatManager);
     event ActiveStatusUpdated(address indexed operator, bool isActive);
 
     constructor(IERC20 token_, address admin, uint256 initialUnstakeDelay) {
@@ -111,15 +111,15 @@ contract StakingOperators is IStakingOperators, AccessControl, ReentrancyGuard, 
         snapshotter = newSnapshotter;
     }
 
-    function setWorkloadManager(address newWorkloadManager) external override onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (newWorkloadManager == address(0)) revert InvalidAddress();
-        emit WorkloadManagerUpdated(workloadManager, newWorkloadManager);
-        workloadManager = newWorkloadManager;
+    function setHeartbeatManager(address newHeartbeatManager) external override onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (newHeartbeatManager == address(0)) revert InvalidAddress();
+        emit HeartbeatManagerUpdated(heartbeatManager, newHeartbeatManager);
+        heartbeatManager = newHeartbeatManager;
     }
 
 
     function snapshot() external override returns (uint64 snapshotId) {
-        if (msg.sender != snapshotter && msg.sender != workloadManager) revert NotSnapshotter();
+        if (msg.sender != snapshotter && msg.sender != heartbeatManager) revert NotSnapshotter();
         if (block.number <= 1) revert NotReady();
         snapshotId = uint64(block.number - 1);
         currentSnapshotId = snapshotId;

@@ -5,7 +5,7 @@ This folder contains a Foundry-based test suite (unit, integration, and invarian
 - `ProtocolConfig`
 - `StakingOperators`
 - `WeightedCommitteeSelector`
-- `WorkloadManager`
+- `HeartbeatManager`
 - `RewardPolicy`
 - `JailingPolicy`
 - `EmissionsController`
@@ -14,7 +14,7 @@ This folder contains a Foundry-based test suite (unit, integration, and invarian
 
 - **Unit tests** for each module’s validation and core behavior.
 - **Integration tests** for end-to-end flows:
-  - workload submission → committee selection → voting → finalization → reward distribution → claim
+  - heartbeat submission → committee selection → voting → finalization → reward distribution → claim
   - jailing enforcement and how it affects subsequent committee selection
 - **Edge cases / stress**
   - large committees (e.g. 200 members)
@@ -22,7 +22,7 @@ This folder contains a Foundry-based test suite (unit, integration, and invarian
   - committee size growth on escalation
 - **Invariant tests**
   - `StakingOperators`: totalStaked accounting, active set integrity, tranche accounting
-  - `WorkloadManager`: round accounting sums, vote weight equals snapshot stake, committee total stake matches snapshot sum
+  - `HeartbeatManager`: round accounting sums, vote weight equals snapshot stake, committee total stake matches snapshot sum
 
 ## Running
 

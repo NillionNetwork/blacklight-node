@@ -9,11 +9,11 @@ import "../src/mocks/TESTToken.sol";
 import "../src/ProtocolConfig.sol";
 import "../src/StakingOperators.sol";
 import "../src/WeightedCommitteeSelector.sol";
-import "../src/WorkloadManager.sol";
+import "../src/HeartbeatManager.sol";
 import "../src/RewardPolicy.sol";
 import "../src/JailingPolicy.sol";
 
-/// @notice Deploys and wires the full RC contract suite (staking, selector, config, manager, slashing, rewards).
+/// @notice Deploys and wires the full contract suite (staking, selector, config, manager, slashing, rewards).
 /// @dev Configure via env vars when running `forge script`:
 ///      - PRIVATE_KEY (required)
 ///      - GOVERNANCE (defaults to deployer)
@@ -28,7 +28,7 @@ import "../src/JailingPolicy.sol";
 ///      - Staking params: UNSTAKE_DELAY_SEC
 ///      - Selector params: MIN_COMMITTEE_VP
 ///      - Reward params: REWARD_EPOCH_DURATION, REWARD_MAX_PAYOUT_PER_FINALIZE
-contract DeployRCSystem is Script {
+contract DeployTestRCSystem is Script {
     struct Params {
         uint256 deployerKey;
         address deployer;
@@ -73,13 +73,7 @@ contract DeployRCSystem is Script {
             stakeToken = address(mock);
             if (p.mockStakeMint != 0) mock.mint(p.mintRecipient, p.mockStakeMint);
             console2.log("Deployed TEST stake token:", stakeToken);
-        }
-        if (p.useMockTokens && rewardToken == address(0)) {
-            TESTToken mock = new TESTToken(p.governance);
-            rewardToken = address(mock);
-            if (p.mockRewardMint != 0) mock.mint(p.mintRecipient, p.mockRewardMint);
-            console2.log("Deployed TEST reward token:", rewardToken);
-        }
+    }
 
         require(stakeToken != address(0), "stake token required");
         require(rewardToken != address(0), "reward token required");
@@ -120,8 +114,8 @@ contract DeployRCSystem is Script {
         );
         console2.log("ProtocolConfig:", address(config));
 
-        WorkloadManager manager = new WorkloadManager(config, p.governance);
-        console2.log("WorkloadManager:", address(manager));
+        HeartbeatManager manager = new HeartbeatManager(config, p.governance);
+        console2.log("HeartbeatManager:", address(manager));
 
         RewardPolicy rewardPolicy = new RewardPolicy(
             IERC20(rewardToken),
@@ -138,7 +132,7 @@ contract DeployRCSystem is Script {
         config.setModules(address(stakingOps), address(selector), address(jailingPolicy), address(rewardPolicy));
 
         stakingOps.setProtocolConfig(config);
-        stakingOps.setWorkloadManager(address(manager));
+        stakingOps.setHeartbeatManager(address(manager));
         stakingOps.setSnapshotter(address(manager));
         stakingOps.grantRole(stakingOps.SLASHER_ROLE(), address(jailingPolicy));
         if (p.admin != p.governance) {
@@ -161,25 +155,25 @@ contract DeployRCSystem is Script {
         p.governance = vm.envOr("GOVERNANCE", p.deployer);
         p.admin = vm.envOr("ADMIN", p.deployer);
 
-        p.useMockTokens = vm.envOr("USE_MOCK_TOKENS", false);
-        p.stakeToken = vm.envOr("STAKE_TOKEN", address(0));
+        p.useMockTokens = vm.envOr("USE_MOCK_TOKENS", true);
+        p.stakeToken = vm.envOr("STAKE_TOKEN", address(0)); 
         p.rewardToken = vm.envOr("REWARD_TOKEN", address(0));
         p.mintRecipient = vm.envOr("MINT_RECIPIENT", p.governance);
-        p.mockStakeMint = vm.envOr("MOCK_STAKE_MINT", uint256(0));
-        p.mockRewardMint = vm.envOr("MOCK_REWARD_MINT", uint256(0));
+        p.mockStakeMint = vm.envOr("MOCK_STAKE_MINT", uint256(1_000_000e6));
+        p.mockRewardMint = vm.envOr("MOCK_REWARD_MINT", uint256(100_000e6));
 
         p.baseCommitteeSize = uint32(vm.envOr("BASE_COMMITTEE_SIZE", uint256(10)));
         p.committeeGrowthBps = uint32(vm.envOr("COMMITTEE_GROWTH_BPS", uint256(0)));
         p.maxCommitteeSize = uint32(vm.envOr("MAX_COMMITTEE_SIZE", uint256(200)));
         p.maxEscalations = uint8(vm.envOr("MAX_ESCALATIONS", uint256(0)));
-        p.quorumBps = uint16(vm.envOr("QUORUM_BPS", uint256(5_000)));
-        p.verificationBps = uint16(vm.envOr("VERIFICATION_BPS", uint256(5_000)));
-        p.responseWindow = vm.envOr("RESPONSE_WINDOW_SEC", uint256(1 days));
-        p.jailDuration = vm.envOr("JAIL_DURATION_SEC", uint256(7 days));
+        p.quorumBps = uint16(vm.envOr("QUORUM_BPS", uint256(9_000)));
+        p.verificationBps = uint16(vm.envOr("VERIFICATION_BPS", uint256(7_000)));
+        p.responseWindow = vm.envOr("RESPONSE_WINDOW_SEC", uint256(5 minutes));
+        p.jailDuration = vm.envOr("JAIL_DURATION_SEC", uint256(2 minutes));
         p.maxVoteBatchSize = vm.envOr("MAX_VOTE_BATCH", uint256(100));
-        p.minOperatorStake = vm.envOr("MIN_OPERATOR_STAKE", uint256(1e18));
+        p.minOperatorStake = vm.envOr("MIN_OPERATOR_STAKE", uint256(10e6));
 
-        p.unstakeDelay = vm.envOr("UNSTAKE_DELAY_SEC", uint256(7 days));
+        p.unstakeDelay = vm.envOr("UNSTAKE_DELAY_SEC", uint256(1 days));
         p.minCommitteeVP = vm.envOr("MIN_COMMITTEE_VP", uint256(0));
 
         p.rewardEpochDuration = vm.envOr("REWARD_EPOCH_DURATION", uint256(1 days));

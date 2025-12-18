@@ -13,7 +13,7 @@ contract RewardPolicy is IRewardPolicy, Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     error ZeroAddress();
-    error NotWorkloadManager();
+    error NotHeartbeatManager();
     error NothingToClaim();
     error AlreadyProcessed();
     error LengthMismatch();
@@ -26,7 +26,7 @@ contract RewardPolicy is IRewardPolicy, Ownable, ReentrancyGuard {
     error Insolvent(uint256 balance, uint256 reserved);
 
     IERC20 public immutable rewardToken;
-    address public immutable workloadManager;
+    address public immutable heartbeatManager;
 
     uint256 public accountedBalance;
     uint256 private _spendableBudget;
@@ -45,7 +45,7 @@ contract RewardPolicy is IRewardPolicy, Ownable, ReentrancyGuard {
     mapping(bytes32 => mapping(uint8 => bytes32)) public commitment;
     uint256 public totalOutstandingRewards;
 
-    event RewardsAccrued(bytes32 indexed workloadKey, uint8 round, address indexed recipient, uint256 amount);
+    event RewardsAccrued(bytes32 indexed heartbeatKey, uint8 round, address indexed recipient, uint256 amount);
     event RewardClaimed(address indexed recipient, uint256 amount);
     event Synced(uint256 newAmount, uint256 newAccountedBalance);
     event AccountingUnderflow(uint256 observedBalance, uint256 previousAccountedBalance);
@@ -53,10 +53,10 @@ contract RewardPolicy is IRewardPolicy, Ownable, ReentrancyGuard {
     event EpochDurationUpdated(uint256 oldDuration, uint256 newDuration);
     event MaxPayoutPerFinalizeUpdated(uint256 oldCap, uint256 newCap);
     event StreamUpdated(uint256 streamRemaining, uint256 ratePerSecondWad, uint64 streamEnd);
-    event BudgetUsed(bytes32 indexed workloadKey, uint8 round, uint256 budget, uint256 distributed);
+    event BudgetUsed(bytes32 indexed heartbeatKey, uint8 round, uint256 budget, uint256 distributed);
 
-    modifier onlyWorkloadManager() {
-        if (msg.sender != workloadManager) revert NotWorkloadManager();
+    modifier onlyHeartbeatManager() {
+        if (msg.sender != heartbeatManager) revert NotHeartbeatManager();
         _;
     }
 
@@ -77,7 +77,7 @@ contract RewardPolicy is IRewardPolicy, Ownable, ReentrancyGuard {
         if (_epochDuration == 0) revert ZeroEpochDuration();
 
         rewardToken = _rewardToken;
-        workloadManager = _manager;
+        heartbeatManager = _manager;
 
         epochDuration = _epochDuration;
         maxPayoutPerFinalize = _maxPayoutPerFinalize;
@@ -232,12 +232,12 @@ contract RewardPolicy is IRewardPolicy, Ownable, ReentrancyGuard {
     }
 
     function accrueWeights(
-        bytes32 workloadKey,
+        bytes32 heartbeatKey,
         uint8 round,
         address[] calldata recipients,
         uint256[] calldata weights
-    ) external override onlyWorkloadManager whenAccountingHealthy {
-        if (processed[workloadKey][round]) revert AlreadyProcessed();
+    ) external override onlyHeartbeatManager whenAccountingHealthy {
+        if (processed[heartbeatKey][round]) revert AlreadyProcessed();
         if (recipients.length != weights.length) revert LengthMismatch();
 
         address last = address(0);
@@ -249,15 +249,15 @@ contract RewardPolicy is IRewardPolicy, Ownable, ReentrancyGuard {
         }
 
         bytes32 h = keccak256(abi.encode(recipients, weights));
-        bytes32 prev = commitment[workloadKey][round];
-        if (prev == bytes32(0)) commitment[workloadKey][round] = h;
+        bytes32 prev = commitment[heartbeatKey][round];
+        if (prev == bytes32(0)) commitment[heartbeatKey][round] = h;
         else if (prev != h) revert CommitmentMismatch();
 
         sync();
         if (accountingFrozen) revert AccountingFrozen();
 
         if (totalWeight == 0) {
-            processed[workloadKey][round] = true;
+            processed[heartbeatKey][round] = true;
             return;
         }
 
@@ -276,7 +276,7 @@ contract RewardPolicy is IRewardPolicy, Ownable, ReentrancyGuard {
                     rewards[recipients[i]] += amt;
                     totalOutstandingRewards += amt;
                     distributed += amt;
-                    emit RewardsAccrued(workloadKey, round, recipients[i], amt);
+                    emit RewardsAccrued(heartbeatKey, round, recipients[i], amt);
                 }
             }
         }
@@ -297,12 +297,12 @@ contract RewardPolicy is IRewardPolicy, Ownable, ReentrancyGuard {
             rewards[best] += 1;
             totalOutstandingRewards += 1;
             distributed = 1;
-            emit RewardsAccrued(workloadKey, round, best, 1);
+            emit RewardsAccrued(heartbeatKey, round, best, 1);
         }
 
         _spendableBudget -= distributed;
-        processed[workloadKey][round] = true;
-        emit BudgetUsed(workloadKey, round, budget, distributed);
+        processed[heartbeatKey][round] = true;
+        emit BudgetUsed(heartbeatKey, round, budget, distributed);
     }
 
     function claim() external override nonReentrant whenAccountingHealthy {

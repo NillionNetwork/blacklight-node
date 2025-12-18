@@ -38,7 +38,7 @@ contract RewardPolicyTest is Test {
         w[1] = 2;
 
         vm.expectRevert(RewardPolicy.LengthMismatch.selector);
-        policy.accrueWeights(bytes32("wk"), 1, rec, w);
+        policy.accrueWeights(bytes32("hbKey"), 1, rec, w);
     }
 
     function test_accrueWeights_revertsOnUnsortedRecipients() public {
@@ -52,7 +52,7 @@ contract RewardPolicyTest is Test {
         w[1] = 1;
 
         vm.expectRevert(RewardPolicy.UnsortedRecipients.selector);
-        policy.accrueWeights(bytes32("wk"), 1, rec, w);
+        policy.accrueWeights(bytes32("hbKey"), 1, rec, w);
     }
 
     function test_commitmentMismatch_afterInitialRevert() public {
@@ -63,12 +63,12 @@ contract RewardPolicyTest is Test {
         w[0] = 1;
 
         vm.expectRevert(RewardPolicy.InsufficientBudget.selector);
-        policy.accrueWeights(bytes32("wk"), 1, rec, w);
+        policy.accrueWeights(bytes32("hbKey"), 1, rec, w);
 
         _fundAndUnlock(100);
 
         // first successful accrue sets commitment
-        policy.accrueWeights(bytes32("wk"), 1, rec, w);
+        policy.accrueWeights(bytes32("hbKey"), 1, rec, w);
 
         address[] memory rec2 = new address[](1);
         rec2[0] = address(0x2);
@@ -76,7 +76,7 @@ contract RewardPolicyTest is Test {
         w2[0] = 1;
 
         vm.expectRevert(RewardPolicy.AlreadyProcessed.selector);
-        policy.accrueWeights(bytes32("wk"), 1, rec2, w2);
+        policy.accrueWeights(bytes32("hbKey"), 1, rec2, w2);
 
         assertEq(policy.rewards(address(0x1)), 100); // full budget goes to single recipient
     }
@@ -98,7 +98,7 @@ contract RewardPolicyTest is Test {
         w[1] = 1;
 
         uint256 before = policy.spendableBudget();
-        policy.accrueWeights(bytes32("wk"), 1, rec, w);
+        policy.accrueWeights(bytes32("hbKey"), 1, rec, w);
 
         uint256 afterB = policy.spendableBudget();
         assertEq(before - afterB, 100);
@@ -121,7 +121,7 @@ contract RewardPolicyTest is Test {
         w[0] = 1000;
         w[1] = 1;
 
-        policy.accrueWeights(bytes32("wk"), 1, rec, w);
+        policy.accrueWeights(bytes32("hbKey"), 1, rec, w);
 
         // floor division gives 0 for both -> dust path gives 1 to highest weight
         assertEq(policy.rewards(address(0x1)), 1);
@@ -136,7 +136,7 @@ contract RewardPolicyTest is Test {
         uint256[] memory w = new uint256[](1);
         w[0] = 1;
 
-        policy.accrueWeights(bytes32("wk"), 1, rec, w);
+        policy.accrueWeights(bytes32("hbKey"), 1, rec, w);
         assertEq(policy.rewards(address(0xBEEF)), 10);
 
         vm.prank(address(0xBEEF));
