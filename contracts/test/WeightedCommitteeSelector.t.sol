@@ -42,7 +42,7 @@ contract WeightedCommitteeSelectorTest is Test {
         _makeOperators(20, 2e18);
 
         vm.roll(block.number + 1);
-        uint32 snap = stakingOps.snapshot();
+        uint64 snap = stakingOps.snapshot();
 
         address[] memory members = selector.selectCommittee(bytes32("wk"), 1, 10, snap);
 
@@ -75,7 +75,7 @@ contract WeightedCommitteeSelectorTest is Test {
         selector.setMaxActiveOperators(8);
 
         vm.roll(block.number + 1);
-        uint32 snap = stakingOps.snapshot();
+        uint64 snap = stakingOps.snapshot();
 
         address[] memory members = selector.selectCommittee(bytes32("wk"), 1, 8, snap);
 
@@ -101,7 +101,7 @@ contract WeightedCommitteeSelectorTest is Test {
         _makeOperators(220, 1e18);
 
         vm.roll(block.number + 1);
-        uint32 snap = stakingOps.snapshot();
+        uint64 snap = stakingOps.snapshot();
 
         address[] memory members = selector.selectCommittee(bytes32("wk"), 1, 150, snap);
         assertEq(members.length, 150);
@@ -118,7 +118,7 @@ contract WeightedCommitteeSelectorTest is Test {
         _makeOperators(5, 1e18);
 
         vm.roll(block.number + 1);
-        uint32 snap = stakingOps.snapshot();
+        uint64 snap = stakingOps.snapshot();
 
         // Move far enough that the snapshot blockhash is unavailable
         vm.roll(block.number + 300);

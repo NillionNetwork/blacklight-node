@@ -115,20 +115,20 @@ contract RCSystemTest is RCFixture {
         // Jail everyone except correct voters
         jailingPolicy.enforceJailFromMembers(wk1, round1, members1);
 
-        // Submit a new workload (different pointer)
+        // Submit a new workload (different HTX)
         vm.recordLogs();
-        WorkloadManager.WorkloadPointer memory p2 = _defaultPointer(2);
-        bytes32 wk2 = manager.deriveWorkloadKey(p2);
-        (uint32 snap2, address[] memory members2Offchain) = _prepareCommittee(wk2, 1, 0);
-        manager.submitWorkload(p2, snap2, members2Offchain);
+        bytes memory rawHTX2 = _defaultRawHTX(2);
+        bytes32 wk2 = manager.deriveWorkloadKey(rawHTX2);
+        (uint64 snap2, ) = _prepareCommittee(wk2, 1, 0);
+        manager.submitWorkload(rawHTX2, snap2);
         Vm.Log[] memory logs = vm.getRecordedLogs();
-        bytes32 sig = keccak256("RoundStarted(bytes32,uint8,bytes32,uint32,uint32,uint64,uint64,address[])");
+        bytes32 sig = keccak256("RoundStarted(bytes32,uint8,bytes32,uint64,uint64,uint64,address[],bytes)");
 
         address[] memory members2;
         for (uint256 i = 0; i < logs.length; i++) {
             if (logs[i].topics.length > 0 && logs[i].topics[0] == sig && bytes32(logs[i].topics[1]) == wk2) {
-                (, , , , , , members2) =
-                    abi.decode(logs[i].data, (uint8, bytes32, uint32, uint32, uint64, uint64, address[]));
+                (, , , , , members2, ) =
+                    abi.decode(logs[i].data, (uint8, bytes32, uint32, uint64, uint64, address[], bytes));
                 break;
             }
         }

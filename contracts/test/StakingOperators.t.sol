@@ -171,7 +171,7 @@ contract StakingOperatorsTest is Test {
         stakingOps.setSnapshotter(address(this));
 
         vm.roll(2);
-        uint32 snap1 = stakingOps.snapshot();
+        uint64 snap1 = stakingOps.snapshot();
         assertEq(stakingOps.stakeAt(operator, snap1), 2e18);
 
         vm.startPrank(operator);
@@ -179,7 +179,7 @@ contract StakingOperatorsTest is Test {
         vm.stopPrank();
 
         vm.roll(4);
-        uint32 snap2 = stakingOps.snapshot();
+        uint64 snap2 = stakingOps.snapshot();
         assertEq(stakingOps.stakeAt(operator, snap2), 1e18);
         assertEq(stakingOps.stakeAt(operator, snap1), 2e18);
     }

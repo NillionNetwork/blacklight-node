@@ -31,13 +31,13 @@ contract WorkloadManagerTest is RCFixture {
     }
 
     function test_submitWorkload_startsRoundAndSetsPending() public {
-        (bytes32 wk, uint8 round, bytes32 root, uint32 snap, address[] memory members) = _submitPointerAndGetRound();
+        (bytes32 wk, uint8 round, bytes32 root, uint64 snap, address[] memory members) = _submitPointerAndGetRound();
         assertEq(round, 1);
         assertTrue(root != bytes32(0));
         assertTrue(snap != 0);
         assertEq(members.length, 10);
 
-        (WorkloadManager.WorkloadStatus status, uint8 currentRound, , , ) = manager.workloads(wk);
+        (WorkloadManager.WorkloadStatus status, uint8 currentRound, , , , ) = manager.workloads(wk);
         assertEq(uint8(status), uint8(WorkloadManager.WorkloadStatus.Pending));
         assertEq(currentRound, 1);
 
@@ -47,7 +47,7 @@ contract WorkloadManagerTest is RCFixture {
         }
 
         // round info snapshot addresses must be set
-        ( , , , , , , uint32 committeeSize, uint32 snapshotId, bytes32 committeeRoot, , , , address stakingAddr, address selectorAddr, address slashingAddr, address rewardAddr, , , , ) =
+        ( , , , , , , uint32 committeeSize, uint64 snapshotId, bytes32 committeeRoot, , , , address stakingAddr, address selectorAddr, address slashingAddr, address rewardAddr, , , , ) =
             manager.rounds(wk, 1);
 
         assertEq(committeeSize, 10);
@@ -60,16 +60,16 @@ contract WorkloadManagerTest is RCFixture {
     }
 
     function test_submitWorkload_idempotent_noSecondRoundStarted() public {
-        WorkloadManager.WorkloadPointer memory p = _defaultPointer(1);
-        bytes32 wk = manager.deriveWorkloadKey(p);
-        (uint32 snap, address[] memory members) = _prepareCommittee(wk, 1, 0);
+        bytes memory rawHTX = _defaultRawHTX(1);
+        bytes32 wk = manager.deriveWorkloadKey(rawHTX);
+        (uint64 snap, ) = _prepareCommittee(wk, 1, 0);
 
         vm.recordLogs();
-        manager.submitWorkload(p, snap, members);
-        manager.submitWorkload(p, snap, members);
+        manager.submitWorkload(rawHTX, snap);
+        manager.submitWorkload(rawHTX, snap);
 
         Vm.Log[] memory logs = vm.getRecordedLogs();
-        bytes32 sig = keccak256("RoundStarted(bytes32,uint8,bytes32,uint32,uint32,uint64,uint64,address[])");
+        bytes32 sig = keccak256("RoundStarted(bytes32,uint8,bytes32,uint64,uint64,uint64,address[],bytes)");
 
         uint256 startedCount;
         for (uint256 i = 0; i < logs.length; i++) {
@@ -125,7 +125,7 @@ contract WorkloadManagerTest is RCFixture {
         }
 
         assertEq(uint8(manager.roundOutcome(wk, round)), uint8(ISlashingPolicy.Outcome.ValidThreshold));
-        (WorkloadManager.WorkloadStatus status, , , , ) = manager.workloads(wk);
+        (WorkloadManager.WorkloadStatus status, , , , , ) = manager.workloads(wk);
         assertEq(uint8(status), uint8(WorkloadManager.WorkloadStatus.Verified));
     }
 
@@ -137,14 +137,14 @@ contract WorkloadManagerTest is RCFixture {
         }
 
         assertEq(uint8(manager.roundOutcome(wk, round)), uint8(ISlashingPolicy.Outcome.InvalidThreshold));
-        (WorkloadManager.WorkloadStatus status, , , , ) = manager.workloads(wk);
+        (WorkloadManager.WorkloadStatus status, , , , , ) = manager.workloads(wk);
         assertEq(uint8(status), uint8(WorkloadManager.WorkloadStatus.Invalid));
     }
 
     function test_escalateOrExpire_beforeDeadline_reverts() public {
         (bytes32 wk, , , , ) = _submitPointerAndGetRound();
         vm.expectRevert(WorkloadManager.BeforeDeadline.selector);
-        manager.escalateOrExpire(wk);
+        manager.escalateOrExpire(wk, _defaultRawHTX(1));
     }
 
     function test_escalateOrExpire_inconclusive_startsNewRound_and_then_expires() public {
@@ -156,22 +156,22 @@ contract WorkloadManagerTest is RCFixture {
         vm.warp(uint256(deadline1) + 1);
 
         vm.recordLogs();
-        manager.escalateOrExpire(wk);
+        manager.escalateOrExpire(wk, _defaultRawHTX(1));
         Vm.Log[] memory logs = vm.getRecordedLogs();
 
         // round 1 finalized inconclusive and round2 started
         assertEq(uint8(manager.roundOutcome(wk, round1)), uint8(ISlashingPolicy.Outcome.Inconclusive));
 
-        (, uint8 currentRound, uint8 escalationLevel, , ) = manager.workloads(wk);
+        (, uint8 currentRound, uint8 escalationLevel, , , ) = manager.workloads(wk);
         assertEq(currentRound, 2);
         assertEq(escalationLevel, 1);
 
         // parse round2 started
-        bytes32 sig = keccak256("RoundStarted(bytes32,uint8,bytes32,uint32,uint32,uint64,uint64,address[])");
+        bytes32 sig = keccak256("RoundStarted(bytes32,uint8,bytes32,uint64,uint64,uint64,address[],bytes)");
         bool found;
         for (uint256 i = 0; i < logs.length; i++) {
             if (logs[i].topics.length > 0 && logs[i].topics[0] == sig && bytes32(logs[i].topics[1]) == wk) {
-                (uint8 r2,, , , , , ) = abi.decode(logs[i].data, (uint8, bytes32, uint32, uint32, uint64, uint64, address[]));
+                (uint8 r2,, , , , , ) = abi.decode(logs[i].data, (uint8, bytes32, uint64, uint64, uint64, address[], bytes));
                 if (r2 == 2) found = true;
             }
         }
@@ -180,9 +180,9 @@ contract WorkloadManagerTest is RCFixture {
         // expire after round2 deadline with no quorum
         (, , , , , , , , , , uint64 deadline2, , , , , , , , , ) = manager.rounds(wk, 2);
         vm.warp(uint256(deadline2) + 1);
-        manager.escalateOrExpire(wk);
+        manager.escalateOrExpire(wk, _defaultRawHTX(1));
 
-        (WorkloadManager.WorkloadStatus status2, , , , ) = manager.workloads(wk);
+        (WorkloadManager.WorkloadStatus status2, , , , , ) = manager.workloads(wk);
         assertEq(uint8(status2), uint8(WorkloadManager.WorkloadStatus.Expired));
     }
 

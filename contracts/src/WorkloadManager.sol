@@ -31,10 +31,7 @@ contract WorkloadManager is Pausable, ReentrancyGuard, Ownable, EIP712 {
     error InvalidSignature();
     error InvalidBatchSize();
     error RoundNotFinalized();
-    error SnapshotBlockUnavailable(uint32 snapshotId);
-    error InvalidCommitteeChecksum();
-    error InvalidCommitteeLength(uint256 submitted, uint256 expected);
-
+    error SnapshotBlockUnavailable(uint64 snapshotId);
     // Rewards distribution
     error RewardsAlreadyDone();
     error InvalidOutcome();
@@ -42,6 +39,7 @@ contract WorkloadManager is Pausable, ReentrancyGuard, Ownable, EIP712 {
     error InvalidVoterInList();
     error InvalidVoterCount(uint256 got, uint256 expected);
     error InvalidVoterWeightSum(uint256 got, uint256 expected);
+    error RawHTXHashMismatch();
 
     // Committee
     error InvalidCommitteeMember(address member);
@@ -53,16 +51,9 @@ contract WorkloadManager is Pausable, ReentrancyGuard, Ownable, EIP712 {
     uint256 private constant MAX_VOTE_BATCH_HARD_LIMIT = 500;
 
     bytes32 private constant VOTE_TYPEHASH =
-        keccak256("Vote(bytes32 workloadKey,uint8 round,uint8 verdict,uint32 snapshotId,bytes32 committeeRoot)");
+        keccak256("Vote(bytes32 workloadKey,uint8 round,uint8 verdict,uint64 snapshotId,bytes32 committeeRoot)");
 
     enum WorkloadStatus { None, Pending, Verified, Invalid, Expired }
-
-    struct WorkloadPointer {
-        uint64 currentId;
-        uint64 previousId;
-        bytes32 contentHash;
-        uint256 blobIndex;
-    }
 
     struct Workload {
         WorkloadStatus status;
@@ -70,6 +61,7 @@ contract WorkloadManager is Pausable, ReentrancyGuard, Ownable, EIP712 {
         uint8 escalationLevel;
         uint8 maxEscalationsSnapshot;
         uint64 createdAt;
+        bytes32 rawHTXHash;
     }
 
     struct RoundInfo {
@@ -82,7 +74,7 @@ contract WorkloadManager is Pausable, ReentrancyGuard, Ownable, EIP712 {
         uint32 validVotesCount;
 
         uint32 committeeSize;
-        uint32 snapshotId;
+        uint64 snapshotId;
         bytes32 committeeRoot;
 
         uint64 startedAt;
@@ -123,8 +115,8 @@ contract WorkloadManager is Pausable, ReentrancyGuard, Ownable, EIP712 {
     mapping(bytes32 => mapping(uint8 => bool)) public slashingNotified;
 
     event ConfigUpdated(address config);
-    event WorkloadEnqueued(bytes32 indexed workloadKey, uint64 currentId, uint64 previousId, bytes32 contentHash, uint256 blobIndex, address indexed submitter);
-    event RoundStarted(bytes32 indexed workloadKey, uint8 round, bytes32 committeeRoot, uint32 committeeSize, uint32 snapshotId, uint64 startedAt, uint64 deadline, address[] members);
+    event WorkloadEnqueued(bytes32 indexed workloadKey, bytes rawHTX, address indexed submitter);
+    event RoundStarted(bytes32 indexed workloadKey, uint8 round, bytes32 committeeRoot, uint64 snapshotId, uint64 startedAt, uint64 deadline, address[] members, bytes rawHTX);
     event OperatorVoted(bytes32 indexed workloadKey, uint8 round, address indexed operator, uint8 verdict, uint256 weight);
     event WorkloadStatusChanged(bytes32 indexed workloadKey, WorkloadStatus oldStatus, WorkloadStatus newStatus, uint8 round);
     event RoundFinalized(bytes32 indexed workloadKey, uint8 round, ISlashingPolicy.Outcome outcome);
@@ -149,13 +141,13 @@ contract WorkloadManager is Pausable, ReentrancyGuard, Ownable, EIP712 {
     function pause() external onlyOwner { _pause(); }
     function unpause() external onlyOwner { _unpause(); }
 
-    function _deriveWorkloadKey(WorkloadPointer calldata pointer) internal pure returns (bytes32) {
-        bytes32 pointerHash = keccak256(abi.encode(pointer.currentId, pointer.previousId, pointer.contentHash, pointer.blobIndex));
-        return keccak256(abi.encodePacked("WORKLOAD_KEY_V1", pointerHash));
+    function _deriveWorkloadKey(bytes calldata rawHTX) internal pure returns (bytes32) {
+        bytes32 rawHash = keccak256(rawHTX);
+        return keccak256(abi.encodePacked("WORKLOAD_KEY_V1", rawHash));
     }
 
-    function deriveWorkloadKey(WorkloadPointer calldata pointer) external pure returns (bytes32) {
-        return _deriveWorkloadKey(pointer);
+    function deriveWorkloadKey(bytes calldata rawHTX) external pure returns (bytes32) {
+        return _deriveWorkloadKey(rawHTX);
     }
 
     function _computeCommitteeSize(uint8 escalationLevel) internal view returns (uint32) {
@@ -185,89 +177,36 @@ contract WorkloadManager is Pausable, ReentrancyGuard, Ownable, EIP712 {
         r.jailDurationSec   = uint64(config.jailDuration());
     }
 
-    function submitWorkload(WorkloadPointer calldata pointer, uint32 snapshotId, address[] calldata sortedCommittee)
+    function submitWorkload(bytes calldata rawHTX, uint64 snapshotId)
         external
         whenNotPaused
         nonReentrant
         returns (bytes32 workloadKey)
     {
-        workloadKey = _deriveWorkloadKey(pointer);
+        workloadKey = _deriveWorkloadKey(rawHTX);
+        if (snapshotId == 0) revert SnapshotBlockUnavailable(snapshotId);
 
         Workload storage w = workloads[workloadKey];
+        bytes32 rawHash = keccak256(rawHTX);
         if (w.status == WorkloadStatus.None) {
             w.status = WorkloadStatus.Pending;
             w.createdAt = uint64(block.timestamp);
             w.currentRound = 1;
             w.escalationLevel = 0;
             w.maxEscalationsSnapshot = config.maxEscalations();
+            w.rawHTXHash = rawHash;
 
-            _startRoundWithSuppliedCommittee(workloadKey, 1, snapshotId, sortedCommittee);
+            _startRound(workloadKey, 1, snapshotId, rawHTX);
 
             emit WorkloadStatusChanged(workloadKey, WorkloadStatus.None, WorkloadStatus.Pending, 1);
+        } else {
+            if (w.rawHTXHash != rawHash) revert RawHTXHashMismatch();
         }
 
-        emit WorkloadEnqueued(
-            workloadKey,
-            pointer.currentId,
-            pointer.previousId,
-            pointer.contentHash,
-            pointer.blobIndex,
-            msg.sender
-        );
+        emit WorkloadEnqueued(workloadKey, rawHTX, msg.sender);
     }
 
-    function _startRoundWithSuppliedCommittee(bytes32 workloadKey, uint8 round, uint32 snapshotId, address[] calldata sortedCommittee) internal {
-        if (snapshotId == 0 || snapshotId >= block.number) revert SnapshotBlockUnavailable(snapshotId);
-        if (blockhash(uint256(snapshotId)) == bytes32(0)) revert SnapshotBlockUnavailable(snapshotId);
-
-        Workload storage w = workloads[workloadKey];
-        if (w.status != WorkloadStatus.Pending) revert NotPending();
-
-        _snapshotRoundConfig(workloadKey, round);
-
-        RoundInfo storage r = rounds[workloadKey][round];
-        IStakingOperators stakingOps = IStakingOperators(r.stakingOps);
-        ICommitteeSelector selector  = ICommitteeSelector(r.selector);
-
-        uint32 targetSize = _computeCommitteeSize(w.escalationLevel);
-        address[] memory selected = selector.selectCommittee(workloadKey, round, targetSize, snapshotId);
-        uint256 expectedLen = selected.length;
-        if (expectedLen == 0) revert EmptyCommittee();
-        if (sortedCommittee.length != expectedLen) revert InvalidCommitteeLength(sortedCommittee.length, expectedLen);
-
-        bytes32 selectedSum = _committeeChecksum(selected);
-        bytes32 providedSum = _committeeChecksumCalldata(sortedCommittee);
-        if (selectedSum != providedSum) revert InvalidCommitteeChecksum();
-
-        bytes32[] memory leaves = new bytes32[](expectedLen);
-        address last = address(0);
-        uint256 totalStake;
-
-        for (uint256 i = 0; i < expectedLen; ) {
-            address op = sortedCommittee[i];
-            if (op == address(0) || op <= last) revert InvalidCommitteeMember(op);
-            last = op;
-
-            uint256 stake = stakingOps.stakeAt(op, snapshotId);
-            if (stake == 0) revert InvalidCommitteeMember(op);
-            totalStake += stake;
-
-            leaves[i] = keccak256(abi.encodePacked(bytes1(0xA1), address(this), workloadKey, round, op));
-            unchecked { ++i; }
-        }
-
-        r.snapshotId = snapshotId;
-        r.committeeRoot = _computeMerkleRoot(leaves);
-        r.committeeTotalStake = totalStake;
-
-        r.committeeSize = uint32(expectedLen);
-        r.startedAt = uint64(block.timestamp);
-        r.deadline = uint64(block.timestamp + uint256(r.responseWindowSec));
-
-        emit RoundStarted(workloadKey, round, r.committeeRoot, r.committeeSize, r.snapshotId, r.startedAt, r.deadline, sortedCommittee);
-    }
-
-    function _startRound(bytes32 workloadKey, uint8 round) internal {
+    function _startRound(bytes32 workloadKey, uint8 round, uint64 explicitSnapshotId, bytes calldata rawHTX) internal returns (address[] memory members) {
         Workload storage w = workloads[workloadKey];
         if (w.status != WorkloadStatus.Pending) revert NotPending();
 
@@ -278,11 +217,17 @@ contract WorkloadManager is Pausable, ReentrancyGuard, Ownable, EIP712 {
         IStakingOperators stakingOps = IStakingOperators(r.stakingOps);
         ICommitteeSelector selector  = ICommitteeSelector(r.selector);
 
-        uint32 snapshotId = stakingOps.snapshot();
+        uint64 snapshotId = explicitSnapshotId;
+        if (snapshotId == 0) {
+            snapshotId = stakingOps.snapshot();
+        } else {
+            if (snapshotId == 0 || snapshotId >= block.number) revert SnapshotBlockUnavailable(snapshotId);
+            if (blockhash(uint256(snapshotId)) == bytes32(0)) revert SnapshotBlockUnavailable(snapshotId);
+        }
         r.snapshotId = snapshotId;
 
         uint32 targetSize = _computeCommitteeSize(w.escalationLevel);
-        address[] memory members = selector.selectCommittee(workloadKey, round, targetSize, snapshotId);
+        members = selector.selectCommittee(workloadKey, round, targetSize, snapshotId);
         uint256 len = members.length;
         if (len == 0) revert EmptyCommittee();
 
@@ -313,7 +258,7 @@ contract WorkloadManager is Pausable, ReentrancyGuard, Ownable, EIP712 {
         r.startedAt = uint64(block.timestamp);
         r.deadline = uint64(block.timestamp + uint256(r.responseWindowSec));
 
-        emit RoundStarted(workloadKey, round, r.committeeRoot, r.committeeSize, r.snapshotId, r.startedAt, r.deadline, members);
+        emit RoundStarted(workloadKey, round, r.committeeRoot, r.snapshotId, r.startedAt, r.deadline, members, rawHTX);
     }
 
     function submitVerdict(bytes32 workloadKey, uint8 verdict, bytes32[] calldata memberProof)
@@ -427,9 +372,10 @@ contract WorkloadManager is Pausable, ReentrancyGuard, Ownable, EIP712 {
         }
     }
 
-    function escalateOrExpire(bytes32 workloadKey) external whenNotPaused nonReentrant {
+    function escalateOrExpire(bytes32 workloadKey, bytes calldata rawHTX) external whenNotPaused nonReentrant {
         Workload storage w = workloads[workloadKey];
         if (w.status != WorkloadStatus.Pending) revert NotPending();
+        if (w.rawHTXHash == bytes32(0) || keccak256(rawHTX) != w.rawHTXHash) revert RawHTXHashMismatch();
 
         uint8 round = w.currentRound;
         RoundInfo storage r = rounds[workloadKey][round];
@@ -458,7 +404,7 @@ contract WorkloadManager is Pausable, ReentrancyGuard, Ownable, EIP712 {
         if (w.escalationLevel < w.maxEscalationsSnapshot) {
             _finalizeRound(workloadKey, round, w, r, ISlashingPolicy.Outcome.Inconclusive);
             unchecked { ++w.escalationLevel; ++w.currentRound; }
-            _startRound(workloadKey, w.currentRound);
+            _startRound(workloadKey, w.currentRound, 0, rawHTX);
         } else {
             _finalizeRound(workloadKey, round, w, r, ISlashingPolicy.Outcome.Inconclusive);
             WorkloadStatus old = w.status;
@@ -580,20 +526,6 @@ contract WorkloadManager is Pausable, ReentrancyGuard, Ownable, EIP712 {
         return leaves[0];
     }
 
-    function _committeeChecksum(address[] memory members) internal pure returns (bytes32 acc) {
-        for (uint256 i = 0; i < members.length; ) {
-            acc ^= bytes32(uint256(uint160(members[i])));
-            unchecked { ++i; }
-        }
-    }
-
-    function _committeeChecksumCalldata(address[] calldata members) internal pure returns (bytes32 acc) {
-        for (uint256 i = 0; i < members.length; ) {
-            acc ^= bytes32(uint256(uint160(members[i])));
-            unchecked { ++i; }
-        }
-    }
-
     // Insertion sort (committee sizes expected to be relatively small)
     function _sortMembersInsertion(address[] memory arr) internal pure {
         uint256 n = arr.length;
@@ -624,5 +556,14 @@ contract WorkloadManager is Pausable, ReentrancyGuard, Ownable, EIP712 {
     {
         RoundInfo storage r = rounds[workloadKey][round];
         return (r.finalized, roundOutcome[workloadKey][round], r.committeeRoot, r.stakingOps, r.jailDurationSec);
+    }
+
+    function nodeCount() external view returns (uint256) {
+        address[] memory active = IStakingOperators(config.stakingOps()).getActiveOperators();
+        return active.length;
+    }
+
+    function getNodes() external view returns (address[] memory) {
+        return IStakingOperators(config.stakingOps()).getActiveOperators();
     }
 }

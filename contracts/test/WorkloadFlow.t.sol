@@ -35,7 +35,7 @@ contract WorkloadFlowTest is RCFixture {
         // Single valid vote (50%) meets quorum/verification thresholds.
         _vote(wk, round, members, members[0], 1);
 
-        (WorkloadManager.WorkloadStatus status, , , , ) = manager.workloads(wk);
+        (WorkloadManager.WorkloadStatus status, , , , , ) = manager.workloads(wk);
         assertEq(uint8(status), uint8(WorkloadManager.WorkloadStatus.Verified));
 
         // Unlock funded rewards before distribution.

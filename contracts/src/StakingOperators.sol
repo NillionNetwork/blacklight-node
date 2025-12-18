@@ -32,7 +32,7 @@ contract StakingOperators is IStakingOperators, AccessControl, ReentrancyGuard, 
     error BatchTooLarge();
     error InvalidUnstakeDelay();
 
-    struct StakeCheckpoint { uint32 fromBlock; uint224 stake; }
+    struct StakeCheckpoint { uint64 fromBlock; uint224 stake; }
     struct Unbonding { address staker; IStakingOperators.Tranche[] tranches; }
     struct OperatorData { bool active; string metadataURI; bool exists; }
 
@@ -52,7 +52,7 @@ contract StakingOperators is IStakingOperators, AccessControl, ReentrancyGuard, 
     uint256 private _totalStaked;
     mapping(address => StakeCheckpoint[]) private _stakeCheckpoints;
 
-    uint32 public currentSnapshotId;
+    uint64 public currentSnapshotId;
     address public snapshotter;
     address public override workloadManager;
 
@@ -118,14 +118,14 @@ contract StakingOperators is IStakingOperators, AccessControl, ReentrancyGuard, 
     }
 
 
-    function snapshot() external override returns (uint32 snapshotId) {
+    function snapshot() external override returns (uint64 snapshotId) {
         if (msg.sender != snapshotter && msg.sender != workloadManager) revert NotSnapshotter();
         if (block.number <= 1) revert NotReady();
-        snapshotId = uint32(block.number - 1);
+        snapshotId = uint64(block.number - 1);
         currentSnapshotId = snapshotId;
     }
 
-    function stakeAt(address operator, uint32 snapshotId) public view override returns (uint256) {
+    function stakeAt(address operator, uint64 snapshotId) public view override returns (uint256) {
         StakeCheckpoint[] storage ckpts = _stakeCheckpoints[operator];
         uint256 len = ckpts.length;
         if (len == 0) return 0;
@@ -397,7 +397,7 @@ contract StakingOperators is IStakingOperators, AccessControl, ReentrancyGuard, 
         if (newStake > type(uint224).max) revert StakeOverflow();
 
         StakeCheckpoint[] storage ckpts = _stakeCheckpoints[operator];
-        uint32 blockNum = uint32(block.number);
+        uint64 blockNum = uint64(block.number);
         uint224 boundedStake = uint224(newStake);
         uint256 len = ckpts.length;
 

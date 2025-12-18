@@ -14,7 +14,7 @@ contract WeightedCommitteeSelector is ICommitteeSelector {
     error NotAdmin();
     error EmptyCommitteeRequested();
     error InsufficientCommitteeVP(uint256 selectedVP, uint256 requiredVP);
-    error SnapshotBlockUnavailable(uint32 snapshotId);
+    error SnapshotBlockUnavailable(uint64 snapshotId);
     error ZeroTotalVotingPower();
 
     uint32 private constant DEFAULT_MAX_ACTIVE_OPERATORS = 1000;
@@ -75,7 +75,7 @@ contract WeightedCommitteeSelector is ICommitteeSelector {
         bytes32 workloadKey,
         uint8 round,
         uint32 committeeSize,
-        uint32 snapshotId
+        uint64 snapshotId
     ) external view override returns (address[] memory members) {
         bytes32 bh = _randomnessSeed(snapshotId);
 
@@ -169,14 +169,14 @@ contract WeightedCommitteeSelector is ICommitteeSelector {
         return members;
     }
 
-    function _randomnessSeed(uint32 snapshotId) internal view returns (bytes32) {
+    function _randomnessSeed(uint64 snapshotId) internal view returns (bytes32) {
         bytes32 bh = blockhash(uint256(snapshotId));
         if (bh == bytes32(0)) bh = bytes32(block.prevrandao);
         if (bh == bytes32(0)) revert SnapshotBlockUnavailable(snapshotId);
         return bh;
     }
 
-    function _topByStake(address[] memory active, uint32 snapshotId, uint32 cap)
+    function _topByStake(address[] memory active, uint64 snapshotId, uint32 cap)
         internal
         view
         returns (address[] memory top, uint256[] memory topStakes)

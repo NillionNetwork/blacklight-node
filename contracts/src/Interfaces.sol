@@ -58,7 +58,7 @@ interface ICommitteeSelector {
         bytes32 workloadKey,
         uint8 round,
         uint32 committeeSize,
-        uint32 snapshotId
+        uint64 snapshotId
     ) external view returns (address[] memory members);
 }
 
@@ -73,8 +73,8 @@ interface IStakingOperators {
     function setSnapshotter(address newSnapshotter) external;
     function setWorkloadManager(address newWorkloadManager) external;
 
-    function snapshot() external returns (uint32 snapshotId);
-    function stakeAt(address operator, uint32 snapshotId) external view returns (uint256);
+    function snapshot() external returns (uint64 snapshotId);
+    function stakeAt(address operator, uint64 snapshotId) external view returns (uint256);
 
     function stakingToken() external view returns (address);
     function stakeOf(address operator) external view returns (uint256);

@@ -112,45 +112,57 @@ abstract contract RCFixture is Test {
         vm.warp(block.timestamp + 1);
     }
 
-    function _defaultPointer(uint64 id) internal pure returns (WorkloadManager.WorkloadPointer memory p) {
-        p.currentId = id;
-        p.previousId = id == 0 ? 0 : id - 1;
-        p.contentHash = keccak256(abi.encodePacked("content", id));
-        p.blobIndex = uint256(id);
+    function _defaultRawHTX(uint64 id) internal pure returns (bytes memory) {
+        return abi.encodePacked("raw-htx-", id);
     }
 
-    function _submitPointerAndGetRound()
+    function _submitRawHTXAndGetRound()
         internal
-        returns (bytes32 workloadKey, uint8 round, bytes32 root, uint32 snapshotId, address[] memory members)
+        returns (bytes32 workloadKey, uint8 round, bytes32 root, uint64 snapshotId, address[] memory members)
     {
         vm.recordLogs();
-        WorkloadManager.WorkloadPointer memory p = _defaultPointer(1);
-        workloadKey = manager.deriveWorkloadKey(p);
+        bytes memory rawHTX = _defaultRawHTX(1);
+        workloadKey = manager.deriveWorkloadKey(rawHTX);
         (snapshotId, members) = _prepareCommittee(workloadKey, 1, 0);
-        manager.submitWorkload(p, snapshotId, members);
+        address[] memory expectedMembers = members;
+        manager.submitWorkload(rawHTX, snapshotId);
 
         Vm.Log[] memory logs = vm.getRecordedLogs();
-        bytes32 sig = keccak256("RoundStarted(bytes32,uint8,bytes32,uint32,uint32,uint64,uint64,address[])");
+        bytes32 sig = keccak256("RoundStarted(bytes32,uint8,bytes32,uint64,uint64,uint64,address[],bytes)");
 
         for (uint256 i = 0; i < logs.length; i++) {
             if (logs[i].topics.length > 0 && logs[i].topics[0] == sig) {
                 bytes32 wk = bytes32(logs[i].topics[1]);
                 if (wk != workloadKey) continue;
 
-                (round, root, , snapshotId, , , members) =
-                    abi.decode(logs[i].data, (uint8, bytes32, uint32, uint32, uint64, uint64, address[]));
+                bytes memory emittedRaw;
+                (round, root, snapshotId, , , members, emittedRaw) =
+                    abi.decode(logs[i].data, (uint8, bytes32, uint64, uint64, uint64, address[], bytes));
+
+                assertEq(members.length, expectedMembers.length);
+                for (uint256 j = 0; j < members.length; j++) {
+                    assertEq(members[j], expectedMembers[j]);
+                }
+                assertEq(keccak256(emittedRaw), keccak256(rawHTX));
                 return (workloadKey, round, root, snapshotId, members);
             }
         }
         fail("RoundStarted not found");
     }
 
+    function _submitPointerAndGetRound()
+        internal
+        returns (bytes32 workloadKey, uint8 round, bytes32 root, uint64 snapshotId, address[] memory members)
+    {
+        return _submitRawHTXAndGetRound();
+    }
+
     function _prepareCommittee(bytes32 workloadKey, uint8 round, uint8 escalationLevel)
         internal
         view
-        returns (uint32 snapshotId, address[] memory members)
+        returns (uint64 snapshotId, address[] memory members)
     {
-        snapshotId = uint32(block.number - 1);
+        snapshotId = uint64(block.number - 1);
         uint32 targetSize = _computeCommitteeSize(escalationLevel);
         members = selector.selectCommittee(workloadKey, round, targetSize, snapshotId);
         require(members.length > 0, "empty committee");

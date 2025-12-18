@@ -45,22 +45,22 @@ contract WorkloadManagerCommitteeGrowthTest is RCFixture {
         assertEq(size1, 4);
 
         vm.warp(uint256(deadline1) + 1);
-        manager.escalateOrExpire(wk);
+        manager.escalateOrExpire(wk, _defaultRawHTX(1));
 
         (, , , , , , uint32 size2, , , , uint64 deadline2, , , , , , , , , ) = manager.rounds(wk, 2);
         assertEq(size2, 6); // 4 * 1.5
 
         vm.warp(uint256(deadline2) + 1);
-        manager.escalateOrExpire(wk);
+        manager.escalateOrExpire(wk, _defaultRawHTX(1));
 
         (, , , , , , uint32 size3, , , , uint64 deadline3, , , , , , , , , ) = manager.rounds(wk, 3);
         assertEq(size3, 9); // 6 * 1.5
 
         // After max escalations (2), third inconclusive should expire
         vm.warp(uint256(deadline3) + 1);
-        manager.escalateOrExpire(wk);
+        manager.escalateOrExpire(wk, _defaultRawHTX(1));
 
-        (WorkloadManager.WorkloadStatus status, , , , ) = manager.workloads(wk);
+        (WorkloadManager.WorkloadStatus status, , , , , ) = manager.workloads(wk);
         assertEq(uint8(status), uint8(WorkloadManager.WorkloadStatus.Expired));
     }
 }

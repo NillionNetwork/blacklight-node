@@ -99,7 +99,7 @@ contract JailingPolicyTest is RCFixture {
 
         (, , , , , , , , , , uint64 deadline, , , , , , , , , ) = manager.rounds(wk, round);
         vm.warp(uint256(deadline) + 1);
-        manager.escalateOrExpire(wk);
+        manager.escalateOrExpire(wk, _defaultRawHTX(1));
 
         assertEq(uint8(manager.roundOutcome(wk, round)), uint8(ISlashingPolicy.Outcome.Inconclusive));
 

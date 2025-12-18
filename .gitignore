@@ -26,9 +26,14 @@ Cargo.lock
 # Foundry/Solidity build artifacts
 out/
 cache/
+.foundry-cache/
+.foundry/
 
 # Foundry broadcast logs (transaction traces, run outputs, etc.)
 /broadcast
+
+# Foundry toolchain manager
+.svm/
 
 # Note: foundry.lock should be committed for reproducible builds
 

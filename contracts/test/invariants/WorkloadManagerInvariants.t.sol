@@ -23,16 +23,18 @@ contract WorkloadHandler is Test {
 
     bytes32 public workloadKey;
     uint8 public round;
-    uint32 public snapshotId;
+    uint64 public snapshotId;
     address[] public members;
+    bytes public rawHTX;
 
-    constructor(WorkloadManager _manager, StakingOperators _stakingOps, bytes32 _workloadKey, uint8 _round, uint32 _snapshotId, address[] memory _members) {
+    constructor(WorkloadManager _manager, StakingOperators _stakingOps, bytes32 _workloadKey, uint8 _round, uint64 _snapshotId, address[] memory _members, bytes memory _rawHTX) {
         manager = _manager;
         stakingOps = _stakingOps;
         workloadKey = _workloadKey;
         round = _round;
         snapshotId = _snapshotId;
         members = _members;
+        rawHTX = _rawHTX;
     }
 
 
@@ -70,7 +72,7 @@ contract WorkloadHandler is Test {
         if (block.timestamp <= deadline) return;
 
         // may expire the workload (maxEscalations=0 in this invariant setup)
-        manager.escalateOrExpire(workloadKey);
+        manager.escalateOrExpire(workloadKey, rawHTX);
     }
 
     function _proof(address member) internal view returns (bytes32[] memory proof) {
@@ -157,38 +159,39 @@ contract WorkloadManagerInvariants is StdInvariant, Test {
         vm.warp(block.timestamp + 1);
 
         // start workload and capture committee list from logs
-        WorkloadManager.WorkloadPointer memory p;
-        p.currentId = 1;
-        p.previousId = 0;
-        p.contentHash = keccak256("content");
-        p.blobIndex = 1;
-
-        bytes32 wk = manager.deriveWorkloadKey(p);
+        bytes memory rawHTX = abi.encodePacked("raw-htx-invariant");
+        bytes32 wk = manager.deriveWorkloadKey(rawHTX);
 
         vm.recordLogs();
         uint32 targetSize = config.baseCommitteeSize();
-        uint32 snap = uint32(block.number - 1);
+        uint64 snap = uint64(block.number - 1);
         address[] memory membersOffchain = selector.selectCommittee(wk, 1, targetSize, snap);
         require(membersOffchain.length == targetSize, "empty committee");
         _sortMembers(membersOffchain);
-        manager.submitWorkload(p, snap, membersOffchain);
+        manager.submitWorkload(rawHTX, snap);
         Vm.Log[] memory logs = vm.getRecordedLogs();
 
-        bytes32 sig = keccak256("RoundStarted(bytes32,uint8,bytes32,uint32,uint32,uint64,uint64,address[])");
+        bytes32 sig = keccak256("RoundStarted(bytes32,uint8,bytes32,uint64,uint64,uint64,address[],bytes)");
 
         address[] memory members;
         uint8 round;
-        uint32 snapshotId;
+        uint64 snapshotId;
         for (uint256 i = 0; i < logs.length; i++) {
             if (logs[i].topics.length > 0 && logs[i].topics[0] == sig && bytes32(logs[i].topics[1]) == wk) {
-                (round, , , snapshotId, , , members) =
-                    abi.decode(logs[i].data, (uint8, bytes32, uint32, uint32, uint64, uint64, address[]));
+                bytes memory emittedRaw;
+                (round, , snapshotId, , , members, emittedRaw) =
+                    abi.decode(logs[i].data, (uint8, bytes32, uint64, uint64, uint64, address[], bytes));
+                assertEq(keccak256(emittedRaw), keccak256(rawHTX));
+                require(members.length == membersOffchain.length, "missing members");
+                for (uint256 j = 0; j < members.length; j++) {
+                    require(members[j] == membersOffchain[j], "member mismatch");
+                }
                 break;
             }
         }
         require(members.length == 20, "missing members");
 
-        handler = new WorkloadHandler(manager, stakingOps, wk, round, snapshotId, members);
+        handler = new WorkloadHandler(manager, stakingOps, wk, round, snapshotId, members, rawHTX);
         targetContract(address(handler));
     }
 
@@ -210,7 +213,7 @@ contract WorkloadManagerInvariants is StdInvariant, Test {
         uint8 r = handler.round();
 
         (uint256 validStake, uint256 invalidStake, uint256 errorStake, uint256 totalResponded, uint256 committeeTotal,
-            uint32 validVotesCount, uint32 committeeSize, uint32 snapshotId, , , , , , , , , , , , ) = manager.rounds(wk, r);
+            uint32 validVotesCount, uint32 committeeSize, uint64 snapshotId, , , , , , , , , , , , ) = manager.rounds(wk, r);
 
         assertEq(validStake + invalidStake + errorStake, totalResponded, "stake buckets don't sum to responded");
         assertLe(totalResponded, committeeTotal, "responded exceeds committee total");
@@ -235,7 +238,7 @@ contract WorkloadManagerInvariants is StdInvariant, Test {
     function invariant_voteWeightsMatchSnapshotStake() public {
         bytes32 wk = handler.workloadKey();
         uint8 r = handler.round();
-        uint32 snap = handler.snapshotId();
+        uint64 snap = handler.snapshotId();
 
         address[] memory members = handler.getMembers();
 
@@ -257,7 +260,7 @@ contract WorkloadManagerInvariants is StdInvariant, Test {
     function invariant_committeeTotalStakeMatchesSumStakeAtSnapshot() public {
         bytes32 wk = handler.workloadKey();
         uint8 r = handler.round();
-        uint32 snap = handler.snapshotId();
+        uint64 snap = handler.snapshotId();
 
         ( , , , , uint256 committeeTotal, , , , , , , , , , , , , , , ) = manager.rounds(wk, r);
 
