@@ -12,4 +12,4 @@ pub mod contract_client;
 pub mod verification;
 
 // Re-exports for convenience
-pub use types::Htx;
+pub use types::NillionHtxV1;

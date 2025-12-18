@@ -1,4 +1,4 @@
-use crate::{config::consts::DEFAULT_LOOKBACK_BLOCKS, types::UnifiedHtx};
+use crate::{config::consts::DEFAULT_LOOKBACK_BLOCKS, types::Htx};
 use alloy::{
     consensus::Transaction,
     dyn_abi::DynSolType,
@@ -88,8 +88,8 @@ impl<P: Provider + Clone> NilUVRouterClient<P> {
     // ------------------------------------------------------------------------
 
     /// Submit an HTX for verification
-    pub async fn submit_htx(&self, htx: &UnifiedHtx) -> Result<B256> {
-        let raw_htx: alloy::primitives::Bytes = htx.try_into()?;
+    pub async fn submit_htx(&self, htx: &Htx) -> Result<B256> {
+        let raw_htx = alloy::primitives::Bytes::try_from(htx)?;
         let call = self.contract.submitHTX(raw_htx);
 
         // Estimate gas and add 50% buffer for variable node selection
