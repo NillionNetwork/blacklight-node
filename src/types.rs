@@ -1,5 +1,6 @@
 use alloy::primitives::Bytes;
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 use serde_with::{hex::Hex, serde_as};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -63,14 +64,56 @@ impl From<Htx> for VersionedHtx {
     }
 }
 
-impl TryFrom<&VersionedHtx> for Bytes {
+// Phala HTX types
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AttestData {
+    pub quote: String,
+    pub event_log: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HtxPhala {
+    pub app_compose: String,
+    pub attest_data: AttestData,
+}
+
+// Unified HTX type that can represent both nilCC and Phala HTXs
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "provider", rename_all = "camelCase")]
+pub enum UnifiedHtx {
+    Nilcc(VersionedHtx),
+    Phala(HtxPhala),
+}
+
+impl From<VersionedHtx> for UnifiedHtx {
+    fn from(htx: VersionedHtx) -> Self {
+        UnifiedHtx::Nilcc(htx)
+    }
+}
+
+impl TryFrom<&UnifiedHtx> for Bytes {
     type Error = anyhow::Error;
 
-    fn try_from(htx: &VersionedHtx) -> Result<Self, Self::Error> {
-        // Convert into a json::Value first to ensure keys are sorted
-        let json = serde_json::to_value(htx)?;
+    fn try_from(htx: &UnifiedHtx) -> Result<Self, Self::Error> {
+        let json = canonicalize_json(&serde_json::to_value(htx)?);
         let json = serde_json::to_string(&json)?;
         Ok(Bytes::from(json.into_bytes()))
+    }
+}
+
+fn canonicalize_json(value: &Value) -> Value {
+    match value {
+        Value::Object(map) => {
+            let mut sorted = Map::new();
+            let mut keys: Vec<_> = map.keys().cloned().collect();
+            keys.sort();
+            for k in keys {
+                sorted.insert(k.clone(), canonicalize_json(&map[&k]));
+            }
+            Value::Object(sorted)
+        }
+        Value::Array(arr) => Value::Array(arr.iter().map(canonicalize_json).collect()),
+        _ => value.clone(),
     }
 }
 
@@ -105,7 +148,7 @@ mod tests {
                 url: "https://example.com/builder".to_string(),
             },
         };
-        let htx = VersionedHtx::V1(htx);
+        let htx = UnifiedHtx::Nilcc(VersionedHtx::V1(htx));
 
         // Serialize the same HTX multiple times
         let b1 = Bytes::try_from(&htx).unwrap();
@@ -134,9 +177,80 @@ mod tests {
         let workload_pos = json_str.find("\"workload_id\"").unwrap();
 
         // Keys should appear in alphabetical order
+        println!("{}", serde_json::to_string_pretty(&htx).unwrap());
         assert!(builder_pos < builder_meas_pos);
         assert!(builder_meas_pos < nilcc_meas_pos);
         assert!(nilcc_meas_pos < nilcc_op_pos);
         assert!(nilcc_op_pos < workload_pos);
+    }
+
+    #[test]
+    fn test_htx_phala_serialization() {
+        let htx_phala = HtxPhala {
+            app_compose: "test-compose-config".to_string(),
+            attest_data: AttestData {
+                quote: "test-quote-hex".to_string(),
+                event_log: r#"[{"event":"compose-hash","event_payload":"abc123"}]"#.to_string(),
+            },
+        };
+
+        let json = serde_json::to_string(&htx_phala).unwrap();
+        assert!(json.contains("\"app_compose\""));
+        assert!(json.contains("\"attest_data\""));
+        assert!(json.contains("test-compose-config"));
+
+        let deserialized: HtxPhala = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.app_compose, "test-compose-config");
+        assert_eq!(deserialized.attest_data.quote, "test-quote-hex");
+    }
+
+    #[test]
+    fn test_unified_htx_deserialization() {
+        // Test Phala HTX deserialization (provider tag = "phala")
+        let phala_json = r#"{
+            "provider": "phala",
+            "app_compose": "test-compose",
+            "attest_data": {
+                "quote": "test-quote",
+                "event_log": "[]"
+            }
+        }"#;
+
+        let unified: UnifiedHtx = serde_json::from_str(phala_json).unwrap();
+        match unified {
+            UnifiedHtx::Phala(htx) => {
+                assert_eq!(htx.app_compose, "test-compose");
+                // Successfully deserialized as phala
+            }
+            UnifiedHtx::Nilcc(_) => panic!("Should be Phala HTX"),
+        }
+
+        // Test nilCC HTX deserialization (provider tag = "nilcc")
+        let nilcc_json = r#"{
+            "provider": "nilcc",
+            "version": "v1",
+            "workload_id": {
+                "current": "1",
+                "previous": null
+            },
+            "nilCC_measurement": {
+                "url": "https://example.com/measurement",
+                "nilcc_version": "1.0.0",
+                "cpu_count": 8,
+                "GPUs": 0,
+                "docker_compose_hash": "0000000000000000000000000000000000000000000000000000000000000000"
+            },
+            "builder_measurement": {
+                "url": "https://example.com/builder"
+            }
+        }"#;
+
+        let unified: UnifiedHtx = serde_json::from_str(nilcc_json).unwrap();
+        match unified {
+            UnifiedHtx::Nilcc(_) => {
+                // Successfully deserialized as nilCC
+            }
+            UnifiedHtx::Phala(_) => panic!("Should be nilCC HTX"),
+        }
     }
 }

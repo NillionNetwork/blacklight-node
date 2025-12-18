@@ -13,6 +13,7 @@ attestation-verification = { git = "https://github.com/NillionNetwork/nilcc", re
 base64 = "0.22"
 clap = { version = "4.5", features = ["derive", "env", "string"] }
 crossterm = "0.29.0"
+dcap-qvl = "0.3.4"
 futures-util = "0.3"
 getrandom = "0.3"
 hex = "0.4"
@@ -22,6 +23,7 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_with = { version = "3.16", features = ["hex"] }
+sha2 = "0.10"
 term-table = "1.4"
 tokio = { version = "1.40", features = ["full"] }
 toml = "0.9"

@@ -1,13 +1,15 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::types::Htx;
+use crate::types::{Htx, HtxPhala};
 use anyhow::Context;
 use attestation_verification::sev::firmware::guest::AttestationReport;
 use attestation_verification::{
     DefaultCertificateFetcher, MeasurementGenerator, ReportBundle, ReportFetcher, ReportVerifier,
 };
+use dcap_qvl::collateral::get_collateral_and_verify;
 use reqwest::Client;
+use sha2::{Digest, Sha256};
 
 const ARTIFACTS_URL: &str = "https://nilcc.s3.eu-west-1.amazonaws.com";
 
@@ -21,6 +23,10 @@ pub enum VerificationError {
     BuilderUrl(String),
     BuilderJson(String),
     NotInBuilderIndex,
+    PhalaComposeHashMismatch,
+    PhalaEventLogParse(String),
+    PhalaQuoteVerify(String),
+    PhalaPlatformVerify(String),
 }
 
 impl VerificationError {
@@ -37,6 +43,10 @@ impl VerificationError {
                 format!("invalid builder_measurement JSON: {e}")
             }
             NotInBuilderIndex => "measurement not found in builder index".to_string(),
+            PhalaComposeHashMismatch => "compose-hash mismatch".to_string(),
+            PhalaEventLogParse(e) => format!("failed to parse event_log: {e}"),
+            PhalaQuoteVerify(e) => format!("quote verification failed: {e}"),
+            PhalaPlatformVerify(e) => format!("platform verification failed: {e}"),
         }
     }
 }
@@ -171,6 +181,57 @@ impl HtxVerifier {
             .map_err(|e| VerificationError::VerifyReport(e.to_string()))?;
         Ok(bundle.report)
     }
+
+    /// Verify a Phala HTX by checking compose hash and quote.
+    ///
+    /// Steps:
+    /// 1. Calculate SHA-256 hash of app_compose
+    /// 2. Extract attested hash from event_log (compose-hash event)
+    /// 3. Verify hashes match
+    /// 4. Verify quote locally using dcap-qvl (get_collateral_and_verify)
+    ///
+    /// Returns Ok(()) if verification succeeds, Err(VerificationError) otherwise.
+    pub async fn verify_htx_phala(&self, htx: &HtxPhala) -> Result<(), VerificationError> {
+        // 1. Calculate SHA-256 hash of app_compose
+        let mut hasher = Sha256::new();
+        hasher.update(htx.app_compose.as_bytes());
+        let calculated_hash = hex::encode(hasher.finalize());
+
+        // 2. Extract attested hash from event_log
+        let events: Vec<serde_json::Value> = serde_json::from_str(&htx.attest_data.event_log)
+            .map_err(|e| VerificationError::PhalaEventLogParse(e.to_string()))?;
+
+        let compose_event = events
+            .iter()
+            .find(|e| e.get("event").and_then(|v| v.as_str()) == Some("compose-hash"))
+            .ok_or_else(|| {
+                VerificationError::PhalaEventLogParse("compose-hash event not found".to_string())
+            })?;
+
+        let attested_hash = compose_event
+            .get("event_payload")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                VerificationError::PhalaEventLogParse("event_payload not found".to_string())
+            })?;
+
+        // 3. Verify hashes match
+        if calculated_hash != attested_hash {
+            return Err(VerificationError::PhalaComposeHashMismatch);
+        }
+
+        // 4. Verify quote locally using dcap-qvl
+        let quote_bytes = hex::decode(&htx.attest_data.quote)
+            .map_err(|e| VerificationError::PhalaQuoteVerify(format!("invalid quote hex: {e}")))?;
+
+        get_collateral_and_verify(&quote_bytes, None)
+            .await
+            .map_err(|e| {
+                VerificationError::PhalaQuoteVerify(format!("quote verification failed: {e}"))
+            })?;
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -184,5 +245,17 @@ mod tests {
 
         let err = VerificationError::NotInBuilderIndex;
         assert!(err.message().contains("not found in builder index"));
+
+        let err = VerificationError::PhalaComposeHashMismatch;
+        assert!(err.message().contains("compose-hash mismatch"));
+
+        let err = VerificationError::PhalaEventLogParse("parse error".to_string());
+        assert!(err.message().contains("failed to parse event_log"));
+
+        let err = VerificationError::PhalaQuoteVerify("quote error".to_string());
+        assert!(err.message().contains("quote verification failed"));
+
+        let err = VerificationError::PhalaPlatformVerify("platform error".to_string());
+        assert!(err.message().contains("platform verification failed"));
     }
 }

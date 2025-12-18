@@ -130,7 +130,9 @@ impl ContractConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{Builder, BuilderMeasurement, NilCcMeasurement, NilCcOperator, WorkloadId};
+    use crate::types::{
+        Builder, BuilderMeasurement, Htx, NilCcMeasurement, NilCcOperator, VersionedHtx, WorkloadId,
+    };
     use std::env;
 
     // ------------------------------------------------------------------------
@@ -240,7 +242,7 @@ mod tests {
         }
 
         // Create minimal test HTX
-        let htx = crate::types::Htx {
+        let htx = VersionedHtx::V1(Htx {
             workload_id: WorkloadId {
                 current: "1".into(),
                 previous: Some("0".into()),
@@ -263,7 +265,7 @@ mod tests {
             builder_measurement: BuilderMeasurement {
                 url: "https://test.com".into(),
             },
-        }
+        })
         .into();
 
         // Submit and verify

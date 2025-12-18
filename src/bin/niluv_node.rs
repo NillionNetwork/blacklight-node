@@ -7,7 +7,7 @@ use niluv::{
         validate_node_requirements, NodeCliArgs, NodeConfig,
     },
     contract_client::{ContractConfig, NilUVClient},
-    types::VersionedHtx,
+    types::{UnifiedHtx, VersionedHtx},
     verification::HtxVerifier,
 };
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -98,9 +98,22 @@ async fn process_htx_assignment(
         e
     })?;
 
-    // Parse the HTX data
-    let htx: VersionedHtx = match serde_json::from_slice(&htx_bytes) {
-        Ok(h) => h,
+    // Parse the HTX data - UnifiedHtx automatically detects provider field
+    let verification_result = match serde_json::from_slice::<UnifiedHtx>(&htx_bytes) {
+        Ok(unified_htx) => match unified_htx {
+            UnifiedHtx::Nilcc(versioned_htx) => {
+                #[allow(clippy::infallible_destructuring_match)]
+                let htx = match versioned_htx {
+                    VersionedHtx::V1(htx) => htx,
+                };
+                info!(htx_id = ?htx_id, "Detected nilCC HTX");
+                verifier.verify_htx(&htx).await
+            }
+            UnifiedHtx::Phala(htx_phala) => {
+                info!(htx_id = ?htx_id, "Detected Phala HTX");
+                verifier.verify_htx_phala(&htx_phala).await
+            }
+        },
         Err(e) => {
             error!(htx_id = ?htx_id, error = %e, "Failed to parse HTX data");
             // Respond with false if we can't parse the data
@@ -109,13 +122,6 @@ async fn process_htx_assignment(
             return Ok(());
         }
     };
-    #[allow(clippy::infallible_destructuring_match)]
-    let htx = match htx {
-        VersionedHtx::V1(htx) => htx,
-    };
-
-    // Verify the HTX
-    let verification_result = verifier.verify_htx(&htx).await;
     let result = verification_result.is_ok();
 
     // Submit the verification result

@@ -6,7 +6,7 @@ use clap::Parser;
 use niluv::{
     config::{SimulatorCliArgs, SimulatorConfig},
     contract_client::{ContractConfig, NilUVClient},
-    types::Htx,
+    types::{Htx, VersionedHtx},
 };
 use rand::Rng;
 use tokio::time::interval;
@@ -127,7 +127,11 @@ async fn submit_next_htx(client: &Arc<NilUVClient>, htxs: &Arc<Vec<Htx>>, slot: 
             info!(slot, attempt, "Retrying HTX submission");
         }
 
-        match client.router.submit_htx(&htx.into()).await {
+        match client
+            .router
+            .submit_htx(&VersionedHtx::V1(htx).into())
+            .await
+        {
             Ok(tx_hash) => {
                 info!(slot, tx_hash = ?tx_hash, "HTX submitted");
                 return Ok(());
