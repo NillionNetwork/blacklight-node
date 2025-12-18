@@ -88,51 +88,14 @@ pub struct HtxPhala {
     pub app_compose: String,
     #[serde(rename = "attest_data")]
     pub attest_data: AttestData,
-    pub provider: String,
 }
 
 // Unified HTX type that can represent both nilCC and Phala HTXs
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "provider", rename_all = "camelCase")]
 pub enum UnifiedHtx {
     Nilcc(VersionedHtx),
     Phala(HtxPhala),
-}
-
-impl<'de> Deserialize<'de> for UnifiedHtx {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        // First, deserialize as a JSON value to check for provider field
-        let value: serde_json::Value = Deserialize::deserialize(deserializer)?;
-
-        // Check if there's a provider field and if it's "phala"
-        if let Some(provider) = value.get("provider").and_then(|v| v.as_str()) {
-            if provider == "phala" {
-                // Deserialize as Phala HTX
-                let htx_phala: HtxPhala =
-                    serde_json::from_value(value).map_err(serde::de::Error::custom)?;
-                return Ok(UnifiedHtx::Phala(htx_phala));
-            }
-        }
-
-        // Otherwise, deserialize as nilCC HTX (VersionedHtx)
-        let versioned_htx: VersionedHtx =
-            serde_json::from_value(value).map_err(serde::de::Error::custom)?;
-        Ok(UnifiedHtx::Nilcc(versioned_htx))
-    }
-}
-
-impl Serialize for UnifiedHtx {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        match self {
-            UnifiedHtx::Nilcc(htx) => htx.serialize(serializer),
-            UnifiedHtx::Phala(htx) => htx.serialize(serializer),
-        }
-    }
 }
 
 #[cfg(test)]
@@ -209,44 +172,42 @@ mod tests {
                 quote: "test-quote-hex".to_string(),
                 event_log: r#"[{"event":"compose-hash","event_payload":"abc123"}]"#.to_string(),
             },
-            provider: "phala".to_string(),
         };
 
         let json = serde_json::to_string(&htx_phala).unwrap();
         assert!(json.contains("\"app_compose\""));
         assert!(json.contains("\"attest_data\""));
-        assert!(json.contains("\"provider\""));
         assert!(json.contains("test-compose-config"));
 
         let deserialized: HtxPhala = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.app_compose, "test-compose-config");
         assert_eq!(deserialized.attest_data.quote, "test-quote-hex");
-        assert_eq!(deserialized.provider, "phala");
     }
 
     #[test]
     fn test_unified_htx_deserialization() {
-        // Test Phala HTX deserialization
+        // Test Phala HTX deserialization (provider tag = "phala")
         let phala_json = r#"{
+            "provider": "phala",
             "app_compose": "test-compose",
             "attest_data": {
                 "quote": "test-quote",
                 "event_log": "[]"
-            },
-            "provider": "phala"
+            }
         }"#;
 
         let unified: UnifiedHtx = serde_json::from_str(phala_json).unwrap();
         match unified {
             UnifiedHtx::Phala(htx) => {
-                assert_eq!(htx.provider, "phala");
+                assert_eq!(htx.app_compose, "test-compose");
                 // Successfully deserialized as phala
             }
             UnifiedHtx::Nilcc(_) => panic!("Should be Phala HTX"),
         }
 
-        // Test nilCC HTX deserialization (no provider field)
+        // Test nilCC HTX deserialization (provider tag = "nilcc")
         let nilcc_json = r#"{
+            "provider": "nilcc",
             "version": "v1",
             "workload_id": {
                 "current": "1",
