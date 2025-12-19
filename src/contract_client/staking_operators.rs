@@ -7,7 +7,7 @@ use futures_util::future::join_all;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use crate::contract_client::common::tx_helper::send_and_confirm;
+use crate::contract_client::common::tx_submitter::TransactionSubmitter;
 use anyhow::Result;
 // Generate type-safe contract bindings from ABI
 sol!(
@@ -16,6 +16,7 @@ sol!(
     }
 
     #[sol(rpc)]
+    #[derive(Debug)]
     contract StakingOperators {
         error ZeroAddress();
         error ZeroAmount();
@@ -52,7 +53,7 @@ use StakingOperators::StakingOperatorsInstance;
 #[derive(Clone)]
 pub struct StakingOperatorsClient<P: Provider + Clone> {
     contract: StakingOperatorsInstance<P>,
-    tx_lock: Arc<Mutex<()>>,
+    submitter: TransactionSubmitter<StakingOperators::StakingOperatorsErrors>,
 }
 
 impl<P: Provider + Clone> StakingOperatorsClient<P> {
@@ -64,8 +65,12 @@ impl<P: Provider + Clone> StakingOperatorsClient<P> {
     ) -> Self {
         let contract =
             StakingOperatorsInstance::new(config.staking_contract_address, provider.clone());
+        let submitter = TransactionSubmitter::new(tx_lock);
 
-        Self { contract, tx_lock }
+        Self {
+            contract,
+            submitter,
+        }
     }
 
     /// Get the contract address
@@ -141,19 +146,19 @@ impl<P: Provider + Clone> StakingOperatorsClient<P> {
     /// Stakes tokens to a specific operator
     pub async fn stake_to(&self, operator: Address, amount: U256) -> Result<B256> {
         let call = self.contract.stakeTo(operator, amount);
-        send_and_confirm(call, &self.tx_lock, "stakeTo").await
+        self.submitter.invoke("stakeTo", call).await
     }
 
     /// Requests to unstake tokens from an operator
     pub async fn request_unstake(&self, operator: Address, amount: U256) -> Result<B256> {
         let call = self.contract.requestUnstake(operator, amount);
-        send_and_confirm(call, &self.tx_lock, "requestUnstake").await
+        self.submitter.invoke("requestUnstake", call).await
     }
 
     /// Withdraws unstaked tokens after the unbonding period has passed
     pub async fn withdraw_unstaked(&self, operator: Address) -> Result<B256> {
         let call = self.contract.withdrawUnstaked(operator);
-        send_and_confirm(call, &self.tx_lock, "withdrawUnstaked").await
+        self.submitter.invoke("withdrawUnstaked", call).await
     }
 
     // ------------------------------------------------------------------------
@@ -163,12 +168,12 @@ impl<P: Provider + Clone> StakingOperatorsClient<P> {
     /// Registers the caller as an operator or updates their metadata
     pub async fn register_operator(&self, metadata_uri: String) -> Result<B256> {
         let call = self.contract.registerOperator(metadata_uri);
-        send_and_confirm(call, &self.tx_lock, "registerOperator").await
+        self.submitter.invoke("registerOperator", call).await
     }
 
     /// Deactivates the caller as an operator
     pub async fn deactivate_operator(&self) -> Result<B256> {
         let call = self.contract.deactivateOperator();
-        send_and_confirm(call, &self.tx_lock, "deactivateOperator").await
+        self.submitter.invoke("deactivateOperator", call).await
     }
 }
