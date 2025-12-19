@@ -32,10 +32,5 @@ jobs:
         with:
           version: stable
 
-      - name: Build smart contract
-        run: |
-          cd contracts
-          forge build
-
       - name: Run tests
         run: cargo test --all
