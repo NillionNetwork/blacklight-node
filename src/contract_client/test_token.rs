@@ -13,9 +13,19 @@ use anyhow::Result;
 // Generate type-safe contract bindings from ABI
 sol!(
     #[sol(rpc)]
-    #[derive(Debug)]
-    TESTToken,
-    "./contracts/out/TESTToken.sol/TESTToken.json"
+    contract TESTToken {
+        event Transfer(address indexed from, address indexed to, uint256 value);
+
+        function name() public view virtual returns (string memory);
+        function symbol() public view virtual returns (string memory);
+        function decimals() public view virtual returns (uint8);
+        function totalSupply() public view virtual returns (uint256);
+        function balanceOf(address account) public view virtual returns (uint256);
+        function transfer(address to, uint256 value) public virtual returns (bool);
+        function allowance(address owner, address spender) public view virtual returns (uint256);
+        function approve(address spender, uint256 value) public virtual returns (bool);
+        function mint(address to, uint256 amount) external onlyOwner;
+    }
 );
 
 // Optional: bring the instance & events into scope
