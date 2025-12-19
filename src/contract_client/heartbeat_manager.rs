@@ -143,7 +143,8 @@ impl<P: Provider + Clone> HeartbeatManagerClient<P> {
         verdict: Verdict,
         submitter_address: Address,
     ) -> Result<B256> {
-        let proofs = self.compute_merkle_proof(&event, submitter_address)?;
+        let proofs =
+            Self::compute_merkle_proof(*self.contract.address(), &event, submitter_address)?;
         let verdict = match verdict {
             Verdict::Success => 1,
             Verdict::Failure => 2,
@@ -369,28 +370,29 @@ impl<P: Provider + Clone> HeartbeatManagerClient<P> {
         Ok(events.into_iter().map(|(event, _log)| event).collect())
     }
 
+    fn compute_leaf(
+        contract_address: Address,
+        heartbeat_key: B256,
+        round: u8,
+        address: Address,
+    ) -> B256 {
+        let encoded =
+            ([0xa1_u8], contract_address, heartbeat_key, [round], address).abi_encode_packed();
+        keccak256(encoded)
+    }
+
     fn compute_merkle_proof(
-        &self,
+        contract_address: Address,
         event: &RoundStartedEvent,
         my_address: Address,
     ) -> anyhow::Result<Vec<B256>> {
-        let mut sorted_members = event.members.clone();
-        sorted_members.sort();
+        let sorted_members = event.members.clone();
 
         // Generate leaves
         let leaves: Vec<_> = sorted_members
             .iter()
             .map(|&member| {
-                let encoded = (
-                    [0xa1],
-                    self.contract.address(),
-                    event.heartbeatKey,
-                    U256::from(event.round),
-                    member,
-                )
-                    .abi_encode_packed();
-
-                keccak256(encoded)
+                Self::compute_leaf(contract_address, event.heartbeatKey, event.round, member)
             })
             .collect();
 
@@ -450,4 +452,33 @@ fn hash_pair(a: B256, b: B256) -> B256 {
 
     let encoded = (first, second).abi_encode_packed();
     keccak256(encoded)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy::providers::DynProvider;
+
+    #[test]
+    fn leaf() {
+        let contract_address = "0x3dbe95e20b370c5295e7436e2d887cfda8bcb02c"
+            .parse()
+            .unwrap();
+        let member = "0xF3A6D9F493b30E0560f555f27adB143bE6b16309"
+            .parse()
+            .unwrap();
+        let heartbeat_key = "0xbb93579fba8c311f05bc9accbc18f421d0b0c4912f7992534bf1e1a9fed70801"
+            .parse()
+            .unwrap();
+        let leaf = HeartbeatManagerClient::<DynProvider>::compute_leaf(
+            contract_address,
+            heartbeat_key,
+            1,
+            member,
+        );
+        let expected: B256 = "0xcab48c8675419b700c85d1998d622e0d3c6eb61c2a92eaa7898ccbac25302c46"
+            .parse()
+            .unwrap();
+        assert_eq!(leaf, expected);
+    }
 }
