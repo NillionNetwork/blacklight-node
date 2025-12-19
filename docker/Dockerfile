@@ -53,23 +53,11 @@ RUN mkdir -p ~/.cargo && \
         cat ~/.cargo/config.toml; \
     fi
 
-# Install Foundry (Solidity compilation is arch-independent)
-RUN curl -L https://foundry.paradigm.xyz | bash && \
-    /root/.foundry/bin/foundryup
-
-ENV PATH="/root/.foundry/bin:${PATH}"
-
 # Copy project files
 COPY Cargo.toml ./
 COPY src ./src
 COPY config ./config
 COPY data ./data
-COPY ./contracts/ ./contracts/
-
-WORKDIR /app/contracts/
-
-# Build Solidity contracts (arch-independent)
-RUN forge build 
 
 WORKDIR /app
 
