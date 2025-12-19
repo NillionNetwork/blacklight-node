@@ -153,7 +153,7 @@ struct MonitorState {
     selected_node_index: Option<usize>,
     htx_tracking_state: TableState,
     rpc_url: String,
-    router_contract_address: Address,
+    manager_contract_address: Address,
     staking_contract_address: Address,
     token_contract_address: Address,
     public_key: String,
@@ -187,23 +187,23 @@ async fn main() -> Result<()> {
 
     // Store values before they're moved
     let rpc_url = config.rpc_url.clone();
-    let router_contract_address = config.router_contract_address;
+    let manager_contract_address = config.manager_contract_address;
     let staking_contract_address = config.staking_contract_address;
     let token_contract_address = config.token_contract_address;
 
     let contract_config = ContractConfig::new(
         config.rpc_url,
-        config.router_contract_address,
+        config.manager_contract_address,
         config.staking_contract_address,
         config.token_contract_address,
     );
     let client = NilUVClient::new(contract_config, config.private_key).await?;
 
     // Initial data fetch for node count and list
-    let node_count = client.router.node_count().await?.to::<usize>();
+    let node_count = client.manager.node_count().await?.to::<usize>();
 
-    // Get all registered nodes from router
-    let registered_nodes = client.router.get_nodes().await?;
+    // Get all registered nodes from manager
+    let registered_nodes = client.manager.get_nodes().await?;
     let registered_set: HashSet<Address> = registered_nodes.into_iter().collect();
 
     // Get all operators with stake (efficient: queries contract state directly)
@@ -240,7 +240,7 @@ async fn main() -> Result<()> {
     let mut token_holder_addresses = HashSet::new();
 
     // Add all registered nodes
-    if let Ok(registered_nodes) = client.router.get_nodes().await {
+    if let Ok(registered_nodes) = client.manager.get_nodes().await {
         for addr in registered_nodes {
             token_holder_addresses.insert(addr);
         }
@@ -274,11 +274,11 @@ async fn main() -> Result<()> {
 
     // Add submitted events
     if config.all_htxs {
-        if let Ok(events) = client.router.get_htx_submitted_events().await {
+        if let Ok(events) = client.manager.get_htx_submitted_events().await {
             total_events += events.len();
             for e in events {
-                let htx_id = bytes_to_hex(e.htxId.as_slice());
-                let sender = format!("{:?}", e.sender);
+                let htx_id = bytes_to_hex(e.heartbeatKey.as_slice());
+                let sender = format!("{:?}", e.submitter);
                 htx_tracking.insert(
                     htx_id.clone(),
                     HTXTransaction {
@@ -293,19 +293,19 @@ async fn main() -> Result<()> {
         }
 
         // Add assigned events
-        if let Ok(events) = client.router.get_htx_assigned_events().await {
+        if let Ok(events) = client.manager.get_htx_assigned_events().await {
             total_events += events.len();
             for e in events {
-                let htx_id = bytes_to_hex(e.htxId.as_slice());
-                let node = format!("{:?}", e.node);
+                let htx_id = bytes_to_hex(e.heartbeatKey.as_slice());
+                let nodes: Vec<_> = e.members.iter().map(|n| format!("{n:?}")).collect();
                 htx_tracking
                     .entry(htx_id.clone())
                     .and_modify(|tx| {
-                        tx.assigned_nodes.insert(node.clone());
+                        tx.assigned_nodes.extend(nodes.iter().cloned());
                     })
                     .or_insert_with(|| {
                         let mut assigned = HashSet::new();
-                        assigned.insert(node.clone());
+                        assigned.extend(nodes);
                         HTXTransaction {
                             htx_id,
                             submitted_sender: None,
@@ -318,11 +318,11 @@ async fn main() -> Result<()> {
         }
 
         // Add responded events
-        if let Ok(events) = client.router.get_htx_responded_events().await {
+        if let Ok(events) = client.manager.get_htx_responded_events().await {
             total_events += events.len();
             for e in events {
-                let htx_id = bytes_to_hex(e.htxId.as_slice());
-                let node = format!("{:?}", e.node);
+                let htx_id = bytes_to_hex(e.heartbeatKey.as_slice());
+                let node = format!("{:?}", e.operator);
                 htx_tracking
                     .entry(htx_id.clone())
                     .and_modify(|tx| {
@@ -357,7 +357,7 @@ async fn main() -> Result<()> {
         selected_node_index: None,
         htx_tracking_state: TableState::default(),
         rpc_url,
-        router_contract_address,
+        manager_contract_address,
         staking_contract_address,
         token_contract_address,
         public_key: format!("{:?}", client.signer_address()),
@@ -523,8 +523,8 @@ async fn run_monitor_loop(
                             state_guard.status_message = "Refreshing...".to_string();
                             drop(state_guard);
 
-                            // Get all registered nodes from router
-                            let registered_result = client.router.get_nodes().await;
+                            // Get all registered nodes from manager
+                            let registered_result = client.manager.get_nodes().await;
                             // Get all operators with stake (efficient: direct contract query)
                             let staked_operators_result =
                                 client.staking.get_operators_with_stake().await;
@@ -570,7 +570,7 @@ async fn run_monitor_loop(
                                     let mut token_holder_addresses = HashSet::new();
 
                                     // Add all registered nodes
-                                    if let Ok(registered_nodes) = client.router.get_nodes().await {
+                                    if let Ok(registered_nodes) = client.manager.get_nodes().await {
                                         for addr in registered_nodes {
                                             token_holder_addresses.insert(addr);
                                         }
@@ -928,7 +928,7 @@ async fn run_monitor_loop(
 
                                         // Clone necessary data to drop lock
                                         let rpc_url = state_guard.rpc_url.clone();
-                                        let router_addr = state_guard.router_contract_address;
+                                        let manager_addr = state_guard.manager_contract_address;
                                         let staking_addr = state_guard.staking_contract_address;
                                         let token_addr = state_guard.token_contract_address;
 
@@ -941,7 +941,7 @@ async fn run_monitor_loop(
                                                 // Create a new client with the provided private key
                                                 let config = ContractConfig::new(
                                                     rpc_url,
-                                                    router_addr,
+                                                    manager_addr,
                                                     staking_addr,
                                                     token_addr,
                                                 );
@@ -1065,7 +1065,7 @@ async fn run_monitor_loop(
 
                                         // Clone necessary data to drop lock
                                         let rpc_url = state_guard.rpc_url.clone();
-                                        let router_addr = state_guard.router_contract_address;
+                                        let manager_addr = state_guard.manager_contract_address;
                                         let staking_addr = state_guard.staking_contract_address;
                                         let token_addr = state_guard.token_contract_address;
 
@@ -1078,7 +1078,7 @@ async fn run_monitor_loop(
                                                 // Create a new client with the provided private key
                                                 let config = ContractConfig::new(
                                                     rpc_url,
-                                                    router_addr,
+                                                    manager_addr,
                                                     staking_addr,
                                                     token_addr,
                                                 );
@@ -1199,7 +1199,7 @@ async fn run_monitor_loop(
 
                                         // Clone necessary data to drop lock
                                         let rpc_url = state_guard.rpc_url.clone();
-                                        let router_addr = state_guard.router_contract_address;
+                                        let manager_addr = state_guard.manager_contract_address;
                                         let staking_addr = state_guard.staking_contract_address;
                                         let token_addr = state_guard.token_contract_address;
 
@@ -1212,7 +1212,7 @@ async fn run_monitor_loop(
                                                 // Create a new client with the provided private key
                                                 let config = ContractConfig::new(
                                                     rpc_url,
-                                                    router_addr,
+                                                    manager_addr,
                                                     staking_addr,
                                                     token_addr,
                                                 );
@@ -1287,13 +1287,13 @@ async fn listen_htx_submitted(
     client: Arc<NilUVClient>,
     state: Arc<Mutex<MonitorState>>,
 ) -> Result<()> {
-    let router_arc = Arc::new(client.router.clone());
-    router_arc
+    let manager = Arc::new(client.manager.clone());
+    manager
         .listen_htx_submitted_events(move |event| {
             let state = state.clone();
             async move {
-                let htx_id = bytes_to_hex(event.htxId.as_slice());
-                let sender = format!("{:?}", event.sender);
+                let htx_id = bytes_to_hex(event.heartbeatKey.as_slice());
+                let sender = format!("{:?}", event.submitter);
 
                 let mut state_guard = state.lock().await;
 
@@ -1322,13 +1322,13 @@ async fn listen_htx_assigned(
     client: Arc<NilUVClient>,
     state: Arc<Mutex<MonitorState>>,
 ) -> Result<()> {
-    let router_arc = Arc::new(client.router.clone());
-    router_arc
+    let manager = Arc::new(client.manager.clone());
+    manager
         .listen_htx_assigned_events(move |event| {
             let state = state.clone();
             async move {
-                let htx_id = bytes_to_hex(event.htxId.as_slice());
-                let node = format!("{:?}", event.node);
+                let htx_id = bytes_to_hex(event.heartbeatKey.as_slice());
+                let nodes: Vec<_> = event.members.iter().map(|n| format!("{n:?}")).collect();
 
                 let mut state_guard = state.lock().await;
 
@@ -1337,11 +1337,11 @@ async fn listen_htx_assigned(
                     .htx_tracking
                     .entry(htx_id.clone())
                     .and_modify(|tx| {
-                        tx.assigned_nodes.insert(node.clone());
+                        tx.assigned_nodes.extend(nodes.iter().cloned());
                     })
                     .or_insert_with(|| {
                         let mut assigned = HashSet::new();
-                        assigned.insert(node.clone());
+                        assigned.extend(nodes);
                         HTXTransaction {
                             htx_id,
                             submitted_sender: None,
@@ -1363,13 +1363,13 @@ async fn listen_htx_responded(
     client: Arc<NilUVClient>,
     state: Arc<Mutex<MonitorState>>,
 ) -> Result<()> {
-    let router_arc = Arc::new(client.router.clone());
-    router_arc
+    let manager = Arc::new(client.manager.clone());
+    manager
         .listen_htx_responded_events(move |event| {
             let state = state.clone();
             async move {
-                let htx_id = bytes_to_hex(event.htxId.as_slice());
-                let node = format!("{:?}", event.node);
+                let htx_id = bytes_to_hex(event.heartbeatKey.as_slice());
+                let node = format!("{:?}", event.operator);
 
                 let mut state_guard = state.lock().await;
 
@@ -1490,11 +1490,11 @@ fn render_overview(f: &mut Frame, area: Rect, state: &MonitorState) {
         ]),
         Line::from(vec![
             Span::styled(
-                "Router Contract Address: ",
+                "Manager Contract Address: ",
                 Style::default().fg(Color::Cyan),
             ),
             Span::styled(
-                format!("{:?}", state.router_contract_address),
+                format!("{:?}", state.manager_contract_address),
                 Style::default().fg(Color::White),
             ),
         ]),
@@ -2305,7 +2305,7 @@ async fn listen_token_transfers(
                 let mut system_addresses = HashSet::new();
 
                 // Add all registered nodes
-                if let Ok(registered_nodes) = client.router.get_nodes().await {
+                if let Ok(registered_nodes) = client.manager.get_nodes().await {
                     for addr in registered_nodes {
                         system_addresses.insert(addr);
                     }

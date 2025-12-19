@@ -20,8 +20,6 @@ sol!(
 
 // Optional: bring the instance & events into scope
 use TESTToken::TESTTokenInstance;
-// You’ll also get event types generated from the ABI, e.g.
-// use NilAVRouter::{Htxsubmitted, Htxassigned, Htxresponded};
 
 /// WebSocket-based client for interacting with the TESTToken ERC20 contract
 #[derive(Clone)]

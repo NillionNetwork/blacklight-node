@@ -1,8 +1,8 @@
 use alloy::primitives::Address;
 
 pub mod common;
+pub mod heartbeat_manager;
 pub mod niluv_client;
-pub mod niluv_router;
 pub mod staking_operators;
 pub mod test_token;
 
@@ -10,8 +10,8 @@ pub mod test_token;
 // Client Type Re-exports
 // ============================================================================
 
+pub use heartbeat_manager::HeartbeatManagerClient;
 pub use niluv_client::NilUVClient;
-pub use niluv_router::NilUVRouterClient;
 pub use staking_operators::StakingOperatorsClient;
 pub use test_token::TESTTokenClient;
 
@@ -19,8 +19,8 @@ pub use test_token::TESTTokenClient;
 // Contract Event Type Re-exports
 // ============================================================================
 
-// NilUVRouter events
-pub use niluv_router::NilAVRouter;
+// Heartbeat manager events
+pub use heartbeat_manager::HearbeatManager;
 
 // StakingOperators events
 pub use staking_operators::StakingOperators;
@@ -42,14 +42,14 @@ pub type PrivateKey = String;
 /// Configuration for connecting to NilUV smart contracts
 ///
 /// Contains addresses for all three contracts in the system:
-/// - NilUVRouter: Main routing and HTX verification logic
+/// - HeartbeatManager: Main routing and HTX verification logic
 /// - StakingOperators: Operator registration and staking
 /// - TESTToken: Test token for staking (mainnet will use real token)
 ///
 /// Also includes connection settings for WebSocket reliability.
 #[derive(Clone, Debug)]
 pub struct ContractConfig {
-    pub router_contract_address: Address,
+    pub manager_contract_address: Address,
     pub staking_contract_address: Address,
     pub token_contract_address: Address,
     pub rpc_url: String,
@@ -60,7 +60,7 @@ pub struct ContractConfig {
 impl Default for ContractConfig {
     fn default() -> Self {
         Self {
-            router_contract_address: Address::ZERO,
+            manager_contract_address: Address::ZERO,
             staking_contract_address: Address::ZERO,
             token_contract_address: Address::ZERO,
             rpc_url: String::new(),
@@ -74,17 +74,17 @@ impl ContractConfig {
     ///
     /// # Arguments
     /// * `rpc_url` - Ethereum RPC endpoint (HTTP or WebSocket)
-    /// * `router_contract_address` - Address of deployed NilUVRouter contract
+    /// * `manager_contract_address` - Address of deployed HeartbeatManager contract
     /// * `staking_contract_address` - Address of deployed StakingOperators contract
     /// * `token_contract_address` - Address of deployed TESTToken contract
     pub fn new(
         rpc_url: String,
-        router_contract_address: Address,
+        manager_contract_address: Address,
         staking_contract_address: Address,
         token_contract_address: Address,
     ) -> Self {
         Self {
-            router_contract_address,
+            manager_contract_address,
             staking_contract_address,
             token_contract_address,
             rpc_url,
@@ -103,20 +103,20 @@ impl ContractConfig {
     /// Uses deterministic Anvil deployment addresses based on standard nonce order:
     /// - Token deployed first (nonce 0)
     /// - Staking deployed second (nonce 1)
-    /// - Router deployed third (nonce 2)
+    /// - Heartbeat manager deployed third (nonce 2)
     pub fn anvil_config() -> Self {
         Self {
             // Anvil deterministic addresses for deployer 0xf39F...2266 (account #0)
-            // These assume deployment order: Token -> Staking -> Router
+            // These assume deployment order: Token -> Staking -> Manager
             token_contract_address: "0x5FbDB2315678afecb367f032d93F642f64180aa3"
                 .parse::<Address>()
                 .expect("Invalid token address"),
             staking_contract_address: "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512"
                 .parse::<Address>()
                 .expect("Invalid staking address"),
-            router_contract_address: "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0"
+            manager_contract_address: "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0"
                 .parse::<Address>()
-                .expect("Invalid router address"),
+                .expect("Invalid manager address"),
             rpc_url: "http://127.0.0.1:8545".to_string(),
             max_ws_retries: u32::MAX,
         }
@@ -142,7 +142,7 @@ mod tests {
 
     #[test]
     fn test_config_creation() {
-        let router_address = "0x89c1312Cedb0B0F67e4913D2076bd4a860652B69"
+        let manager_address = "0x89c1312Cedb0B0F67e4913D2076bd4a860652B69"
             .parse::<Address>()
             .unwrap();
         let staking_address = "0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9"
@@ -154,12 +154,12 @@ mod tests {
 
         let config = ContractConfig::new(
             "http://localhost:8545".to_string(),
-            router_address,
+            manager_address,
             staking_address,
             token_address,
         );
 
-        assert_eq!(config.router_contract_address, router_address);
+        assert_eq!(config.manager_contract_address, manager_address);
         assert_eq!(config.staking_contract_address, staking_address);
         assert_eq!(config.token_contract_address, token_address);
         assert_eq!(config.rpc_url, "http://localhost:8545");
@@ -195,7 +195,7 @@ mod tests {
         });
 
         // Test contract addresses (update these to match your deployment)
-        let router_address = "0x89c1312Cedb0B0F67e4913D2076bd4a860652B69"
+        let manager_address = "0x89c1312Cedb0B0F67e4913D2076bd4a860652B69"
             .parse::<Address>()
             .unwrap();
         let staking_address = "0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9"
@@ -206,7 +206,7 @@ mod tests {
             .unwrap();
 
         // Create client with configuration
-        let config = ContractConfig::new(rpc_url, router_address, staking_address, token_address);
+        let config = ContractConfig::new(rpc_url, manager_address, staking_address, token_address);
         let client = NilUVClient::new(config, private_key).await?;
 
         Ok(client)
@@ -216,7 +216,7 @@ mod tests {
     #[ignore] // Requires a running Ethereum node
     async fn test_node_count() -> Result<(), Box<dyn std::error::Error>> {
         let client = create_test_client().await?;
-        let count = client.router.node_count().await?;
+        let count = client.manager.node_count().await?;
         println!("Node count: {}", count);
         Ok(())
     }
@@ -225,7 +225,7 @@ mod tests {
     #[ignore] // Requires a running Ethereum node
     async fn test_get_nodes() -> Result<(), Box<dyn std::error::Error>> {
         let client = create_test_client().await?;
-        let nodes = client.router.get_nodes().await?;
+        let nodes = client.manager.get_nodes().await?;
         println!("Nodes: {:?}", nodes);
         Ok(())
     }
@@ -236,7 +236,7 @@ mod tests {
         let client = create_test_client().await?;
 
         // Skip test if no nodes are registered
-        let node_count = client.router.node_count().await?;
+        let node_count = client.manager.node_count().await?;
         if node_count.is_zero() {
             println!("No nodes registered, skipping HTX submission test");
             return Ok(());
@@ -270,7 +270,7 @@ mod tests {
         .into();
 
         // Submit and verify
-        let tx_hash = client.router.submit_htx(&htx).await?;
+        let tx_hash = client.manager.submit_htx(&htx).await?;
         println!("HTX submitted successfully:");
         println!("  Transaction: {:?}", tx_hash);
 

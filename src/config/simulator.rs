@@ -3,7 +3,7 @@ use anyhow::Result;
 use clap::Parser;
 
 use crate::config::consts::{
-    DEFAULT_HTXS_PATH, DEFAULT_ROUTER_CONTRACT_ADDRESS, DEFAULT_RPC_URL, DEFAULT_SLOT_MS,
+    DEFAULT_HTXS_PATH, DEFAULT_MANAGER_CONTRACT_ADDRESS, DEFAULT_RPC_URL, DEFAULT_SLOT_MS,
     DEFAULT_STAKING_CONTRACT_ADDRESS, DEFAULT_TOKEN_CONTRACT_ADDRESS, STATE_FILE_SIMULATOR,
 };
 use crate::state::StateFile;
@@ -18,9 +18,9 @@ pub struct CliArgs {
     #[arg(long, env = "RPC_URL")]
     pub rpc_url: Option<String>,
 
-    /// NilUV router contract address
-    #[arg(long, env = "ROUTER_CONTRACT_ADDRESS")]
-    pub router_contract_address: Option<String>,
+    /// Heartbeat manager contract address
+    #[arg(long, env = "MANAGER_CONTRACT_ADDRESS")]
+    pub manager_contract_address: Option<String>,
 
     /// NilUV staking contract address
     #[arg(long, env = "STAKING_CONTRACT_ADDRESS")]
@@ -47,7 +47,7 @@ pub struct CliArgs {
 #[derive(Debug, Clone)]
 pub struct SimulatorConfig {
     pub rpc_url: String,
-    pub router_contract_address: Address,
+    pub manager_contract_address: Address,
     pub staking_contract_address: Address,
     pub token_contract_address: Address,
     pub private_key: String,
@@ -67,17 +67,17 @@ impl SimulatorConfig {
             .unwrap_or_else(|| DEFAULT_RPC_URL.to_string());
 
         // Load contract addresses with priority
-        let router_contract_address_str = cli_args
-            .router_contract_address
-            .or_else(|| state_file.load_value("ROUTER_CONTRACT_ADDRESS"))
-            .unwrap_or_else(|| DEFAULT_ROUTER_CONTRACT_ADDRESS.to_string());
+        let manager_contract_address = cli_args
+            .manager_contract_address
+            .or_else(|| state_file.load_value("MANAGER_CONTRACT_ADDRESS"))
+            .unwrap_or_else(|| DEFAULT_MANAGER_CONTRACT_ADDRESS.to_string());
 
-        let staking_contract_address_str = cli_args
+        let staking_contract_address = cli_args
             .staking_contract_address
             .or_else(|| state_file.load_value("STAKING_CONTRACT_ADDRESS"))
             .unwrap_or_else(|| DEFAULT_STAKING_CONTRACT_ADDRESS.to_string());
 
-        let token_contract_address_str = cli_args
+        let token_contract_address = cli_args
             .token_contract_address
             .or_else(|| state_file.load_value("TOKEN_CONTRACT_ADDRESS"))
             .unwrap_or_else(|| DEFAULT_TOKEN_CONTRACT_ADDRESS.to_string());
@@ -97,17 +97,16 @@ impl SimulatorConfig {
             .unwrap_or_else(|| DEFAULT_HTXS_PATH.to_string());
 
         // Parse contract addresses
-        let router_contract_address = router_contract_address_str.parse::<Address>()?;
-        let staking_contract_address = staking_contract_address_str.parse::<Address>()?;
-        let token_contract_address = token_contract_address_str.parse::<Address>()?;
+        let manager_contract_address = manager_contract_address.parse::<Address>()?;
+        let staking_contract_address = staking_contract_address.parse::<Address>()?;
+        let token_contract_address = token_contract_address.parse::<Address>()?;
 
         info!(
-            "Loaded SimulatorConfig: rpc_url={}, router_contract_address={}, htxs_path={}",
-            rpc_url, router_contract_address, htxs_path
+            "Loaded SimulatorConfig: rpc_url={rpc_url}, manager_contract_address={manager_contract_address}, htxs_path={htxs_path}"
         );
         Ok(SimulatorConfig {
             rpc_url,
-            router_contract_address,
+            manager_contract_address,
             staking_contract_address,
             token_contract_address,
             private_key,
