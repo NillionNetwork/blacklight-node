@@ -141,13 +141,13 @@ contract HeartbeatManager is Pausable, ReentrancyGuard, Ownable, EIP712 {
     function pause() external onlyOwner { _pause(); }
     function unpause() external onlyOwner { _unpause(); }
 
-    function _deriveHeartbeatKey(bytes calldata rawHTX) internal pure returns (bytes32) {
+    function _deriveHeartbeatKey(bytes calldata rawHTX, uint64 blockNumber) internal pure returns (bytes32) {
         bytes32 rawHash = keccak256(rawHTX);
-        return keccak256(abi.encodePacked("HEARTBEAT_KEY_V1", rawHash));
+        return keccak256(abi.encodePacked("HEARTBEAT_KEY_V1", rawHash, blockNumber));
     }
 
-    function deriveHeartbeatKey(bytes calldata rawHTX) external pure returns (bytes32) {
-        return _deriveHeartbeatKey(rawHTX);
+    function deriveHeartbeatKey(bytes calldata rawHTX, uint64 blockNumber) external pure returns (bytes32) {
+        return _deriveHeartbeatKey(rawHTX, blockNumber);
     }
 
     function _computeCommitteeSize(uint8 escalationLevel) internal view returns (uint32) {
@@ -183,7 +183,7 @@ contract HeartbeatManager is Pausable, ReentrancyGuard, Ownable, EIP712 {
         nonReentrant
         returns (bytes32 heartbeatKey)
     {
-        heartbeatKey = _deriveHeartbeatKey(rawHTX);
+        heartbeatKey = _deriveHeartbeatKey(rawHTX, uint64(block.number));
         if (snapshotId == 0) revert SnapshotBlockUnavailable(snapshotId);
 
         Heartbeat storage w = heartbeats[heartbeatKey];
@@ -351,25 +351,6 @@ contract HeartbeatManager is Pausable, ReentrancyGuard, Ownable, EIP712 {
         }
 
         emit OperatorVoted(heartbeatKey, round, operator, verdict, weight);
-
-        _maybeFinalizeRound(heartbeatKey, round, w, r);
-    }
-
-    function _maybeFinalizeRound(bytes32 heartbeatKey, uint8 round, Heartbeat storage w, RoundInfo storage r) internal {
-        uint256 total = r.committeeTotalStake;
-        if (total == 0) return;
-
-        uint256 quorum = Math.mulDiv(r.totalRespondedStake, 10_000, total);
-        if (quorum < r.quorumBps) return;
-
-        uint256 validBps   = Math.mulDiv(r.validStake, 10_000, total);
-        uint256 invalidBps = Math.mulDiv(r.invalidStake, 10_000, total);
-
-        if (validBps >= r.verificationBps) {
-            _finalizeRound(heartbeatKey, round, w, r, ISlashingPolicy.Outcome.ValidThreshold);
-        } else if (invalidBps >= r.verificationBps) {
-            _finalizeRound(heartbeatKey, round, w, r, ISlashingPolicy.Outcome.InvalidThreshold);
-        }
     }
 
     function escalateOrExpire(bytes32 heartbeatKey, bytes calldata rawHTX) external whenNotPaused nonReentrant {
@@ -547,6 +528,55 @@ contract HeartbeatManager is Pausable, ReentrancyGuard, Ownable, EIP712 {
 
     function getVotePacked(bytes32 heartbeatKey, uint8 round, address operator) external view returns (uint256) {
         return votePacked[heartbeatKey][round][operator];
+    }
+
+    struct RoundView {
+        HeartbeatStatus status;
+        uint8 round;
+        bool finalized;
+        uint64 startedAt;
+        uint64 deadline;
+        uint64 snapshotId;
+        uint32 committeeSize;
+        uint256 committeeTotalStake;
+        uint256 totalRespondedStake;
+        uint256 validStake;
+        uint256 invalidStake;
+        uint256 errorStake;
+        uint16 quorumBps;
+        uint16 verificationBps;
+    }
+
+    /// @notice Lightweight view for keepers to decide whether to call escalateOrExpire.
+    function getCurrentRoundView(bytes32 heartbeatKey) external view returns (RoundView memory v) {
+        Heartbeat storage w = heartbeats[heartbeatKey];
+        uint8 round = w.currentRound;
+        RoundInfo storage r = rounds[heartbeatKey][round];
+        v = RoundView({
+            status: w.status,
+            round: round,
+            finalized: r.finalized,
+            startedAt: r.startedAt,
+            deadline: r.deadline,
+            snapshotId: r.snapshotId,
+            committeeSize: r.committeeSize,
+            committeeTotalStake: r.committeeTotalStake,
+            totalRespondedStake: r.totalRespondedStake,
+            validStake: r.validStake,
+            invalidStake: r.invalidStake,
+            errorStake: r.errorStake,
+            quorumBps: r.quorumBps,
+            verificationBps: r.verificationBps
+        });
+    }
+
+    /// @notice Returns whether the current round is past deadline and still pending.
+    function isPastDeadline(bytes32 heartbeatKey) external view returns (bool) {
+        Heartbeat storage w = heartbeats[heartbeatKey];
+        if (w.status != HeartbeatStatus.Pending) return false;
+        RoundInfo storage r = rounds[heartbeatKey][w.currentRound];
+        if (r.finalized || r.deadline == 0) return false;
+        return block.timestamp > r.deadline;
     }
 
     function getRoundForPolicy(bytes32 heartbeatKey, uint8 round)
