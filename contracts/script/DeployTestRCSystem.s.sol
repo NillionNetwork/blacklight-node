@@ -71,6 +71,7 @@ contract DeployTestRCSystem is Script {
         if (p.useMockTokens && stakeToken == address(0)) {
             TESTToken mock = new TESTToken(p.governance);
             stakeToken = address(mock);
+            rewardToken = stakeToken;
             if (p.mockStakeMint != 0) mock.mint(p.mintRecipient, p.mockStakeMint);
             console2.log("Deployed TEST stake token:", stakeToken);
     }

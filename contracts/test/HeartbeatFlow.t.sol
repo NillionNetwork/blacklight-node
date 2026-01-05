@@ -35,6 +35,7 @@ contract HeartbeatFlowTest is BlacklightFixture {
         // Single valid vote (50%) meets quorum/verification thresholds.
         _vote(hbKey, round, members, members[0], 1);
 
+        _finalizeDefault(hbKey, round);
         (HeartbeatManager.HeartbeatStatus status, , , , , ) = manager.heartbeats(hbKey);
         assertEq(uint8(status), uint8(HeartbeatManager.HeartbeatStatus.Verified));
 

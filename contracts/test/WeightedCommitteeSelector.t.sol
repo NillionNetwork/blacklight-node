@@ -131,4 +131,44 @@ contract WeightedCommitteeSelectorTest is Test {
             assertTrue(stakingOps.isActiveOperator(members[i]), "inactive selected");
         }
     }
+
+    function test_selectCommittee_capsToMaxActiveOperators_whenPoolIsHuge() public {
+        // 1,200 operators with increasing stake (op i has stake i+1).
+        address[] memory ops = new address[](1200);
+        for (uint256 i = 0; i < ops.length; i++) {
+            address op = address(uint160(uint256(keccak256(abi.encodePacked("op", i + 1)))));
+            ops[i] = op;
+            uint256 stake = (i + 1) * 1e18;
+            stakeToken.mint(op, stake);
+            vm.startPrank(op);
+            stakeToken.approve(address(stakingOps), type(uint256).max);
+            stakingOps.stakeTo(op, stake);
+            stakingOps.registerOperator("ipfs://x");
+            vm.stopPrank();
+        }
+
+        // Leave default maxActiveOperators (1000) and request an oversized committee.
+        vm.roll(block.number + 1);
+        uint64 snap = stakingOps.snapshot();
+
+        address[] memory members = selector.selectCommittee(bytes32("hbKey"), 1, 1100, snap);
+        // Should cap at 1000 from maxActiveOperators and maxCommitteeSize
+        assertEq(members.length, 1000);
+
+        // Only the top 1000 stakers (highest indexes) should be eligible.
+        bool[1200] memory isTop;
+        for (uint256 i = 200; i < 1200; i++) isTop[i] = true; // indexes 200..1199 are the 1000 highest stakes
+
+        for (uint256 i = 0; i < members.length; i++) {
+            bool found;
+            for (uint256 j = 0; j < ops.length; j++) {
+                if (members[i] == ops[j]) {
+                    found = true;
+                    assertTrue(isTop[j], "selected below top-1000 pool");
+                    break;
+                }
+            }
+            assertTrue(found, "unknown member returned");
+        }
+    }
 }

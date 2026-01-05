@@ -27,6 +27,7 @@ contract JailingPolicyTest is BlacklightFixture {
         // finalize valid threshold
         for (uint256 i = 0; i < 5; i++) _vote(hbKey, round, members, members[i], 1);
 
+        _finalizeDefault(hbKey, round);
         (bool set, ISlashingPolicy.Outcome outcome, bytes32 root, address stakingAddr, uint64 jailDur, uint32 committeeSize) =
             jailingPolicy.roundRecord(hbKey, round);
 
@@ -46,6 +47,7 @@ contract JailingPolicyTest is BlacklightFixture {
         _vote(hbKey, round, members, members[5], 2); // incorrect voter
         _vote(hbKey, round, members, members[4], 1); // pushes valid stake to threshold
 
+        _finalizeDefault(hbKey, round);
         // should be finalized valid threshold
         assertEq(uint8(manager.roundOutcome(hbKey, round)), uint8(ISlashingPolicy.Outcome.ValidThreshold));
 
@@ -73,6 +75,7 @@ contract JailingPolicyTest is BlacklightFixture {
         (bytes32 hbKey, uint8 round, , , address[] memory members) = _submitPointerAndGetRound();
         for (uint256 i = 0; i < 5; i++) _vote(hbKey, round, members, members[i], 1);
 
+        _finalizeDefault(hbKey, round);
         // unsorted list
         address[] memory unsorted = new address[](members.length);
         for (uint256 i = 0; i < members.length; i++) unsorted[i] = members[members.length - 1 - i];

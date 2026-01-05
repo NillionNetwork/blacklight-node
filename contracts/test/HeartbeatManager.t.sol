@@ -5,6 +5,8 @@ import "forge-std/Test.sol";
 import "./helpers/BlacklightFixture.sol";
 import "../src/mocks/MockERC20.sol";
 import "../src/RewardPolicy.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/utils/Pausable.sol";
 
 contract HeartbeatManagerTest is BlacklightFixture {
     function setUp() public {
@@ -61,7 +63,8 @@ contract HeartbeatManagerTest is BlacklightFixture {
 
     function test_submitHeartbeat_idempotent_noSecondRoundStarted() public {
         bytes memory rawHTX = _defaultRawHTX(1);
-        bytes32 hbKey = manager.deriveHeartbeatKey(rawHTX);
+        uint64 submissionBlock = uint64(block.number);
+        bytes32 hbKey = manager.deriveHeartbeatKey(rawHTX, submissionBlock);
         (uint64 snap, ) = _prepareCommittee(hbKey, 1, 0);
 
         vm.recordLogs();
@@ -88,6 +91,17 @@ contract HeartbeatManagerTest is BlacklightFixture {
         manager.submitVerdict(hbKey, 1, new bytes32[](0));
         assertEq(round, 1);
         assertEq(members.length, 10);
+    }
+
+    function test_submitHeartbeat_revertsForInvalidSnapshotId() public {
+        bytes memory rawHTX = _defaultRawHTX(123);
+
+        vm.expectRevert(abi.encodeWithSelector(HeartbeatManager.SnapshotBlockUnavailable.selector, uint64(0)));
+        manager.submitHeartbeat(rawHTX, 0);
+
+        uint64 future = uint64(block.number);
+        vm.expectRevert(abi.encodeWithSelector(HeartbeatManager.SnapshotBlockUnavailable.selector, future));
+        manager.submitHeartbeat(rawHTX, future);
     }
 
     function test_submitVerdict_revertsAfterDeadline() public {
@@ -124,6 +138,7 @@ contract HeartbeatManagerTest is BlacklightFixture {
             _vote(hbKey, round, members, members[i], 1);
         }
 
+        _finalizeDefault(hbKey, round);
         assertEq(uint8(manager.roundOutcome(hbKey, round)), uint8(ISlashingPolicy.Outcome.ValidThreshold));
         (HeartbeatManager.HeartbeatStatus status, , , , , ) = manager.heartbeats(hbKey);
         assertEq(uint8(status), uint8(HeartbeatManager.HeartbeatStatus.Verified));
@@ -136,9 +151,23 @@ contract HeartbeatManagerTest is BlacklightFixture {
             _vote(hbKey, round, members, members[i], 2);
         }
 
+        _finalizeDefault(hbKey, round);
         assertEq(uint8(manager.roundOutcome(hbKey, round)), uint8(ISlashingPolicy.Outcome.InvalidThreshold));
         (HeartbeatManager.HeartbeatStatus status, , , , , ) = manager.heartbeats(hbKey);
         assertEq(uint8(status), uint8(HeartbeatManager.HeartbeatStatus.Invalid));
+    }
+
+    function test_pause_blocks_submitHeartbeat_and_votes() public {
+        (bytes32 hbKey, uint8 round, , , address[] memory members) = _submitPointerAndGetRound();
+        manager.pause();
+
+        vm.expectRevert(Pausable.EnforcedPause.selector);
+        manager.submitHeartbeat(_defaultRawHTX(77), uint64(block.number - 1));
+
+        bytes32[] memory proof = _proofForMember(hbKey, round, members, members[0]);
+        vm.prank(members[0]);
+        vm.expectRevert(Pausable.EnforcedPause.selector);
+        manager.submitVerdict(hbKey, 1, proof);
     }
 
     function test_escalateOrExpire_beforeDeadline_reverts() public {
@@ -186,6 +215,15 @@ contract HeartbeatManagerTest is BlacklightFixture {
         assertEq(uint8(status2), uint8(HeartbeatManager.HeartbeatStatus.Expired));
     }
 
+    function test_escalateOrExpire_revertsOnRawHashMismatch() public {
+        (bytes32 hbKey, uint8 round, , , ) = _submitPointerAndGetRound();
+        (, , , , , , , , , , uint64 deadline, , , , , , , , , ) = manager.rounds(hbKey, round);
+        vm.warp(uint256(deadline) + 1);
+
+        vm.expectRevert(HeartbeatManager.RawHTXHashMismatch.selector);
+        manager.escalateOrExpire(hbKey, _defaultRawHTX(999));
+    }
+
     function test_moduleUpgrade_doesNotAffectExistingRoundRewardAddress() public {
         (bytes32 hbKey, uint8 round, , , address[] memory members) = _submitPointerAndGetRound();
 
@@ -193,6 +231,7 @@ contract HeartbeatManagerTest is BlacklightFixture {
             _vote(hbKey, round, members, members[i], 1);
         }
 
+        _finalizeDefault(hbKey, round);
         // Upgrade reward policy after round start (should not affect this round)
         RewardPolicy newReward = new RewardPolicy(IERC20(address(rewardToken)), address(manager), governance, 1 days, 0);
         config.setModules(address(stakingOps), address(selector), address(jailingPolicy), address(newReward));
@@ -298,6 +337,7 @@ contract HeartbeatManagerTest is BlacklightFixture {
         (bytes32 hbKey, uint8 round, , , address[] memory members) = _submitPointerAndGetRound();
         for (uint256 i = 0; i < 5; i++) _vote(hbKey, round, members, members[i], 1);
 
+        _finalizeDefault(hbKey, round);
         // fund rewards
         rewardToken.mint(governance, 1000);
         rewardToken.approve(address(rewardPolicy), type(uint256).max);
@@ -316,6 +356,7 @@ contract HeartbeatManagerTest is BlacklightFixture {
         (bytes32 hbKey, uint8 round, , , address[] memory members) = _submitPointerAndGetRound();
         for (uint256 i = 0; i < 5; i++) _vote(hbKey, round, members, members[i], 1);
 
+        _finalizeDefault(hbKey, round);
         rewardToken.mint(governance, 1000);
         rewardToken.approve(address(rewardPolicy), type(uint256).max);
         rewardPolicy.fund(1000);
@@ -333,6 +374,7 @@ contract HeartbeatManagerTest is BlacklightFixture {
         (bytes32 hbKey, uint8 round, , , address[] memory members) = _submitPointerAndGetRound();
         for (uint256 i = 0; i < 5; i++) _vote(hbKey, round, members, members[i], 1);
 
+        _finalizeDefault(hbKey, round);
         rewardToken.mint(governance, 1000);
         rewardToken.approve(address(rewardPolicy), type(uint256).max);
         rewardPolicy.fund(1000);
@@ -372,5 +414,26 @@ contract HeartbeatManagerTest is BlacklightFixture {
         bytes32[] memory proof = MerkleTestUtils.proofForIndex(leaves, 0);
         // OpenZeppelin MerkleProof expects leaf and root; verification happens inside HeartbeatManager anyway, but assert non-empty proof for larger trees
         if (members.length > 1) assertGt(proof.length, 0);
+    }
+
+    function test_abandonRewardDistribution_blocksPayout_and_is_ownerOnly() public {
+        (bytes32 hbKey, uint8 round, , , address[] memory members) = _submitPointerAndGetRound();
+        for (uint256 i = 0; i < 5; i++) {
+            _vote(hbKey, round, members, members[i], 1);
+        }
+
+        _finalizeDefault(hbKey, round);
+        address nonOwner = address(0xBEEF);
+        vm.prank(nonOwner);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, nonOwner));
+        manager.abandonRewardDistribution(hbKey, round);
+
+        manager.abandonRewardDistribution(hbKey, round);
+
+        address[] memory voters = new address[](5);
+        for (uint256 i = 0; i < 5; i++) voters[i] = members[i];
+
+        vm.expectRevert(HeartbeatManager.RewardsAlreadyDone.selector);
+        manager.distributeRewards(hbKey, round, voters);
     }
 }

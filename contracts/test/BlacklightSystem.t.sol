@@ -29,6 +29,7 @@ contract BlacklightSystemTest is BlacklightFixture {
         // Finalize valid threshold with 5/10 votes
         for (uint256 i = 0; i < 5; i++) _vote(hbKey, round, members, members[i], 1);
 
+        _finalizeDefault(hbKey, round);
         assertEq(uint8(manager.roundOutcome(hbKey, round)), uint8(ISlashingPolicy.Outcome.ValidThreshold));
 
         // Fund & unlock rewards
@@ -77,6 +78,7 @@ contract BlacklightSystemTest is BlacklightFixture {
         // vote valid from first 60 members => 30% of total stake (since equal stake)
         for (uint256 i = 0; i < 60; i++) _vote(hbKey, round, members, members[i], 1);
 
+        _finalizeDefault(hbKey, round);
         assertEq(uint8(manager.roundOutcome(hbKey, round)), uint8(ISlashingPolicy.Outcome.ValidThreshold));
 
         // enforce jailing (nonvoters should be jailed)
@@ -137,6 +139,7 @@ contract BlacklightSystemTest is BlacklightFixture {
                 totalStake += s;
             }
 
+            _finalizeRound(hbKey, round, id);
             assertEq(uint8(manager.roundOutcome(hbKey, round)), uint8(ISlashingPolicy.Outcome.ValidThreshold));
 
             manager.distributeRewards(hbKey, round, members);
@@ -178,13 +181,15 @@ contract BlacklightSystemTest is BlacklightFixture {
         _vote(hbKey1, round1, members1, members1[5], 2);
         _vote(hbKey1, round1, members1, members1[4], 1);
 
+        _finalizeDefault(hbKey1, round1);
         // Jail everyone except correct voters
         jailingPolicy.enforceJailFromMembers(hbKey1, round1, members1);
 
         // Submit a new heartbeat (different HTX)
         vm.recordLogs();
         bytes memory rawHTX2 = _defaultRawHTX(2);
-        bytes32 hbKey2 = manager.deriveHeartbeatKey(rawHTX2);
+        uint64 submissionBlock = uint64(block.number);
+        bytes32 hbKey2 = manager.deriveHeartbeatKey(rawHTX2, submissionBlock);
         (uint64 snap2, ) = _prepareCommittee(hbKey2, 1, 0);
         manager.submitHeartbeat(rawHTX2, snap2);
         Vm.Log[] memory logs = vm.getRecordedLogs();
@@ -208,6 +213,59 @@ contract BlacklightSystemTest is BlacklightFixture {
                 for (uint256 j = 0; j < members2.length; j++) {
                     assertTrue(members2[j] != members1[i], "jailed operator selected");
                 }
+            }
+        }
+    }
+
+    function test_veryLargeOperatorPool_reward_distribution_and_jailing() public {
+        uint256 nOps = 1000;
+        uint256[] memory stakes = new uint256[](nOps);
+        for (uint256 i = 0; i < nOps; i++) stakes[i] = 1e18;
+
+        _deploySystem(
+            nOps,
+            stakes,
+            200,  // baseCommitteeSize
+            200,  // maxCommitteeSize
+            5000, // quorumBps (50%)
+            5000, // verificationBps (50%)
+            1 days,
+            7 days,
+            0
+        );
+
+        (bytes32 hbKey, uint8 round, , , address[] memory members) = _submitPointerAndGetRound();
+        assertEq(members.length, 200);
+
+        // 120 valid votes (60% of committee) finalize to ValidThreshold.
+        for (uint256 i = 0; i < 120; i++) _vote(hbKey, round, members, members[i], 1);
+        _finalizeDefault(hbKey, round);
+        assertEq(uint8(manager.roundOutcome(hbKey, round)), uint8(ISlashingPolicy.Outcome.ValidThreshold));
+
+        // Fund rewards and unlock budget.
+        rewardToken.mint(governance, 12_000);
+        rewardToken.approve(address(rewardPolicy), type(uint256).max);
+        rewardPolicy.fund(12_000);
+        vm.warp(block.timestamp + 2 days);
+        rewardPolicy.sync();
+
+        address[] memory voters = new address[](120);
+        for (uint256 i = 0; i < 120; i++) voters[i] = members[i];
+
+        manager.distributeRewards(hbKey, round, voters);
+
+        // Each voter should get an equal 100 tokens (12_000 / 120) since stakes are equal.
+        for (uint256 i = 0; i < 120; i++) {
+            assertEq(rewardPolicy.rewards(voters[i]), 100);
+        }
+
+        // Enforce jailing on the large committee; only non-voters should be jailed.
+        jailingPolicy.enforceJailFromMembers(hbKey, round, members);
+        for (uint256 i = 0; i < members.length; i++) {
+            if (i < 120) {
+                assertFalse(stakingOps.isJailed(members[i]), "voter should not be jailed");
+            } else {
+                assertTrue(stakingOps.isJailed(members[i]), "nonvoter should be jailed");
             }
         }
     }

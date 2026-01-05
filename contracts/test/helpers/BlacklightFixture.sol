@@ -122,7 +122,8 @@ abstract contract BlacklightFixture is Test {
     {
         vm.recordLogs();
         bytes memory rawHTX = _defaultRawHTX(1);
-        heartbeatKey = manager.deriveHeartbeatKey(rawHTX);
+        uint64 submissionBlock = uint64(block.number);
+        heartbeatKey = manager.deriveHeartbeatKey(rawHTX, submissionBlock);
         (snapshotId, members) = _prepareCommittee(heartbeatKey, 1, 0);
         address[] memory expectedMembers = members;
         manager.submitHeartbeat(rawHTX, snapshotId);
@@ -156,7 +157,8 @@ abstract contract BlacklightFixture is Test {
     {
         vm.recordLogs();
         bytes memory rawHTX = _defaultRawHTX(id);
-        heartbeatKey = manager.deriveHeartbeatKey(rawHTX);
+        uint64 submissionBlock = uint64(block.number);
+        heartbeatKey = manager.deriveHeartbeatKey(rawHTX, submissionBlock);
         (snapshotId, members) = _prepareCommittee(heartbeatKey, 1, 0);
         address[] memory expectedMembers = members;
         manager.submitHeartbeat(rawHTX, snapshotId);
@@ -244,6 +246,16 @@ abstract contract BlacklightFixture is Test {
         bytes32[] memory proof = _proofForMember(heartbeatKey, round, members, voter);
         vm.prank(voter);
         manager.submitVerdict(heartbeatKey, verdict, proof);
+    }
+
+    function _finalizeRound(bytes32 heartbeatKey, uint8 round, uint64 rawId) internal {
+        (, , , , , , , , , , uint64 deadline, , , , , , , , , ) = manager.rounds(heartbeatKey, round);
+        vm.warp(uint256(deadline) + 1);
+        manager.escalateOrExpire(heartbeatKey, _defaultRawHTX(rawId));
+    }
+
+    function _finalizeDefault(bytes32 heartbeatKey, uint8 round) internal {
+        _finalizeRound(heartbeatKey, round, 1);
     }
 
     function _batchedVote(bytes32 heartbeatKey, uint8 round, address[] memory members, uint256 pk, address voter, uint8 verdict) internal {

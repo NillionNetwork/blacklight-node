@@ -160,7 +160,8 @@ contract HeartbeatManagerInvariants is StdInvariant, Test {
 
         // start heartbeat and capture committee list from logs
         bytes memory rawHTX = abi.encodePacked("raw-htx-invariant");
-        bytes32 hbKey = manager.deriveHeartbeatKey(rawHTX);
+        uint64 submissionBlock = uint64(block.number);
+        bytes32 hbKey = manager.deriveHeartbeatKey(rawHTX, submissionBlock);
 
         vm.recordLogs();
         uint32 targetSize = config.baseCommitteeSize();
