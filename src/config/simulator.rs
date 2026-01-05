@@ -1,11 +1,9 @@
 use alloy::primitives::Address;
+use anyhow::anyhow;
 use anyhow::Result;
 use clap::Parser;
 
-use crate::config::consts::{
-    DEFAULT_HTXS_PATH, DEFAULT_MANAGER_CONTRACT_ADDRESS, DEFAULT_RPC_URL, DEFAULT_SLOT_MS,
-    DEFAULT_STAKING_CONTRACT_ADDRESS, DEFAULT_TOKEN_CONTRACT_ADDRESS, STATE_FILE_SIMULATOR,
-};
+use crate::config::consts::{DEFAULT_HTXS_PATH, DEFAULT_SLOT_MS, STATE_FILE_SIMULATOR};
 use crate::state::StateFile;
 use tracing::info;
 
@@ -64,23 +62,23 @@ impl SimulatorConfig {
         let rpc_url = cli_args
             .rpc_url
             .or_else(|| state_file.load_value("RPC_URL"))
-            .unwrap_or_else(|| DEFAULT_RPC_URL.to_string());
+            .ok_or_else(|| anyhow!("no RPC url provided"))?;
 
         // Load contract addresses with priority
         let manager_contract_address = cli_args
             .manager_contract_address
             .or_else(|| state_file.load_value("MANAGER_CONTRACT_ADDRESS"))
-            .unwrap_or_else(|| DEFAULT_MANAGER_CONTRACT_ADDRESS.to_string());
+            .ok_or_else(|| anyhow!("no manager contract address provided"))?;
 
         let staking_contract_address = cli_args
             .staking_contract_address
             .or_else(|| state_file.load_value("STAKING_CONTRACT_ADDRESS"))
-            .unwrap_or_else(|| DEFAULT_STAKING_CONTRACT_ADDRESS.to_string());
+            .ok_or_else(|| anyhow!("no staking contract address provided"))?;
 
         let token_contract_address = cli_args
             .token_contract_address
             .or_else(|| state_file.load_value("TOKEN_CONTRACT_ADDRESS"))
-            .unwrap_or_else(|| DEFAULT_TOKEN_CONTRACT_ADDRESS.to_string());
+            .ok_or_else(|| anyhow!("no token contract address provided"))?;
 
         // Load private key with priority (different default than node)
         let private_key = cli_args
