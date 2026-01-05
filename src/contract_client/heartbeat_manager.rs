@@ -1,6 +1,10 @@
 use crate::{
     config::consts::DEFAULT_LOOKBACK_BLOCKS,
-    contract_client::heartbeat_manager::HearbeatManager::HearbeatManagerInstance, types::Htx,
+    contract_client::{
+        common::tx_submitter::TransactionSubmitter,
+        heartbeat_manager::HearbeatManager::HearbeatManagerInstance,
+    },
+    types::Htx,
 };
 use alloy::{
     primitives::{keccak256, Address, B256, U256},
@@ -15,7 +19,6 @@ use crate::contract_client::common::errors::decode_any_error;
 use crate::contract_client::common::event_helper::{
     listen_events, listen_events_filtered, BlockRange,
 };
-use crate::contract_client::common::tx_helper::{send_and_confirm, send_with_gas_and_confirm};
 use anyhow::{anyhow, bail, Context, Result};
 
 sol! {
@@ -24,6 +27,7 @@ sol! {
     }
 
     #[sol(rpc)]
+    #[derive(Debug)]
     contract HearbeatManager {
         error ZeroAddress();
         error NotPending();
@@ -72,7 +76,7 @@ pub type HeartbeatEnqueuedEvent = HearbeatManager::HeartbeatEnqueued;
 pub struct HeartbeatManagerClient<P: Provider + Clone> {
     provider: P,
     contract: HearbeatManagerInstance<P>,
-    tx_lock: Arc<Mutex<()>>,
+    submitter: TransactionSubmitter<HearbeatManager::HearbeatManagerErrors>,
 }
 
 impl<P: Provider + Clone> HeartbeatManagerClient<P> {
@@ -80,10 +84,11 @@ impl<P: Provider + Clone> HeartbeatManagerClient<P> {
     pub fn new(provider: P, config: super::ContractConfig, tx_lock: Arc<Mutex<()>>) -> Self {
         let contract =
             HearbeatManagerInstance::new(config.manager_contract_address, provider.clone());
+        let submitter = TransactionSubmitter::new(tx_lock);
         Self {
             provider,
             contract,
-            tx_lock,
+            submitter,
         }
     }
 
@@ -133,7 +138,10 @@ impl<P: Provider + Clone> HeartbeatManagerClient<P> {
         })?;
         let gas_with_buffer = estimated_gas.saturating_add(estimated_gas / 2);
 
-        send_with_gas_and_confirm(call, &self.tx_lock, "submitHeartbeat", gas_with_buffer).await
+        self.submitter
+            .with_gas_limit(gas_with_buffer)
+            .invoke("submitHeartbeat", call)
+            .await
     }
 
     /// Respond to an HTX assignment (called by assigned node)
@@ -153,7 +161,7 @@ impl<P: Provider + Clone> HeartbeatManagerClient<P> {
         let call = self
             .contract
             .submitVerdict(event.heartbeatKey, verdict, proofs);
-        send_and_confirm(call, &self.tx_lock, "submitVerdict").await
+        self.submitter.invoke("submitVerdict", call).await
     }
 
     /// Check if a specific node has responded to an HTX

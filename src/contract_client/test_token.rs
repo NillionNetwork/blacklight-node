@@ -3,16 +3,18 @@ use alloy::{
     providers::Provider,
     sol,
 };
-use std::sync::Arc;
+use std::{convert::Infallible, sync::Arc};
 use tokio::sync::Mutex;
 
-use crate::contract_client::common::event_helper::listen_events;
-use crate::contract_client::common::tx_helper::send_and_confirm;
+use crate::contract_client::common::{
+    event_helper::listen_events, tx_submitter::TransactionSubmitter,
+};
 use anyhow::Result;
 
 // Generate type-safe contract bindings from ABI
 sol!(
     #[sol(rpc)]
+    #[derive(Debug)]
     contract TESTToken {
         event Transfer(address indexed from, address indexed to, uint256 value);
 
@@ -35,7 +37,7 @@ use TESTToken::TESTTokenInstance;
 #[derive(Clone)]
 pub struct TESTTokenClient<P: Provider + Clone> {
     contract: TESTTokenInstance<P>,
-    tx_lock: Arc<Mutex<()>>,
+    submitter: TransactionSubmitter<Infallible>,
 }
 
 impl<P: Provider + Clone> TESTTokenClient<P> {
@@ -47,7 +49,11 @@ impl<P: Provider + Clone> TESTTokenClient<P> {
     ) -> Self {
         let contract_address = config.token_contract_address;
         let contract = TESTTokenInstance::new(contract_address, provider.clone());
-        Self { contract, tx_lock }
+        let submitter = TransactionSubmitter::new(tx_lock);
+        Self {
+            contract,
+            submitter,
+        }
     }
 
     /// Get the contract address
@@ -96,19 +102,19 @@ impl<P: Provider + Clone> TESTTokenClient<P> {
     /// Transfers tokens to a recipient
     pub async fn transfer(&self, to: Address, amount: U256) -> Result<B256> {
         let call = self.contract.transfer(to, amount);
-        send_and_confirm(call, &self.tx_lock, "transfer").await
+        self.submitter.invoke("transfer", call).await
     }
 
     /// Approves a spender to spend tokens on behalf of the caller
     pub async fn approve(&self, spender: Address, amount: U256) -> Result<B256> {
         let call = self.contract.approve(spender, amount);
-        send_and_confirm(call, &self.tx_lock, "approve").await
+        self.submitter.invoke("approve", call).await
     }
 
     /// Mints new tokens (requires owner privileges)
     pub async fn mint(&self, to: Address, amount: U256) -> Result<B256> {
         let call = self.contract.mint(to, amount);
-        send_and_confirm(call, &self.tx_lock, "mint").await
+        self.submitter.invoke("mint", call).await
     }
 
     // ------------------------------------------------------------------------
