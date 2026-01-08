@@ -1,9 +1,10 @@
 use alloy::primitives::Address;
-use anyhow::anyhow;
 use anyhow::Result;
 use clap::Parser;
 
 use crate::config::consts::{DEFAULT_HTXS_PATH, DEFAULT_SLOT_MS, STATE_FILE_SIMULATOR};
+use crate::config::ChainArgs;
+use crate::config::ChainConfig;
 use crate::state::StateFile;
 use tracing::info;
 
@@ -12,21 +13,8 @@ use tracing::info;
 #[command(name = "nilcc_simulator")]
 #[command(about = "NilUV Server - Submits HTXs to the smart contract", long_about = None)]
 pub struct CliArgs {
-    /// Ethereum RPC endpoint
-    #[arg(long, env = "RPC_URL")]
-    pub rpc_url: Option<String>,
-
-    /// Heartbeat manager contract address
-    #[arg(long, env = "MANAGER_CONTRACT_ADDRESS")]
-    pub manager_contract_address: Option<String>,
-
-    /// NilUV staking contract address
-    #[arg(long, env = "STAKING_CONTRACT_ADDRESS")]
-    pub staking_contract_address: Option<String>,
-
-    /// TEST token contract address
-    #[arg(long, env = "TOKEN_CONTRACT_ADDRESS")]
-    pub token_contract_address: Option<String>,
+    #[clap(flatten)]
+    pub chain_args: ChainArgs,
 
     /// Private key for signing transactions
     #[arg(long, env = "PRIVATE_KEY")]
@@ -57,28 +45,12 @@ impl SimulatorConfig {
     /// Load configuration with priority: CLI/env -> state file -> defaults
     pub fn load(cli_args: CliArgs) -> Result<Self> {
         let state_file = StateFile::new(STATE_FILE_SIMULATOR);
-
-        // Load RPC URL with priority
-        let rpc_url = cli_args
-            .rpc_url
-            .or_else(|| state_file.load_value("RPC_URL"))
-            .ok_or_else(|| anyhow!("no RPC url provided"))?;
-
-        // Load contract addresses with priority
-        let manager_contract_address = cli_args
-            .manager_contract_address
-            .or_else(|| state_file.load_value("MANAGER_CONTRACT_ADDRESS"))
-            .ok_or_else(|| anyhow!("no manager contract address provided"))?;
-
-        let staking_contract_address = cli_args
-            .staking_contract_address
-            .or_else(|| state_file.load_value("STAKING_CONTRACT_ADDRESS"))
-            .ok_or_else(|| anyhow!("no staking contract address provided"))?;
-
-        let token_contract_address = cli_args
-            .token_contract_address
-            .or_else(|| state_file.load_value("TOKEN_CONTRACT_ADDRESS"))
-            .ok_or_else(|| anyhow!("no token contract address provided"))?;
+        let ChainConfig {
+            rpc_url,
+            manager_contract_address,
+            staking_contract_address,
+            token_contract_address,
+        } = ChainConfig::new(cli_args.chain_args, &state_file)?;
 
         // Load private key with priority (different default than node)
         let private_key = cli_args
@@ -93,11 +65,6 @@ impl SimulatorConfig {
             .htxs_path
             .or_else(|| state_file.load_value("HTXS_PATH"))
             .unwrap_or_else(|| DEFAULT_HTXS_PATH.to_string());
-
-        // Parse contract addresses
-        let manager_contract_address = manager_contract_address.parse::<Address>()?;
-        let staking_contract_address = staking_contract_address.parse::<Address>()?;
-        let token_contract_address = token_contract_address.parse::<Address>()?;
 
         info!(
             "Loaded SimulatorConfig: rpc_url={rpc_url}, manager_contract_address={manager_contract_address}, htxs_path={htxs_path}"

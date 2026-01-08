@@ -3,11 +3,11 @@ use std::path::PathBuf;
 
 use alloy::primitives::utils::format_ether;
 use alloy::primitives::{Address, U256};
-use anyhow::anyhow;
 use anyhow::{Context, Result};
 use clap::Parser;
 
 use crate::config::consts::{MIN_ETH_BALANCE, STATE_FILE_NODE};
+use crate::config::{ChainArgs, ChainConfig};
 use crate::contract_client::NilUVClient;
 use crate::state::StateFile;
 use crate::wallet::{display_wallet_status, generate_wallet, WalletStatus};
@@ -18,21 +18,8 @@ use tracing::{error, info};
 #[command(name = "niluv_node")]
 #[command(about = "NilUV verifier node", long_about = None)]
 pub struct CliArgs {
-    /// Ethereum RPC endpoint (will be converted to WebSocket)
-    #[arg(long, env = "RPC_URL")]
-    pub rpc_url: Option<String>,
-
-    /// Heartbeat manager contract address
-    #[arg(long, env = "MANAGER_CONTRACT_ADDRESS")]
-    pub manager_contract_address: Option<String>,
-
-    /// NilUV staking contract address
-    #[arg(long, env = "STAKING_CONTRACT_ADDRESS")]
-    pub staking_contract_address: Option<String>,
-
-    /// TEST token contract address
-    #[arg(long, env = "TOKEN_CONTRACT_ADDRESS")]
-    pub token_contract_address: Option<String>,
+    #[clap(flatten)]
+    pub chain_args: ChainArgs,
 
     /// Private key for contract interactions
     #[arg(long, env = "PRIVATE_KEY")]
@@ -64,28 +51,12 @@ impl NodeConfig {
     /// Returns (NodeConfig, was_wallet_created)
     pub async fn load(cli_args: CliArgs) -> Result<Self> {
         let state_file = StateFile::new(STATE_FILE_NODE);
-
-        // Load RPC URL with priority
-        let rpc_url = cli_args
-            .rpc_url
-            .or_else(|| state_file.load_value("RPC_URL"))
-            .ok_or_else(|| anyhow!("no RPC url provided"))?;
-
-        // Load contract addresses with priority
-        let manager_contract_address = cli_args
-            .manager_contract_address
-            .or_else(|| state_file.load_value("MANAGER_CONTRACT_ADDRESS"))
-            .ok_or_else(|| anyhow!("no manager contract address provided"))?;
-
-        let staking_contract_address = cli_args
-            .staking_contract_address
-            .or_else(|| state_file.load_value("STAKING_CONTRACT_ADDRESS"))
-            .ok_or_else(|| anyhow!("no staking contract address provided"))?;
-
-        let token_contract_address = cli_args
-            .token_contract_address
-            .or_else(|| state_file.load_value("TOKEN_CONTRACT_ADDRESS"))
-            .ok_or_else(|| anyhow!("no token contract address provided"))?;
+        let ChainConfig {
+            rpc_url,
+            manager_contract_address,
+            staking_contract_address,
+            token_contract_address,
+        } = ChainConfig::new(cli_args.chain_args, &state_file)?;
 
         // Load or generate private key
         let mut was_wallet_created = false;
@@ -108,15 +79,15 @@ impl NodeConfig {
                 state.insert("RPC_URL".to_string(), rpc_url.clone());
                 state.insert(
                     "MANAGER_CONTRACT_ADDRESS".to_string(),
-                    manager_contract_address.clone(),
+                    manager_contract_address.to_string(),
                 );
                 state.insert(
                     "STAKING_CONTRACT_ADDRESS".to_string(),
-                    staking_contract_address.clone(),
+                    staking_contract_address.to_string(),
                 );
                 state.insert(
                     "TOKEN_CONTRACT_ADDRESS".to_string(),
-                    token_contract_address.clone(),
+                    token_contract_address.to_string(),
                 );
                 state_file.save_all(&state).map_err(|e| {
                     anyhow::anyhow!(
@@ -133,11 +104,6 @@ impl NodeConfig {
                 private_key
             }
         };
-
-        // Parse contract addresses
-        let manager_contract_address = manager_contract_address.parse::<Address>()?;
-        let staking_contract_address = staking_contract_address.parse::<Address>()?;
-        let token_contract_address = token_contract_address.parse::<Address>()?;
 
         info!(
             "Loaded NodeConfig: rpc_url={rpc_url}, manager_contract_address={manager_contract_address} staking_contract_address={staking_contract_address} token_contract_address={token_contract_address}"
