@@ -1,20 +1,13 @@
 services:
   # Anvil - Local Ethereum testnet
   anvil:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.anvil
-      target: foundry
+    image: nilanvil:latest
     container_name: niluv-anvil
-    environment:
-      - RPC_URL=http://localhost:8545
-      - PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
-      - PUBLIC_KEY=0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
-    command: /usr/local/bin/start-anvil.sh
     ports:
       - "8545:8545"
     networks:
       - niluv-network
+    command: ["--accounts", "50"]
     healthcheck:
       test: [ "CMD-SHELL", "curl -sf -X POST -H 'Content-Type: application/json' --data '{\"jsonrpc\":\"2.0\",\"method\":\"eth_blockNumber\",\"params\":[],\"id\":1}' http://localhost:8545 || exit 1" ]
       interval: 5s
@@ -36,11 +29,10 @@ services:
       - RPC_URL=http://anvil:8545
       - PRIVATE_KEY=0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d
       - PUBLIC_KEY=0x70997970C51812dc3A010C7d01b50e0d17dc79C8
-      - CONFIG_PATH=/app/config/config.toml
       - HTXS_PATH=/app/data/htxs.json
-      - MANAGER_CONTRACT_ADDRESS=0x9fe46736679d2d9a65f0992f2272de9f3c7fa6e0
-      - STAKING_CONTRACT_ADDRESS=0xe7f1725e7734ce288f8367e1bb143e90bb3f0512
-      - TOKEN_CONTRACT_ADDRESS=0x5fbdb2315678afecb367f032d93f642f64180aa3
+      - ROUTER_CONTRACT_ADDRESS=0x9fe46736679d2d9a65f0992f2272de9f3c7fa6e0
+      - STAKING_CONTRACT_ADDRESS=0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
+      - MANAGER_CONTRACT_ADDRESS=0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9
       - RUST_LOG=info
     networks:
       - niluv-network
@@ -60,126 +52,51 @@ services:
       - RPC_URL=http://anvil:8545
       - PRIVATE_KEY=0x2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6
       - PUBLIC_KEY=0xa0Ee7A142d267C1f36714E4a8F75612F20a79720
-      - CONFIG_PATH=/app/config/config.toml
       - HTXS_PATH=/app/data/htxs.json
-      - MANAGER_CONTRACT_ADDRESS=0x9fe46736679d2d9a65f0992f2272de9f3c7fa6e0
-      - STAKING_CONTRACT_ADDRESS=0xe7f1725e7734ce288f8367e1bb143e90bb3f0512
-      - TOKEN_CONTRACT_ADDRESS=0x5fbdb2315678afecb367f032d93f642f64180aa3
+      - ROUTER_CONTRACT_ADDRESS=0x9fe46736679d2d9a65f0992f2272de9f3c7fa6e0
+      - STAKING_CONTRACT_ADDRESS=0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
+      - MANAGER_CONTRACT_ADDRESS=0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9
       - RUST_LOG=info
     networks:
       - niluv-network
     restart: unless-stopped
+
+  # Initialize the mnemonic allocation volume with correct permissions
+  node-init:
+    image: busybox:latest
+    container_name: niluv-node-init
+    volumes:
+      - node-mnemonic-alloc:/alloc/mnemonic
+    command: ["sh", "-c", "chown -R 1000:1000 /alloc/mnemonic"]
+    user: root
 
   # niluv Node 1
-  node1:
+  node:
     build:
       context: .
       dockerfile: docker/Dockerfile
-      target: niluv_node
-    container_name: niluv-node-1
+      target: niluv_node_test
     depends_on:
       anvil:
         condition: service_healthy
+      node-init:
+        condition: service_completed_successfully
+    deploy:
+      replicas: 50 # 1 for the deployer, 1 for the simulator, 47 for the nodes
     environment:
       - RPC_URL=http://anvil:8545
-      - MANAGER_CONTRACT_ADDRESS=0x9fe46736679d2d9a65f0992f2272de9f3c7fa6e0
-      - STAKING_CONTRACT_ADDRESS=0xe7f1725e7734ce288f8367e1bb143e90bb3f0512
-      - TOKEN_CONTRACT_ADDRESS=0x5fbdb2315678afecb367f032d93f642f64180aa3
-      - PRIVATE_KEY=0xdbda1821b80551c9d65939329250298aa3472ba22feea921c0cf5d620ea67b97
-      - PUBLIC_KEY=0x23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f
+      - ROUTER_CONTRACT_ADDRESS=0x9fe46736679d2d9a65f0992f2272de9f3c7fa6e0
+      - STAKING_CONTRACT_ADDRESS=0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
+      - MANAGER_CONTRACT_ADDRESS=0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9
+      # Provide a single mnemonic and scale this service (see docker/README.md)
+      - MNEMONIC=test test test test test test test test test test test junk
+      # Shift indices if you want to skip accounts (e.g., keep deployer/simulator on low indices)
+      - MNEMONIC_BASE_INDEX=${MNEMONIC_BASE_INDEX:-2}
+      # Shared allocation state so each scaled container gets a unique index (stable across restarts)
+      - MNEMONIC_ALLOC_ROOT=/alloc/mnemonic
       - RUST_LOG=info
-    networks:
-      - niluv-network
-    restart: unless-stopped
-
-  # niluv Node 2
-  node2:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile
-      target: niluv_node
-    container_name: niluv-node-2
-    depends_on:
-      anvil:
-        condition: service_healthy
-    environment:
-      - RPC_URL=http://anvil:8545
-      - MANAGER_CONTRACT_ADDRESS=0x9fe46736679d2d9a65f0992f2272de9f3c7fa6e0
-      - STAKING_CONTRACT_ADDRESS=0xe7f1725e7734ce288f8367e1bb143e90bb3f0512
-      - TOKEN_CONTRACT_ADDRESS=0x5fbdb2315678afecb367f032d93f642f64180aa3
-      - PRIVATE_KEY=0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6
-      - PUBLIC_KEY=0x90F79bf6EB2c4f870365E785982E1f101E93b906
-      - NODE_ID=node-2
-      - RUST_LOG=info
-    networks:
-      - niluv-network
-    restart: unless-stopped
-
-  # niluv Node 3
-  node3:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile
-      target: niluv_node
-    container_name: niluv-node-3
-    depends_on:
-      anvil:
-        condition: service_healthy
-    environment:
-      - RPC_URL=http://anvil:8545
-      - MANAGER_CONTRACT_ADDRESS=0x9fe46736679d2d9a65f0992f2272de9f3c7fa6e0
-      - STAKING_CONTRACT_ADDRESS=0xe7f1725e7734ce288f8367e1bb143e90bb3f0512
-      - TOKEN_CONTRACT_ADDRESS=0x5fbdb2315678afecb367f032d93f642f64180aa3
-      - PRIVATE_KEY=0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a
-      - PUBLIC_KEY=0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65
-      - NODE_ID=node-3
-      - RUST_LOG=info
-    networks:
-      - niluv-network
-    restart: unless-stopped
-
-  # niluv Node 4
-  node4:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile
-      target: niluv_node
-    container_name: niluv-node-4
-    depends_on:
-      anvil:
-        condition: service_healthy
-    environment:
-      - RPC_URL=http://anvil:8545
-      - MANAGER_CONTRACT_ADDRESS=0x9fe46736679d2d9a65f0992f2272de9f3c7fa6e0
-      - STAKING_CONTRACT_ADDRESS=0xe7f1725e7734ce288f8367e1bb143e90bb3f0512
-      - TOKEN_CONTRACT_ADDRESS=0x5fbdb2315678afecb367f032d93f642f64180aa3
-      - PRIVATE_KEY=0x8b3a350cf5c34c9194ca85829a2df0ec3153be0318b5e2d3348e872092edffba
-      - PUBLIC_KEY=0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc
-      - NODE_ID=node-4
-      - RUST_LOG=info
-    networks:
-      - niluv-network
-    restart: unless-stopped
-
-  # niluv Node 5
-  node5:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile
-      target: niluv_node
-    container_name: niluv-node-5
-    depends_on:
-      anvil:
-        condition: service_healthy
-    environment:
-      - RPC_URL=http://anvil:8545
-      - MANAGER_CONTRACT_ADDRESS=0x9fe46736679d2d9a65f0992f2272de9f3c7fa6e0
-      - STAKING_CONTRACT_ADDRESS=0xe7f1725e7734ce288f8367e1bb143e90bb3f0512
-      - TOKEN_CONTRACT_ADDRESS=0x5fbdb2315678afecb367f032d93f642f64180aa3
-      - PRIVATE_KEY=0x92db14e403b83dfe3df233f83dfa3a0d7096f21ca9b0d6d6b8d88b2b4ec1564e
-      - PUBLIC_KEY=0x976EA74026E726554dB657fA54763abd0C3a0aa9
-      - NODE_ID=node-5
-      - RUST_LOG=info
+    volumes:
+      - node-mnemonic-alloc:/alloc/mnemonic
     networks:
       - niluv-network
     restart: unless-stopped
@@ -187,3 +104,10 @@ services:
 networks:
   niluv-network:
     driver: bridge
+
+volumes:
+  node-mnemonic-alloc:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs

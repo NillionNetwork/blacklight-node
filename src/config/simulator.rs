@@ -34,10 +34,6 @@ pub struct CliArgs {
     #[arg(long, env = "PRIVATE_KEY")]
     pub private_key: Option<String>,
 
-    /// Path to config file
-    #[arg(long, env = "CONFIG_PATH")]
-    pub config_path: Option<String>,
-
     /// Path to HTXs JSON file
     #[arg(long, env = "HTXS_PATH")]
     pub htxs_path: Option<String>,

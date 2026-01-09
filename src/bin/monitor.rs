@@ -957,7 +957,7 @@ async fn run_monitor_loop(
                                                 (client.staking.clone(), client.token.clone())
                                             };
                                             let amount_wei =
-                                                U256::from((amount_eth * 1e18) as u128);
+                                                U256::from((amount_eth * 1e6) as u128);
                                             // First, approve the staking contract to spend tokens
                                             token_client.approve(staking_addr, amount_wei).await?;
 
@@ -1091,7 +1091,7 @@ async fn run_monitor_loop(
                                                 client.token.clone()
                                             };
                                             let amount_wei =
-                                                U256::from((amount_eth * 1e18) as u128);
+                                                U256::from((amount_eth * 1e6) as u128);
 
                                             token_client.mint(target_addr, amount_wei).await
                                         }
@@ -1549,7 +1549,7 @@ fn render_overview(f: &mut Frame, area: Rect, state: &MonitorState) {
 
     // Format balances
     let token_balance_formatted =
-        format_units(state.token_balance, 18).unwrap_or_else(|_| "0".to_string());
+        format_units(state.token_balance, 6).unwrap_or_else(|_| "0".to_string());
     let eth_balance_formatted =
         format_units(state.eth_balance, 18).unwrap_or_else(|_| "0".to_string());
 
@@ -1682,7 +1682,7 @@ fn render_nodes(f: &mut Frame, area: Rect, state: &MonitorState) {
         .enumerate()
         .map(|(idx, node_info)| {
             let stake_formatted =
-                format_units(node_info.stake, 18).unwrap_or_else(|_| "0".to_string());
+                format_units(node_info.stake, 6).unwrap_or_else(|_| "0".to_string());
             let eth_balance_formatted =
                 format_units(node_info.eth_balance, 18).unwrap_or_else(|_| "0".to_string());
             let status = if node_info.is_registered {

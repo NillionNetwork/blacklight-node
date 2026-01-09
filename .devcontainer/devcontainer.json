@@ -53,10 +53,9 @@
 		}
 	},
 
-	// Connect to the docker-compose network to access Anvil (make sure to change the network name to the one you are using)
-	// "runArgs": [
-	// 	"--network=nilav-stable_nilav-network"
-	// ]
+	"runArgs": [
+		"--network=host"
+	],
 
 
 	// Environment variables for the container

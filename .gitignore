@@ -47,3 +47,5 @@ coverage/
 *.profdata
 
 .claude/
+
+niluv_node/
