@@ -11,7 +11,7 @@ use niluv::{
         ContractConfig, NilUVClient,
     },
     types::Htx,
-    verification::HtxVerifier,
+    verification::{HtxVerifier, VerificationError},
 };
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -111,7 +111,7 @@ async fn process_htx_assignment(
         },
         Err(e) => {
             error!(htx_id = ?htx_id, error = %e, "Failed to parse HTX data");
-            // TODO: we need to distinguish inconclusive here
+            // If we parse invalid data, it could be a malicious node, so Failure and it doesn't get rewarded
             client
                 .manager
                 .respond_htx(event, Verdict::Failure, node_address)
@@ -122,7 +122,23 @@ async fn process_htx_assignment(
     };
     let verdict = match verification_result {
         Ok(_) => Verdict::Success,
-        Err(_) => Verdict::Failure,
+        Err(ref e) => match e {
+            // Inconclusive cases
+            VerificationError::NilccUrl(_) | // Could be a regionally blocked URL
+            VerificationError::BuilderUrl(_) | // Could be a regionally blocked URL
+            VerificationError::NotInBuilderIndex | // ?? Report may be valid but user may not want to give the measurement (could even be considered relatively valid)
+            VerificationError::PhalaEventLogParse(_) => Verdict::Inconclusive,  // ?? Event log parse considered as inconclusive or failure?
+
+            // Failure cases
+            VerificationError::NilccJson(_) | // ?? Should be a failure considered you retrieved it from the URL?
+            VerificationError::FetchReport(_) | // Given the URL was accessible, the report should have been accessible as well
+            VerificationError::VerifyReport(_) | // Given the report was accessible, the verification should have succeeded
+            VerificationError::MeasurementHash(_) | // Given the URL was accessible, the measurement hash should have been accessible as well
+            VerificationError::BuilderJson(_) | // ??  Considering you retrieved it from the URL, it should be a failure
+            VerificationError::PhalaComposeHashMismatch | // Should be always failure
+            VerificationError::PhalaQuoteVerify(_) | // Quotes should always be valid
+            VerificationError::PhalaPlatformVerify(_) => Verdict::Failure
+        },
     };
 
     // Submit the verification result
