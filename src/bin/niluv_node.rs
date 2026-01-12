@@ -20,7 +20,7 @@ use tokio::sync::Notify;
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
-use alloy::primitives::utils::format_ether;
+use alloy::primitives::utils::{format_ether, format_units};
 
 // ============================================================================
 // Signal Handling
@@ -76,7 +76,7 @@ async fn print_status(client: &NilUVClient, verified_count: u64) -> Result<()> {
     info!(
         "📊 STATUS | ETH: {} | STAKED: {} NIL | Verified HTXs: {}",
         format_ether(eth_balance),
-        format_ether(staked_balance),
+        format_units(staked_balance, 6)?,
         verified_count
     );
 
