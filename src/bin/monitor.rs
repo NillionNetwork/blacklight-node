@@ -108,7 +108,6 @@ enum Tab {
     Overview,
     Nodes,
     HTXTracking,
-    ValidationStatus,
     Staking,
     Minting,
     TokenHolders,
@@ -121,7 +120,6 @@ impl Tab {
             Tab::Overview => "Overview",
             Tab::Nodes => "Nodes",
             Tab::HTXTracking => "HTX Tracking",
-            Tab::ValidationStatus => "Validation Status",
             Tab::Staking => "Staking",
             Tab::Minting => "Mint Tokens",
             Tab::TokenHolders => "Token Holders",
@@ -133,8 +131,7 @@ impl Tab {
         match self {
             Tab::Overview => Tab::Nodes,
             Tab::Nodes => Tab::HTXTracking,
-            Tab::HTXTracking => Tab::ValidationStatus,
-            Tab::ValidationStatus => Tab::Staking,
+            Tab::HTXTracking => Tab::Staking,
             Tab::Staking => Tab::Minting,
             Tab::Minting => Tab::TokenHolders,
             Tab::TokenHolders => Tab::TransferETH,
@@ -147,8 +144,7 @@ impl Tab {
             Tab::Overview => Tab::TransferETH,
             Tab::Nodes => Tab::Overview,
             Tab::HTXTracking => Tab::Nodes,
-            Tab::ValidationStatus => Tab::HTXTracking,
-            Tab::Staking => Tab::ValidationStatus,
+            Tab::Staking => Tab::HTXTracking,
             Tab::Minting => Tab::Staking,
             Tab::TokenHolders => Tab::Minting,
             Tab::TransferETH => Tab::TokenHolders,
@@ -192,11 +188,13 @@ struct MonitorState {
     transfer_target_address: String,
     transfer_amount: String,
     transfer_active_input: TransferInputField,
-    // Validation Status Tab State (polled, not streamed)
+    // Validation status state (polled, manual reload)
     validation_statuses: Vec<HTXValidationStatus>,
     validation_status_state: ratatui::widgets::ListState,
     validation_last_refresh: std::time::Instant,
     validation_is_loading: bool,
+    // Queue validation responses received before their request/assignment
+    pending_htx_responses: HashMap<String, HashSet<String>>,
 }
 
 #[tokio::main]
@@ -370,7 +368,7 @@ async fn main() -> Result<()> {
         nodes,
         htx_tracking,
         status_message: format!(
-            "Press 'q' to quit, 'r' to refresh, Tab/Shift+Tab to navigate - Live WebSocket mode (Loaded {} historical events)",
+            "Press 'q' to quit, 'r' to refresh nodes, 'v' to reload HTX data from chain - Live WebSocket mode (Loaded {} historical events)",
             total_events
         ),
         selected_node_index: None,
@@ -401,6 +399,7 @@ async fn main() -> Result<()> {
         validation_status_state: ratatui::widgets::ListState::default(),
         validation_last_refresh: std::time::Instant::now(),
         validation_is_loading: false,
+        pending_htx_responses: HashMap::new(),
     };
 
     run_monitor(client, initial_state).await
@@ -658,38 +657,39 @@ async fn run_monitor_loop(
                             continue;
                         }
                         KeyCode::Char('v') => {
-                            // Load validation status from contract (polling, not streaming)
-                            state_guard.validation_is_loading = true;
-                            state_guard.status_message =
-                                "Loading validation status from contract...".to_string();
-                            drop(state_guard);
+                            // Manual rebuild of HTX tracking + validation from contract logs
+                            if state_guard.current_tab == Tab::HTXTracking {
+                                state_guard.validation_is_loading = true;
+                                state_guard.status_message =
+                                    "Reloading HTX data from contract (polling)...".to_string();
+                                drop(state_guard);
 
-                            let result = load_validation_status(&client).await;
+                                let result = reload_htx_data(&client).await;
 
-                            let mut state_guard = state.lock().await;
-                            state_guard.validation_is_loading = false;
-                            state_guard.validation_last_refresh = std::time::Instant::now();
+                                let mut state_guard = state.lock().await;
+                                state_guard.validation_is_loading = false;
+                                state_guard.validation_last_refresh = std::time::Instant::now();
 
-                            match result {
-                                Ok(statuses) => {
-                                    let complete = statuses.iter().filter(|s| s.is_complete).count();
-                                    let total = statuses.len();
-                                    state_guard.validation_statuses = statuses;
-                                    state_guard.validation_status_state =
-                                        ratatui::widgets::ListState::default();
-                                    state_guard.status_message = format!(
-                                        "Loaded {} HTXs ({} complete, {} incomplete)",
-                                        total,
-                                        complete,
-                                        total - complete
-                                    );
+                                match result {
+                                    Ok((htx_map, statuses, total_events)) => {
+                                        state_guard.htx_tracking = htx_map;
+                                        state_guard.htx_tracking_state =
+                                            ratatui::widgets::TableState::default();
+                                        state_guard.validation_statuses = statuses;
+                                        state_guard.validation_status_state =
+                                            ratatui::widgets::ListState::default();
+                                        state_guard.status_message = format!(
+                                            "HTX data reloaded from chain ({} events)",
+                                            total_events
+                                        );
+                                    }
+                                    Err(e) => {
+                                        state_guard.status_message =
+                                            format!("Error reloading HTX data: {}", e);
+                                    }
                                 }
-                                Err(e) => {
-                                    state_guard.status_message =
-                                        format!("Error loading validation status: {}", e);
-                                }
+                                continue;
                             }
-                            continue;
                         }
                         KeyCode::Tab => {
                             state_guard.current_tab = state_guard.current_tab.next();
@@ -847,15 +847,6 @@ async fn run_monitor_loop(
                                 let next = (i + 1).min(state_guard.token_holders.len() - 1);
                                 state_guard.token_holders_state.select(Some(next));
                             }
-                            Tab::ValidationStatus
-                                if !state_guard.validation_statuses.is_empty() =>
-                            {
-                                let i =
-                                    state_guard.validation_status_state.selected().unwrap_or(0);
-                                let next =
-                                    (i + 1).min(state_guard.validation_statuses.len() - 1);
-                                state_guard.validation_status_state.select(Some(next));
-                            }
                             _ => {}
                         },
                         KeyCode::Up => match state_guard.current_tab {
@@ -917,15 +908,6 @@ async fn run_monitor_loop(
                                 let i = state_guard.token_holders_state.selected().unwrap_or(0);
                                 state_guard
                                     .token_holders_state
-                                    .select(Some(i.saturating_sub(1)));
-                            }
-                            Tab::ValidationStatus
-                                if !state_guard.validation_statuses.is_empty() =>
-                            {
-                                let i =
-                                    state_guard.validation_status_state.selected().unwrap_or(0);
-                                state_guard
-                                    .validation_status_state
                                     .select(Some(i.saturating_sub(1)));
                             }
                             _ => {}
@@ -1052,8 +1034,7 @@ async fn run_monitor_loop(
                                                 // Use the existing client's staking and token contracts
                                                 (client.staking.clone(), client.token.clone())
                                             };
-                                            let amount_wei =
-                                                U256::from((amount_eth * 1e6) as u128);
+                                            let amount_wei = U256::from((amount_eth * 1e6) as u128);
                                             // First, approve the staking contract to spend tokens
                                             token_client.approve(staking_addr, amount_wei).await?;
 
@@ -1186,8 +1167,7 @@ async fn run_monitor_loop(
                                                 // Use the existing client's token contract
                                                 client.token.clone()
                                             };
-                                            let amount_wei =
-                                                U256::from((amount_eth * 1e6) as u128);
+                                            let amount_wei = U256::from((amount_eth * 1e6) as u128);
 
                                             token_client.mint(target_addr, amount_wei).await
                                         }
@@ -1428,24 +1408,31 @@ async fn listen_htx_assigned(
 
                 let mut state_guard = state.lock().await;
 
+                // Pull any pending responses first, then update tracking map
+                let pending = state_guard.pending_htx_responses.remove(&htx_id);
+
                 // Update tracking map
-                state_guard
+                let entry = state_guard
                     .htx_tracking
                     .entry(htx_id.clone())
-                    .and_modify(|tx| {
-                        tx.assigned_nodes.extend(nodes.iter().cloned());
-                    })
                     .or_insert_with(|| {
                         let mut assigned = HashSet::new();
-                        assigned.extend(nodes);
+                        assigned.extend(nodes.iter().cloned());
                         HTXTransaction {
-                            htx_id,
+                            htx_id: htx_id.clone(),
                             submitted_sender: None,
                             assigned_nodes: assigned,
                             responded_nodes: HashSet::new(),
                             timestamp: SystemTime::now(),
                         }
                     });
+                entry.assigned_nodes.extend(nodes.iter().cloned());
+                entry.timestamp = SystemTime::now();
+
+                // If we have queued responses that arrived before this assignment, merge them now
+                if let Some(pending) = pending {
+                    entry.responded_nodes.extend(pending.into_iter());
+                }
 
                 state_guard.last_update = std::time::Instant::now();
                 Ok(())
@@ -1469,12 +1456,27 @@ async fn listen_htx_responded(
 
                 let mut state_guard = state.lock().await;
 
-                // Update tracking map
+                // If the assignment/request hasn't been seen yet, queue this response
+                if !state_guard
+                    .htx_tracking
+                    .get(&htx_id)
+                    .map(|tx| !tx.assigned_nodes.is_empty())
+                    .unwrap_or(false)
+                {
+                    state_guard
+                        .pending_htx_responses
+                        .entry(htx_id.clone())
+                        .or_default()
+                        .insert(node.clone());
+                }
+
+                // Update tracking map (creates entry if absent)
                 state_guard
                     .htx_tracking
                     .entry(htx_id.clone())
                     .and_modify(|tx| {
                         tx.responded_nodes.insert(node.clone());
+                        tx.timestamp = SystemTime::now();
                     })
                     .or_insert_with(|| {
                         let mut responded = HashSet::new();
@@ -1520,7 +1522,6 @@ fn render_header(f: &mut Frame, area: Rect, state: &MonitorState) {
         Tab::Overview,
         Tab::Nodes,
         Tab::HTXTracking,
-        Tab::ValidationStatus,
         Tab::Staking,
         Tab::Minting,
         Tab::TokenHolders,
@@ -1562,7 +1563,6 @@ fn render_content(f: &mut Frame, area: Rect, state: &mut MonitorState) {
         Tab::Overview => render_overview(f, area, state),
         Tab::Nodes => render_nodes(f, area, state),
         Tab::HTXTracking => render_htx_tracking(f, area, state),
-        Tab::ValidationStatus => render_validation_status(f, area, state),
         Tab::Staking => render_staking(f, area, state),
         Tab::Minting => render_minting(f, area, state),
         Tab::TokenHolders => render_token_holders(f, area, state),
@@ -1838,6 +1838,34 @@ fn render_nodes(f: &mut Frame, area: Rect, state: &MonitorState) {
 fn render_htx_tracking(f: &mut Frame, area: Rect, state: &mut MonitorState) {
     use ratatui::widgets::{Row, Table};
 
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3), // instructions/status
+            Constraint::Min(8),    // HTX table
+            Constraint::Min(8),    // Validation list
+        ])
+        .split(area);
+
+    // Instructions/status bar for manual reload
+    let last_refresh_secs = state.validation_last_refresh.elapsed().as_secs();
+    let status_text = if state.validation_is_loading {
+        "Reloading HTX data from contract...".to_string()
+    } else {
+        format!(
+            "Press 'v' to rebuild HTX tracking from chain logs (lookback {} blocks). Last reload: {}s ago",
+            VALIDATION_LOOKBACK_BLOCKS, last_refresh_secs
+        )
+    };
+    let instructions = Paragraph::new(status_text)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("HTX Tracking & Validation (Manual reload)"),
+        )
+        .style(Style::default().fg(Color::White));
+    f.render_widget(instructions, chunks[0]);
+
     // Convert HashMap to sorted Vec for display (reverse order - newest first)
     let mut transactions: Vec<&HTXTransaction> = state.htx_tracking.values().collect();
     transactions.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
@@ -1925,52 +1953,14 @@ fn render_htx_tracking(f: &mut Frame, area: Rect, state: &mut MonitorState) {
         state.htx_tracking_state.select(Some(0));
     }
 
-    f.render_stateful_widget(table, area, &mut state.htx_tracking_state);
-}
+    f.render_stateful_widget(table, chunks[1], &mut state.htx_tracking_state);
 
-fn render_validation_status(f: &mut Frame, area: Rect, state: &mut MonitorState) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3), // Instructions
-            Constraint::Min(0),    // Table
-        ])
-        .split(area);
-
-    // Instructions/status bar
-    let last_refresh_secs = state.validation_last_refresh.elapsed().as_secs();
-    let status_text = if state.validation_is_loading {
-        "Loading validation data from contract...".to_string()
-    } else if state.validation_statuses.is_empty() {
-        format!(
-            "Press 'v' to load validation status (polled from contract). Last refresh: {}s ago",
-            last_refresh_secs
-        )
-    } else {
-        format!(
-            "Showing {} HTXs - Press 'v' to refresh. Last refresh: {}s ago",
-            state.validation_statuses.len(),
-            last_refresh_secs
-        )
-    };
-
-    let instructions = Paragraph::new(status_text)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title("Validation Status (Polled)")
-                .title_style(Style::default().fg(Color::Magenta)),
-        )
-        .style(Style::default().fg(Color::White));
-
-    f.render_widget(instructions, chunks[0]);
-
+    // Validation status list (previously its own tab)
     // Initialize selection if not set and items exist
     if state.validation_status_state.selected().is_none() && !state.validation_statuses.is_empty() {
         state.validation_status_state.select(Some(0));
     }
 
-    // Build list items
     let list_items: Vec<ListItem> = state
         .validation_statuses
         .iter()
@@ -2009,9 +1999,7 @@ fn render_validation_status(f: &mut Frame, area: Rect, state: &mut MonitorState)
                 )),
                 Span::styled(
                     missing_text,
-                    Style::default()
-                        .fg(Color::Red)
-                        .add_modifier(Modifier::DIM),
+                    Style::default().fg(Color::Red).add_modifier(Modifier::DIM),
                 ),
             ];
 
@@ -2046,7 +2034,7 @@ fn render_validation_status(f: &mut Frame, area: Rect, state: &mut MonitorState)
             Block::default()
                 .borders(Borders::ALL)
                 .title(title)
-                .title_style(Style::default().fg(Color::Green)),
+                .title_style(Style::default().fg(Color::Magenta)),
         )
         .highlight_style(
             Style::default()
@@ -2055,7 +2043,7 @@ fn render_validation_status(f: &mut Frame, area: Rect, state: &mut MonitorState)
         )
         .highlight_symbol("▶ ");
 
-    f.render_stateful_widget(list, chunks[1], &mut state.validation_status_state);
+    f.render_stateful_widget(list, chunks[2], &mut state.validation_status_state);
 }
 
 fn render_footer(f: &mut Frame, area: Rect, state: &MonitorState) {
@@ -2080,7 +2068,7 @@ fn render_footer(f: &mut Frame, area: Rect, state: &MonitorState) {
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::raw(": Load Validation  "),
+        Span::raw(": Reload HTX data  "),
         Span::styled(
             "Tab",
             Style::default()
@@ -2097,9 +2085,8 @@ fn render_footer(f: &mut Frame, area: Rect, state: &MonitorState) {
         Span::raw(": Navigate  "),
     ];
 
-    // Add node-specific controls when in Nodes tab or ValidationStatus tab
+    // Add node-specific controls when in list-based tabs
     if state.current_tab == Tab::Nodes
-        || state.current_tab == Tab::ValidationStatus
         || state.current_tab == Tab::HTXTracking
         || state.current_tab == Tab::TokenHolders
     {
@@ -2594,28 +2581,99 @@ async fn listen_token_transfers(
 
 /// Load validation status by polling the contract directly (not via streaming)
 /// This queries historical events and computes which HTXs have missing validations
-/// Lookback for validation status - query more history than the default 50 blocks
-const VALIDATION_LOOKBACK_BLOCKS: u64 = 10_000;
+/// Lookback for validation status - query more history than the default 10 blocks
+const VALIDATION_LOOKBACK_BLOCKS: u64 = 100;
 
-async fn load_validation_status(client: &NilUVClient) -> Result<Vec<HTXValidationStatus>> {
-    let mut statuses = Vec::new();
+/// Reload HTX tracking data and validation statuses from chain logs (manual fetch)
+async fn reload_htx_data(
+    client: &NilUVClient,
+) -> Result<(
+    HashMap<String, HTXTransaction>,
+    Vec<HTXValidationStatus>,
+    usize,
+)> {
+    let mut htx_tracking: HashMap<String, HTXTransaction> = HashMap::new();
+    let mut total_events = 0usize;
 
-    // Get all assigned events (RoundStarted) - this tells us expected validators
-    // Use larger lookback than default to see more history
+    // Fetch submitted events (no lookback API exposed, so use full helper)
+    if let Ok(events) = client.manager.get_htx_submitted_events().await {
+        total_events += events.len();
+        for e in events {
+            let htx_id = bytes_to_hex(e.heartbeatKey.as_slice());
+            let sender = format!("{:?}", e.submitter);
+            htx_tracking.insert(
+                htx_id.clone(),
+                HTXTransaction {
+                    htx_id,
+                    submitted_sender: Some(sender),
+                    assigned_nodes: HashSet::new(),
+                    responded_nodes: HashSet::new(),
+                    timestamp: SystemTime::now(),
+                },
+            );
+        }
+    }
+
+    // Fetch assigned/ responded events with lookback to guarantee atomic view
     let assigned_events = client
         .manager
         .get_htx_assigned_events_with_lookback(VALIDATION_LOOKBACK_BLOCKS)
         .await?;
+    total_events += assigned_events.len();
 
-    // Get all responded events (OperatorVoted) - this tells us actual validators
+    for e in &assigned_events {
+        let htx_id = bytes_to_hex(e.heartbeatKey.as_slice());
+        let nodes: Vec<_> = e.members.iter().map(|n| format!("{n:?}")).collect();
+        htx_tracking
+            .entry(htx_id.clone())
+            .and_modify(|tx| {
+                tx.assigned_nodes.extend(nodes.iter().cloned());
+                tx.timestamp = SystemTime::now();
+            })
+            .or_insert_with(|| {
+                let mut assigned = HashSet::new();
+                assigned.extend(nodes);
+                HTXTransaction {
+                    htx_id,
+                    submitted_sender: None,
+                    assigned_nodes: assigned,
+                    responded_nodes: HashSet::new(),
+                    timestamp: SystemTime::now(),
+                }
+            });
+    }
+
     let responded_events = client
         .manager
         .get_htx_responded_events_with_lookback(VALIDATION_LOOKBACK_BLOCKS)
         .await?;
+    total_events += responded_events.len();
 
-    // Build a map of htx_id -> responded operators
+    for e in &responded_events {
+        let htx_id = bytes_to_hex(e.heartbeatKey.as_slice());
+        let node = format!("{:?}", e.operator);
+        htx_tracking
+            .entry(htx_id.clone())
+            .and_modify(|tx| {
+                tx.responded_nodes.insert(node.clone());
+                tx.timestamp = SystemTime::now();
+            })
+            .or_insert_with(|| {
+                let mut responded = HashSet::new();
+                responded.insert(node.clone());
+                HTXTransaction {
+                    htx_id,
+                    submitted_sender: None,
+                    assigned_nodes: HashSet::new(),
+                    responded_nodes: responded,
+                    timestamp: SystemTime::now(),
+                }
+            });
+    }
+
+    // Build validation status using the same events to avoid extra RPCs
     let mut responded_map: HashMap<String, HashSet<Address>> = HashMap::new();
-    for event in responded_events {
+    for event in &responded_events {
         let htx_id = bytes_to_hex(event.heartbeatKey.as_slice());
         responded_map
             .entry(htx_id)
@@ -2623,7 +2681,7 @@ async fn load_validation_status(client: &NilUVClient) -> Result<Vec<HTXValidatio
             .insert(event.operator);
     }
 
-    // Process each assigned event to build validation status
+    let mut statuses = Vec::new();
     for event in assigned_events {
         let htx_id = bytes_to_hex(event.heartbeatKey.as_slice());
         let expected_validators: Vec<Address> = event.members.to_vec();
@@ -2635,10 +2693,8 @@ async fn load_validation_status(client: &NilUVClient) -> Result<Vec<HTXValidatio
             .unwrap_or_default();
         let actual_set: HashSet<Address> = actual_validators.iter().cloned().collect();
 
-        let missing_validators: Vec<Address> = expected_set
-            .difference(&actual_set)
-            .cloned()
-            .collect();
+        let missing_validators: Vec<Address> =
+            expected_set.difference(&actual_set).cloned().collect();
 
         let is_complete = missing_validators.is_empty() && !expected_validators.is_empty();
 
@@ -2651,14 +2707,12 @@ async fn load_validation_status(client: &NilUVClient) -> Result<Vec<HTXValidatio
         });
     }
 
-    // Sort by completion status (incomplete first), then by number of missing validators
-    statuses.sort_by(|a, b| {
-        match (a.is_complete, b.is_complete) {
-            (false, true) => std::cmp::Ordering::Less,
-            (true, false) => std::cmp::Ordering::Greater,
-            _ => b.missing_validators.len().cmp(&a.missing_validators.len()),
-        }
+    // Sort statuses to highlight incomplete first
+    statuses.sort_by(|a, b| match (a.is_complete, b.is_complete) {
+        (false, true) => std::cmp::Ordering::Less,
+        (true, false) => std::cmp::Ordering::Greater,
+        _ => b.missing_validators.len().cmp(&a.missing_validators.len()),
     });
 
-    Ok(statuses)
+    Ok((htx_tracking, statuses, total_events))
 }

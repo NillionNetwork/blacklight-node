@@ -1,13 +1,13 @@
 services:
   # Anvil - Local Ethereum testnet
   anvil:
-    image: nilanvil:latest
+    image: ghcr.io/nillionnetwork/blacklight-contracts/anvil:sha-64cd680
     container_name: niluv-anvil
     ports:
       - "8545:8545"
     networks:
       - niluv-network
-    command: ["--accounts", "50"]
+    command: ["--accounts", "15"] # Define the number of accounts to create
     healthcheck:
       test: [ "CMD-SHELL", "curl -sf -X POST -H 'Content-Type: application/json' --data '{\"jsonrpc\":\"2.0\",\"method\":\"eth_blockNumber\",\"params\":[],\"id\":1}' http://localhost:8545 || exit 1" ]
       interval: 5s
@@ -70,7 +70,7 @@ services:
     command: ["sh", "-c", "chown -R 1000:1000 /alloc/mnemonic"]
     user: root
 
-  # niluv Node 1
+  # nilUV nodes
   node:
     build:
       context: .
@@ -82,7 +82,7 @@ services:
       node-init:
         condition: service_completed_successfully
     deploy:
-      replicas: 50 # 1 for the deployer, 1 for the simulator, 47 for the nodes
+      replicas: 10 # IMPORTANT: Define the number of accounts to create in the anvil container as 1 for the deployer, 2 for the simulators, X for the nodes 
     environment:
       - RPC_URL=http://anvil:8545
       - ROUTER_CONTRACT_ADDRESS=0x9fe46736679d2d9a65f0992f2272de9f3c7fa6e0
@@ -90,8 +90,8 @@ services:
       - MANAGER_CONTRACT_ADDRESS=0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9
       # Provide a single mnemonic and scale this service (see docker/README.md)
       - MNEMONIC=test test test test test test test test test test test junk
-      # Shift indices if you want to skip accounts (e.g., keep deployer/simulator on low indices)
-      - MNEMONIC_BASE_INDEX=${MNEMONIC_BASE_INDEX:-2}
+      # Shift indices if you want to skip accounts (e.g., keep deployer/simulators on low indices)
+      - MNEMONIC_BASE_INDEX=${MNEMONIC_BASE_INDEX:-3}
       # Shared allocation state so each scaled container gets a unique index (stable across restarts)
       - MNEMONIC_ALLOC_ROOT=/alloc/mnemonic
       - RUST_LOG=info
