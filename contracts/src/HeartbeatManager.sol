@@ -347,6 +347,10 @@ contract HeartbeatManager is Pausable, ReentrancyGuard, Ownable, EIP712 {
         bytes32 structHash = keccak256(abi.encode(VOTE_TYPEHASH, heartbeatKey, round, verdict, r.snapshotId, r.committeeRoot));
         return _hashTypedDataV4(structHash);
     }
+        return _voteDigest(heartbeatKey, round, verdict);
+    }
+
+    function _voteDigest(bytes32 heartbeatKey, uint8 round, uint8 verdict) internal view returns (bytes32) {
 
     function _submitVerdict(
         address operator,
