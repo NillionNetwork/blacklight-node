@@ -64,6 +64,8 @@ contract EmissionsController is ReentrancyGuard, Ownable {
     uint256 public mintedTotal;
 
     uint256[] private _emissionsPerEpoch;
+    bytes32 public immutable emissionsPerEpochHash;
+    uint256 public immutable emissionsPerEpochCount;
 
     constructor(
         IERC20Mintable _token,
@@ -93,6 +95,8 @@ contract EmissionsController is ReentrancyGuard, Ownable {
         l2GasLimit = _l2GasLimit;
         globalMintCap = _globalMintCap;
         _emissionsPerEpoch = emissionsSchedule;
+        emissionsPerEpochHash = keccak256(abi.encode(emissionsSchedule));
+        emissionsPerEpochCount = emissionsSchedule.length;
 
         _setBridgeApproval();
     }
@@ -103,16 +107,16 @@ contract EmissionsController is ReentrancyGuard, Ownable {
     }
 
     function epochs() external view returns (uint256) {
-        return _emissionsPerEpoch.length;
+        return emissionsPerEpochCount;
     }
 
     function emissionForEpoch(uint256 epochId) external view returns (uint256) {
-        if (epochId == 0 || epochId > _emissionsPerEpoch.length) revert InvalidEpoch(epochId);
+        if (epochId == 0 || epochId > emissionsPerEpochCount) revert InvalidEpoch(epochId);
         return _emissionsPerEpoch[epochId - 1];
     }
 
     function nextEpochReadyAt() public view returns (uint256) {
-        if (mintedEpochs >= _emissionsPerEpoch.length) return type(uint256).max;
+        if (mintedEpochs >= emissionsPerEpochCount) return type(uint256).max;
         return startTime + epochDuration * mintedEpochs;
     }
 
@@ -134,7 +138,7 @@ contract EmissionsController is ReentrancyGuard, Ownable {
         returns (uint256 epochId, uint256 amount)
     {
         uint256 mintedSoFar = mintedEpochs;
-        if (mintedSoFar >= _emissionsPerEpoch.length) revert NoRemainingEpochs();
+        if (mintedSoFar >= emissionsPerEpochCount) revert NoRemainingEpochs();
 
         epochId = mintedSoFar + 1;
         uint256 readyAt = nextEpochReadyAt();

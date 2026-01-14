@@ -90,6 +90,7 @@ contract StakingOperators is IStakingOperators, AccessControl, ReentrancyGuard, 
 
     constructor(IERC20 token_, address admin, uint256 initialUnstakeDelay) {
         if (address(token_) == address(0)) revert ZeroAddress();
+    event SnapshotCreated(uint64 snapshotId, address indexed caller);
     event MaxActiveOperatorsUpdated(uint256 oldCap, uint256 newCap);
         if (admin == address(0)) revert ZeroAddress();
         _stakingToken = token_;
@@ -144,6 +145,7 @@ contract StakingOperators is IStakingOperators, AccessControl, ReentrancyGuard, 
     }
 
     function stakeAt(address operator, uint64 snapshotId) public view override returns (uint256) {
+        emit SnapshotCreated(snapshotId, msg.sender);
         StakeCheckpoint[] storage ckpts = _stakeCheckpoints[operator];
         uint256 len = ckpts.length;
         if (len == 0) return 0;

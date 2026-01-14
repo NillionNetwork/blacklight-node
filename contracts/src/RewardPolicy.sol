@@ -56,11 +56,6 @@ contract RewardPolicy is IRewardPolicy, Ownable, ReentrancyGuard {
     event StreamUpdated(uint256 streamRemaining, uint256 ratePerSecondWad, uint64 streamEnd);
     event BudgetUsed(bytes32 indexed heartbeatKey, uint8 round, uint256 budget, uint256 distributed);
 
-    modifier onlyHeartbeatManager() {
-        if (msg.sender != heartbeatManager) revert NotHeartbeatManager();
-        _;
-    }
-
     modifier whenAccountingHealthy() {
         if (accountingFrozen) revert AccountingFrozen();
         _;
@@ -210,15 +205,6 @@ contract RewardPolicy is IRewardPolicy, Ownable, ReentrancyGuard {
         }
 
         uint256 dur = epochDuration;
-        if (dur == 0) {
-            _spendableBudget += streamRemaining;
-            streamRemaining = 0;
-            streamRatePerSecondWad = 0;
-            streamEnd = uint64(block.timestamp);
-            emit StreamUpdated(streamRemaining, streamRatePerSecondWad, streamEnd);
-            return;
-        }
-
         uint64 nowTs = uint64(block.timestamp);
         if (nowTs < streamEnd && streamEnd != 0) {
             uint256 remainingTime = uint256(streamEnd - nowTs);
@@ -237,16 +223,25 @@ contract RewardPolicy is IRewardPolicy, Ownable, ReentrancyGuard {
         uint8 round,
         address[] calldata recipients,
         uint256[] calldata weights
-    ) external override onlyHeartbeatManager whenAccountingHealthy {
+    ) external override whenAccountingHealthy {
+        if (msg.sender != heartbeatManager) revert NotHeartbeatManager();
         if (processed[heartbeatKey][round]) revert AlreadyProcessed();
         if (recipients.length != weights.length) revert LengthMismatch();
 
         address last = address(0);
         uint256 totalWeight;
+        uint256 bestWeight;
+        address bestRecipient;
         for (uint256 i = 0; i < recipients.length; i++) {
-            if (recipients[i] <= last) revert UnsortedRecipients();
-            last = recipients[i];
-            totalWeight += weights[i];
+            address recipient = recipients[i];
+            uint256 weight = weights[i];
+            if (recipient <= last) revert UnsortedRecipients();
+            last = recipient;
+            totalWeight += weight;
+            if (weight > bestWeight || (weight == bestWeight && uint160(recipient) < uint160(bestRecipient))) {
+                bestWeight = weight;
+                bestRecipient = recipient;
+            }
         }
 
         bytes32 h = keccak256(abi.encode(recipients, weights));
@@ -283,22 +278,11 @@ contract RewardPolicy is IRewardPolicy, Ownable, ReentrancyGuard {
         }
 
         if (distributed == 0) {
-            uint256 bestW = 0;
-            address best = address(0);
-            for (uint256 i = 0; i < recipients.length; i++) {
-                uint256 w = weights[i];
-                address a = recipients[i];
-                if (w > bestW || (w == bestW && uint160(a) < uint160(best))) {
-                    bestW = w;
-                    best = a;
-                }
-            }
-            if (bestW == 0) revert InsufficientBudget();
-
-            rewards[best] += 1;
+            if (bestWeight == 0) revert InsufficientBudget();
+            rewards[bestRecipient] += 1;
             totalOutstandingRewards += 1;
             distributed = 1;
-            emit RewardsAccrued(heartbeatKey, round, best, 1);
+            emit RewardsAccrued(heartbeatKey, round, bestRecipient, 1);
         }
 
         _spendableBudget -= distributed;
