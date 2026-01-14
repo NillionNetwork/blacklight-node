@@ -50,6 +50,7 @@ contract StakingOperators is IStakingOperators, AccessControl, ReentrancyGuard, 
     IERC20 private immutable _stakingToken;
     uint256 public override unstakeDelay;
     uint256 public constant MAX_TRANCHES_PER_OPERATOR = 32;
+    /// @dev Operators must withdraw matured tranches to free capacity for future unstake requests.
 
     IProtocolConfig public protocolConfig;
     uint256 public maxActiveOperators;
@@ -274,6 +275,7 @@ contract StakingOperators is IStakingOperators, AccessControl, ReentrancyGuard, 
         if (bal < amount) revert InsufficientStake();
         if (block.timestamp < _jailedUntil[operator]) revert OperatorJailed();
 
+        // If MAX_TRANCHES_PER_OPERATOR is reached, callers must withdraw matured tranches before requesting more.
         _operatorStake[operator] = bal - amount;
         _writeCheckpoint(operator, _operatorStake[operator]);
 
