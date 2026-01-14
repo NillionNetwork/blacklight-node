@@ -31,6 +31,8 @@ contract JailingPolicy is ISlashingPolicy {
     error ZeroJailDuration();
     error CommitteeRootMismatch();
     error UnsortedMembers();
+    error ProofsLengthMismatch(uint256 operators, uint256 proofs);
+    error CommitteeSizeMismatch(uint256 got, uint256 expected);
 
     uint256 private constant RESPONDED_BIT = 1 << 2;
     uint256 private constant VERDICT_MASK = 0x3;
@@ -121,8 +123,12 @@ contract JailingPolicy is ISlashingPolicy {
         bytes32[][] calldata proofs
     ) external {
         uint256 n = operators.length;
-        if (n != proofs.length) revert NotInCommittee();
+        if (n != proofs.length) revert ProofsLengthMismatch(n, proofs.length);
         for (uint256 i = 0; i < n; ) {
+            if (enforced[heartbeatKey][round][operators[i]]) {
+                ++i;
+                continue;
+            }
             enforceJail(heartbeatKey, round, operators[i], proofs[i]);
             unchecked { ++i; }
         }
@@ -134,7 +140,7 @@ contract JailingPolicy is ISlashingPolicy {
         RoundRecord memory rr = roundRecord[heartbeatKey][round];
         if (!rr.set) revert RoundNotFinalized();
         if (rr.jailDurationSec == 0) revert ZeroJailDuration();
-        if (sortedMembers.length != rr.committeeSize) revert UnsortedMembers();
+        if (sortedMembers.length != rr.committeeSize) revert CommitteeSizeMismatch(sortedMembers.length, rr.committeeSize);
 
         // Ensure strictly ascending + build leaves
         uint256 n = sortedMembers.length;
