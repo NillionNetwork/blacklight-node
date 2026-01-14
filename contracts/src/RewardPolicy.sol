@@ -6,6 +6,7 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/math/Math.sol";
 import "./Interfaces.sol";
+/// @dev Assumes rewardToken is a standard ERC20 (no transfer fees, rebasing, or balance-modifying hooks).
 
 /// @title RewardPolicy
 /// @notice Streaming-budget reward allocator with stake-weighted distribution.
