@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
 import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 import "./Interfaces.sol";
@@ -130,7 +130,7 @@ contract JailingPolicy is ISlashingPolicy {
                 continue;
             }
             enforceJail(heartbeatKey, round, operators[i], proofs[i]);
-            unchecked { ++i; }
+            ++i;
         }
     }
 
@@ -152,7 +152,7 @@ contract JailingPolicy is ISlashingPolicy {
             if (op == address(0) || op <= last) revert UnsortedMembers();
             last = op;
             leaves[i] = keccak256(abi.encodePacked(bytes1(0xA1), heartbeatManager, heartbeatKey, round, op));
-            unchecked { ++i; }
+            ++i;
         }
 
         bytes32 root = _computeMerkleRoot(leaves);
@@ -168,7 +168,7 @@ contract JailingPolicy is ISlashingPolicy {
                     emit JailEnforced(heartbeatKey, round, op, until);
                 }
             }
-            unchecked { ++i; }
+            ++i;
         }
     }
 
@@ -208,7 +208,7 @@ contract JailingPolicy is ISlashingPolicy {
                 bytes32 left = leaves[idx];
                 bytes32 right = idx + 1 < len ? leaves[idx + 1] : left;
                 leaves[i] = _hashPair(left, right);
-                unchecked { ++i; }
+                ++i;
             }
             len = nextLen;
         }

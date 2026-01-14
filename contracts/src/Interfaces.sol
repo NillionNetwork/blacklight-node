@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
 /// @notice Minimal shared interfaces used by the RC contracts.
 /// @dev Keep this file synchronized with the concrete implementations.

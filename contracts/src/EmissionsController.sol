@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -145,11 +145,11 @@ contract EmissionsController is ReentrancyGuard, Ownable {
         if (block.timestamp < readyAt) revert EpochNotElapsed(block.timestamp, readyAt);
 
         amount = _emissionsPerEpoch[epochId - 1];
+        if (amount == 0 && value != 0) revert ValueWithZeroEmission();
 
         if (globalMintCap != 0) {
             if (mintedTotal >= globalMintCap) revert GlobalCapExceeded(amount, 0);
             uint256 remaining = globalMintCap - mintedTotal;
-        if (amount == 0 && value != 0) revert ValueWithZeroEmission();
             if (amount > remaining) revert GlobalCapExceeded(amount, remaining);
         }
 
