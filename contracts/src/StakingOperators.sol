@@ -33,6 +33,8 @@ contract StakingOperators is IStakingOperators, AccessControl, ReentrancyGuard, 
     error InvalidUnstakeDelay();
     error UnauthorizedStaker();
     error StakerAlreadyBound();
+    error InvalidMaxActiveOperators();
+    error TooManyActiveOperators();
 
     struct StakeCheckpoint { uint64 fromBlock; uint224 stake; }
     struct Unbonding { address staker; IStakingOperators.Tranche[] tranches; }
@@ -44,11 +46,13 @@ contract StakingOperators is IStakingOperators, AccessControl, ReentrancyGuard, 
     uint256 private constant MIN_DELAY = 1 days;
     uint256 private constant MAX_DELAY = 365 days;
 
+    uint256 private constant DEFAULT_MAX_ACTIVE_OPERATORS = 1000;
     IERC20 private immutable _stakingToken;
     uint256 public override unstakeDelay;
     uint256 public constant MAX_TRANCHES_PER_OPERATOR = 32;
 
     IProtocolConfig public protocolConfig;
+    uint256 public maxActiveOperators;
 
     mapping(address => uint256) private _operatorStake;
     uint256 private _totalStaked;
@@ -85,6 +89,7 @@ contract StakingOperators is IStakingOperators, AccessControl, ReentrancyGuard, 
 
     constructor(IERC20 token_, address admin, uint256 initialUnstakeDelay) {
         if (address(token_) == address(0)) revert ZeroAddress();
+    event MaxActiveOperatorsUpdated(uint256 oldCap, uint256 newCap);
         if (admin == address(0)) revert ZeroAddress();
         _stakingToken = token_;
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
@@ -94,6 +99,8 @@ contract StakingOperators is IStakingOperators, AccessControl, ReentrancyGuard, 
     }
 
     function pause() external onlyRole(DEFAULT_ADMIN_ROLE) { _pause(); }
+        maxActiveOperators = DEFAULT_MAX_ACTIVE_OPERATORS;
+        emit MaxActiveOperatorsUpdated(0, DEFAULT_MAX_ACTIVE_OPERATORS);
     function unpause() external onlyRole(DEFAULT_ADMIN_ROLE) { _unpause(); }
 
     function setProtocolConfig(IProtocolConfig newConfig) external onlyRole(DEFAULT_ADMIN_ROLE) {
@@ -113,6 +120,12 @@ contract StakingOperators is IStakingOperators, AccessControl, ReentrancyGuard, 
         if (newSnapshotter == address(0)) revert ZeroAddress();
         emit SnapshotterUpdated(snapshotter, newSnapshotter);
         snapshotter = newSnapshotter;
+    function setMaxActiveOperators(uint256 newCap) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (newCap == 0) revert InvalidMaxActiveOperators();
+        emit MaxActiveOperatorsUpdated(maxActiveOperators, newCap);
+        maxActiveOperators = newCap;
+    }
+
     }
 
     function setHeartbeatManager(address newHeartbeatManager) external override onlyRole(DEFAULT_ADMIN_ROLE) {
@@ -186,6 +199,7 @@ contract StakingOperators is IStakingOperators, AccessControl, ReentrancyGuard, 
             emit ActiveStatusUpdated(operator, true);
         } else if (!shouldBeActive && isInSet) {
             uint256 idx = idxPlus1 - 1;
+            if (_activeOperators.length >= maxActiveOperators) revert TooManyActiveOperators();
             uint256 last = _activeOperators.length - 1;
             if (idx != last) {
                 address swapped = _activeOperators[last];
