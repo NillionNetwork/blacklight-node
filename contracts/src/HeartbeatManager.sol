@@ -143,7 +143,6 @@ contract HeartbeatManager is Pausable, ReentrancyGuard, Ownable, EIP712 {
     event HeartbeatBondRefunded(bytes32 indexed heartbeatKey, address indexed submitter, uint256 amount);
     event HeartbeatBondBurned(bytes32 indexed heartbeatKey, uint256 amount);
 
-    event RewardsDistributed(bytes32 indexed heartbeatKey, uint8 indexed round, uint256 voterCount, uint256 totalWeight);
     constructor(IProtocolConfig _config, address _owner)
         Ownable(_owner)
         EIP712("HeartbeatManager", "1")
@@ -348,10 +347,6 @@ contract HeartbeatManager is Pausable, ReentrancyGuard, Ownable, EIP712 {
         bytes32 structHash = keccak256(abi.encode(VOTE_TYPEHASH, heartbeatKey, round, verdict, r.snapshotId, r.committeeRoot));
         return _hashTypedDataV4(structHash);
     }
-        return _voteDigest(heartbeatKey, round, verdict);
-    }
-
-    function _voteDigest(bytes32 heartbeatKey, uint8 round, uint8 verdict) internal view returns (bytes32) {
 
     function _submitVerdict(
         address operator,
@@ -574,7 +569,6 @@ contract HeartbeatManager is Pausable, ReentrancyGuard, Ownable, EIP712 {
 
     function abandonRewardDistribution(bytes32 heartbeatKey, uint8 round) external onlyOwner {
         rewardsDone[heartbeatKey][round] = true;
-        emit RewardsDistributed(heartbeatKey, round, n, sumWeights);
         emit RewardDistributionAbandoned(heartbeatKey, round);
     }
 

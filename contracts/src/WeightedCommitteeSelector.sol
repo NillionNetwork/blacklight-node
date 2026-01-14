@@ -16,6 +16,7 @@ contract WeightedCommitteeSelector is ICommitteeSelector {
     error InsufficientCommitteeVP(uint256 selectedVP, uint256 requiredVP);
     error SnapshotBlockUnavailable(uint64 snapshotId);
     error ZeroTotalVotingPower();
+    error ZeroMinCommitteeVP();
 
     uint32 private constant DEFAULT_MAX_ACTIVE_OPERATORS = 1000;
 
@@ -43,6 +44,7 @@ contract WeightedCommitteeSelector is ICommitteeSelector {
     ) {
         if (address(_stakingOps) == address(0)) revert ZeroAddress();
         if (_admin == address(0)) revert ZeroAddress();
+        if (_minCommitteeVP == 0) revert ZeroMinCommitteeVP();
         if (_maxCommitteeSize == 0) revert ZeroMaxSize();
 
         stakingOps = _stakingOps;
@@ -55,6 +57,7 @@ contract WeightedCommitteeSelector is ICommitteeSelector {
     }
 
     function setMinCommitteeVP(uint256 newVP) external onlyAdmin {
+        if (newVP == 0) revert ZeroMinCommitteeVP();
         emit MinCommitteeVPUpdated(minCommitteeVP, newVP);
         minCommitteeVP = newVP;
     }

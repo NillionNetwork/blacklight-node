@@ -36,6 +36,7 @@ contract StakingOperators is IStakingOperators, AccessControl, ReentrancyGuard, 
     error InvalidMaxActiveOperators();
     error TooManyActiveOperators();
 
+    error InvalidProtocolConfig(address candidate);
     struct StakeCheckpoint { uint64 fromBlock; uint224 stake; }
     struct Unbonding { address staker; IStakingOperators.Tranche[] tranches; }
     struct OperatorData { bool active; string metadataURI; bool exists; }
@@ -107,6 +108,7 @@ contract StakingOperators is IStakingOperators, AccessControl, ReentrancyGuard, 
 
     function setProtocolConfig(IProtocolConfig newConfig) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (address(newConfig) == address(0)) revert ZeroAddress();
+        if (!_isProtocolConfig(address(newConfig))) revert InvalidProtocolConfig(address(newConfig));
         address old = address(protocolConfig);
         protocolConfig = newConfig;
         emit ProtocolConfigUpdated(old, address(newConfig));
@@ -451,3 +453,9 @@ contract StakingOperators is IStakingOperators, AccessControl, ReentrancyGuard, 
         }
     }
 }
+
+    function _isProtocolConfig(address candidate) internal view returns (bool) {
+        if (candidate.code.length == 0) return false;
+        (bool ok, ) = candidate.staticcall(abi.encodeWithSelector(IProtocolConfig.quorumBps.selector));
+        return ok;
+    }

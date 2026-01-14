@@ -181,7 +181,7 @@ contract DeployTestRCSystem is Script {
         p.heartbeatBondBurnBps = uint16(vm.envOr("HEARTBEAT_BOND_BURN_BPS", uint256(1000)));
 
         p.unstakeDelay = vm.envOr("UNSTAKE_DELAY_SEC", uint256(1 days));
-        p.minCommitteeVP = vm.envOr("MIN_COMMITTEE_VP", uint256(0));
+        p.minCommitteeVP = vm.envOr("MIN_COMMITTEE_VP", uint256(1));
 
         p.rewardEpochDuration = vm.envOr("REWARD_EPOCH_DURATION", uint256(1 days));
         p.rewardMaxPayoutPerFinalize = vm.envOr("REWARD_MAX_PAYOUT_PER_FINALIZE", uint256(0));

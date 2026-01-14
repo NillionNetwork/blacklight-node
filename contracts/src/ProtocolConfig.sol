@@ -17,6 +17,7 @@ contract ProtocolConfig is IProtocolConfig, Ownable {
     error ZeroResponseWindow();
     error ZeroJailDuration();
     error ZeroHeartbeatBond();
+    error DurationTooLarge(uint256 duration);
 
     // Modules
     address private _stakingOps;
@@ -99,6 +100,8 @@ contract ProtocolConfig is IProtocolConfig, Ownable {
         _validateBps(verificationBps_);
         _validateBps(committeeSizeGrowthBps_);
         _validateBps(heartbeatBondBurnBps_);
+        _validateDuration(responseWindow_);
+        _validateDuration(jailDuration_);
         _validateCommitteeCaps(baseCommitteeSize_, maxCommitteeSize_);
         _validateMaxVoteBatch(maxVoteBatchSize_);
 
@@ -151,6 +154,10 @@ contract ProtocolConfig is IProtocolConfig, Ownable {
     function _validateMaxVoteBatch(uint256 maxBatch) internal pure {
         // 0 = unlimited (still limited by HeartbeatManager hard limit); otherwise require sane cap.
         if (maxBatch != 0 && maxBatch > 500) revert InvalidMaxVoteBatchSize(maxBatch);
+    }
+
+    function _validateDuration(uint256 duration) internal pure {
+        if (duration > type(uint64).max) revert DurationTooLarge(duration);
     }
 
     // Modules
@@ -219,6 +226,8 @@ contract ProtocolConfig is IProtocolConfig, Ownable {
         _validateBps(verificationBps_);
         _validateBps(committeeSizeGrowthBps_);
         _validateBps(heartbeatBondBurnBps_);
+        _validateDuration(responseWindow_);
+        _validateDuration(jailDuration_);
         _validateCommitteeCaps(baseCommitteeSize_, maxCommitteeSize_);
         _validateMaxVoteBatch(maxVoteBatchSize_);
 
