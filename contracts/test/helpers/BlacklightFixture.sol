@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
 import "forge-std/Test.sol";
 
@@ -32,6 +32,8 @@ abstract contract BlacklightFixture is Test {
 
     uint256[] internal opPks;
     address[] internal ops;
+    uint256 internal heartbeatBond = 1e18;
+    uint16 internal heartbeatBondBurnBps = 1000;
 
     function _deploySystem(
         uint256 operatorCount,
@@ -51,7 +53,8 @@ abstract contract BlacklightFixture is Test {
 
         vm.startPrank(admin);
         stakingOps = new StakingOperators(IERC20(address(stakeToken)), admin, 1 days);
-        selector = new WeightedCommitteeSelector(stakingOps, admin, 0, maxCommitteeSize);
+        selector = new WeightedCommitteeSelector(stakingOps, admin, 1, maxCommitteeSize);
+        stakingOps.setMaxActiveOperators(operatorCount);
         vm.stopPrank();
 
         // Deploy config with placeholder modules (slashing/reward updated after deploy)
@@ -59,8 +62,8 @@ abstract contract BlacklightFixture is Test {
             governance,
             address(stakingOps),
             address(selector),
-            address(0x1111),
-            address(0x2222),
+            address(stakingOps),
+            address(selector),
             baseCommitteeSize,
             0, // growth bps
             maxCommitteeSize,
@@ -70,7 +73,9 @@ abstract contract BlacklightFixture is Test {
             responseWindow,
             jailDuration,
             100, // maxVoteBatchSize
-            1e18 // minOperatorStake
+            1e18, // minOperatorStake
+            heartbeatBond,
+            heartbeatBondBurnBps
         );
 
         manager = new HeartbeatManager(config, governance);
@@ -98,10 +103,11 @@ abstract contract BlacklightFixture is Test {
             opPks[i] = pk;
             ops[i] = op;
 
-            stakeToken.mint(op, stakes[i]);
+            stakeToken.mint(op, stakes[i] + heartbeatBond);
 
             vm.startPrank(op);
             stakeToken.approve(address(stakingOps), type(uint256).max);
+            stakeToken.approve(address(manager), type(uint256).max);
             stakingOps.stakeTo(op, stakes[i]);
             stakingOps.registerOperator(string(abi.encodePacked("ipfs://operator/", vm.toString(i))));
             vm.stopPrank();
@@ -126,6 +132,7 @@ abstract contract BlacklightFixture is Test {
         heartbeatKey = manager.deriveHeartbeatKey(rawHTX, submissionBlock);
         (snapshotId, members) = _prepareCommittee(heartbeatKey, 1, 0);
         address[] memory expectedMembers = members;
+        vm.prank(ops[0]);
         manager.submitHeartbeat(rawHTX, snapshotId);
 
         Vm.Log[] memory logs = vm.getRecordedLogs();
@@ -161,6 +168,7 @@ abstract contract BlacklightFixture is Test {
         heartbeatKey = manager.deriveHeartbeatKey(rawHTX, submissionBlock);
         (snapshotId, members) = _prepareCommittee(heartbeatKey, 1, 0);
         address[] memory expectedMembers = members;
+        vm.prank(ops[0]);
         manager.submitHeartbeat(rawHTX, snapshotId);
 
         Vm.Log[] memory logs = vm.getRecordedLogs();
@@ -210,7 +218,7 @@ abstract contract BlacklightFixture is Test {
         uint256 growth = uint256(config.committeeSizeGrowthBps());
         for (uint8 i = 0; i < escalationLevel; ) {
             size = (size * (10_000 + growth)) / 10_000;
-            unchecked { ++i; }
+            ++i;
         }
         uint256 cap = uint256(config.maxCommitteeSize());
         if (size > cap) size = cap;

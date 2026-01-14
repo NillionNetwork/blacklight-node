@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
 import "forge-std/Test.sol";
 import "forge-std/StdInvariant.sol";
@@ -107,15 +107,15 @@ contract HeartbeatManagerInvariants is StdInvariant, Test {
 
         vm.startPrank(admin);
         stakingOps = new StakingOperators(IERC20(address(stakeToken)), admin, 1 days);
-        selector = new WeightedCommitteeSelector(stakingOps, admin, 0, 50);
+        selector = new WeightedCommitteeSelector(stakingOps, admin, 1, 50);
         vm.stopPrank();
 
         config = new ProtocolConfig(
             address(this),
             address(stakingOps),
             address(selector),
-            address(0x1111),
-            address(0x2222),
+            address(stakingOps),
+            address(selector),
             20,   // baseCommitteeSize
             0,
             20,
@@ -125,7 +125,9 @@ contract HeartbeatManagerInvariants is StdInvariant, Test {
             1 days,
             7 days,
             100,
-            1e18
+            1e18,
+            1e18,
+            1000
         );
 
         manager = new HeartbeatManager(config, address(this));
@@ -146,9 +148,10 @@ contract HeartbeatManagerInvariants is StdInvariant, Test {
             uint256 pk = uint256(keccak256(abi.encodePacked("op", i + 1)));
             address op = vm.addr(pk);
 
-            stakeToken.mint(op, 2e18);
+            stakeToken.mint(op, 3e18);
             vm.startPrank(op);
             stakeToken.approve(address(stakingOps), type(uint256).max);
+            stakeToken.approve(address(manager), type(uint256).max);
             stakingOps.stakeTo(op, 2e18);
             stakingOps.registerOperator("ipfs://x");
             vm.stopPrank();
@@ -169,6 +172,7 @@ contract HeartbeatManagerInvariants is StdInvariant, Test {
         address[] memory membersOffchain = selector.selectCommittee(hbKey, 1, targetSize, snap);
         require(membersOffchain.length == targetSize, "empty committee");
         _sortMembers(membersOffchain);
+        vm.prank(vm.addr(uint256(keccak256(abi.encodePacked("op", uint256(1))))));
         manager.submitHeartbeat(rawHTX, snap);
         Vm.Log[] memory logs = vm.getRecordedLogs();
 

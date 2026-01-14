@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
 import "forge-std/Test.sol";
 import "./helpers/BlacklightFixture.sol";
@@ -33,7 +33,9 @@ contract HeartbeatManagerCommitteeGrowthTest is BlacklightFixture {
             1 days,
             7 days,
             100,
-            config.minOperatorStake()
+            config.minOperatorStake(),
+            config.heartbeatBond(),
+            config.heartbeatBondBurnBps()
         );
     }
 
@@ -60,7 +62,7 @@ contract HeartbeatManagerCommitteeGrowthTest is BlacklightFixture {
         vm.warp(uint256(deadline3) + 1);
         manager.escalateOrExpire(hbKey, _defaultRawHTX(1));
 
-        (HeartbeatManager.HeartbeatStatus status, , , , , ) = manager.heartbeats(hbKey);
+        (HeartbeatManager.HeartbeatStatus status, , , , , , , , , ) = manager.heartbeats(hbKey);
         assertEq(uint8(status), uint8(HeartbeatManager.HeartbeatStatus.Expired));
     }
 }

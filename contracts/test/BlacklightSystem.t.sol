@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
 import "forge-std/Test.sol";
 import "./helpers/BlacklightFixture.sol";
@@ -191,6 +191,7 @@ contract BlacklightSystemTest is BlacklightFixture {
         uint64 submissionBlock = uint64(block.number);
         bytes32 hbKey2 = manager.deriveHeartbeatKey(rawHTX2, submissionBlock);
         (uint64 snap2, ) = _prepareCommittee(hbKey2, 1, 0);
+        vm.prank(ops[0]);
         manager.submitHeartbeat(rawHTX2, snap2);
         Vm.Log[] memory logs = vm.getRecordedLogs();
         bytes32 sig = keccak256("RoundStarted(bytes32,uint8,bytes32,uint64,uint64,uint64,address[],bytes)");

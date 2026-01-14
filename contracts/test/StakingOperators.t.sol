@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
 import "forge-std/Test.sol";
 
@@ -24,19 +24,21 @@ contract StakingOperatorsTest is Test {
         config = new ProtocolConfig(
             address(this),
             address(stakingOps),
-            address(0x1111),
-            address(0x2222),
-            address(0x3333),
+            address(this),
+            address(this),
+            address(this),
             2,
             0,
             5,
             0,
-            0,
-            0,
+            1,
+            1,
             10,
             10,
             100,
-            1e18
+            1e18,
+            1e18,
+            0
         );
 
         vm.prank(admin);
@@ -72,7 +74,8 @@ contract StakingOperatorsTest is Test {
 
         vm.startPrank(operator);
         stakeToken.approve(address(stakingOps), type(uint256).max);
-        stakingOps.stakeTo(operator, 0.5e18);
+        stakingOps.stakeTo(operator, 1e18);
+        stakingOps.requestUnstake(operator, 0.5e18);
         vm.expectRevert(StakingOperators.InsufficientStakeForActivation.selector);
         stakingOps.registerOperator("ipfs://x");
         stakingOps.stakeTo(operator, 0.5e18);
@@ -80,6 +83,17 @@ contract StakingOperatorsTest is Test {
         vm.stopPrank();
 
         assertTrue(stakingOps.isActiveOperator(operator));
+    }
+
+    function test_stakeTo_requiresMinStakeOnInitialBind() public {
+        address operator = address(0xB0B);
+        stakeToken.mint(operator, 1e18);
+
+        vm.startPrank(operator);
+        stakeToken.approve(address(stakingOps), type(uint256).max);
+        vm.expectRevert(StakingOperators.InsufficientStakeForActivation.selector);
+        stakingOps.stakeTo(operator, 0.5e18);
+        vm.stopPrank();
     }
 
     function test_requestUnstake_and_withdraw() public {
@@ -182,5 +196,54 @@ contract StakingOperatorsTest is Test {
         uint64 snap2 = stakingOps.snapshot();
         assertEq(stakingOps.stakeAt(operator, snap2), 1e18);
         assertEq(stakingOps.stakeAt(operator, snap1), 2e18);
+    }
+
+    function test_stakeTo_revertsForUnauthorizedStakerWhenApproved() public {
+        address operator = address(0xB0B);
+        address approved = address(0x111);
+        address attacker = address(0x222);
+
+        stakeToken.mint(approved, 1e18);
+        stakeToken.mint(attacker, 1e18);
+
+        vm.prank(operator);
+        stakingOps.approveStaker(approved);
+
+        vm.startPrank(attacker);
+        stakeToken.approve(address(stakingOps), type(uint256).max);
+        vm.expectRevert(StakingOperators.UnauthorizedStaker.selector);
+        stakingOps.stakeTo(operator, 1e18);
+        vm.stopPrank();
+
+        vm.startPrank(approved);
+        stakeToken.approve(address(stakingOps), type(uint256).max);
+        stakingOps.stakeTo(operator, 1e18);
+        vm.stopPrank();
+
+        assertEq(stakingOps.operatorStaker(operator), approved);
+    }
+
+    function test_registerOperator_revertsWhenActiveSetFull() public {
+        vm.prank(admin);
+        stakingOps.setMaxActiveOperators(1);
+
+        address operator1 = address(0xB0B1);
+        address operator2 = address(0xB0B2);
+
+        stakeToken.mint(operator1, 2e18);
+        stakeToken.mint(operator2, 2e18);
+
+        vm.startPrank(operator1);
+        stakeToken.approve(address(stakingOps), type(uint256).max);
+        stakingOps.stakeTo(operator1, 1e18);
+        stakingOps.registerOperator("ipfs://one");
+        vm.stopPrank();
+
+        vm.startPrank(operator2);
+        stakeToken.approve(address(stakingOps), type(uint256).max);
+        stakingOps.stakeTo(operator2, 1e18);
+        vm.expectRevert(StakingOperators.TooManyActiveOperators.selector);
+        stakingOps.registerOperator("ipfs://two");
+        vm.stopPrank();
     }
 }

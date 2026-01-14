@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
 /// @notice Test-only Merkle utilities compatible with OpenZeppelin MerkleProof.
 /// @dev Pair hashing is commutative (sorted), matching OZ MerkleProof and the on-chain contracts.
@@ -22,7 +22,7 @@ library MerkleTestUtils {
                 bytes32 left = leaves[idx];
                 bytes32 right = idx + 1 < len ? leaves[idx + 1] : left;
                 leaves[i] = hashPair(left, right);
-                unchecked { ++i; }
+                ++i;
             }
             len = nextLen;
         }
@@ -38,7 +38,7 @@ library MerkleTestUtils {
         leaves = new bytes32[](n);
         for (uint256 i = 0; i < n; ) {
             leaves[i] = leaf(heartbeatManager, heartbeatKey, round, members[i]);
-            unchecked { ++i; }
+            ++i;
         }
     }
 
@@ -71,7 +71,7 @@ library MerkleTestUtils {
                 bytes32 left = level[li];
                 bytes32 right = li + 1 < level.length ? level[li + 1] : left;
                 next[i] = hashPair(left, right);
-                unchecked { ++i; }
+                ++i;
             }
             level = next;
             idx = idx / 2;
@@ -83,7 +83,7 @@ library MerkleTestUtils {
     function indexOf(address[] memory arr, address target) internal pure returns (bool found, uint256 index) {
         for (uint256 i = 0; i < arr.length; ) {
             if (arr[i] == target) return (true, i);
-            unchecked { ++i; }
+            ++i;
         }
         return (false, 0);
     }

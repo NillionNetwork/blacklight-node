@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
 import "forge-std/Test.sol";
 import "./helpers/BlacklightFixture.sol";
@@ -110,11 +110,9 @@ contract JailingPolicyTest is BlacklightFixture {
         address target = members[1];
         bytes32[] memory proof = _proofForMember(hbKey, round, members, target);
 
+        vm.expectRevert(JailingPolicy.NotJailable.selector);
         jailingPolicy.enforceJail(hbKey, round, target, proof);
-        assertTrue(stakingOps.isJailed(target));
-
-        vm.expectRevert(JailingPolicy.AlreadyEnforced.selector);
-        jailingPolicy.enforceJail(hbKey, round, target, proof);
+        assertFalse(stakingOps.isJailed(target));
 
         // responded voter should NOT be jailable in inconclusive
         bytes32[] memory proof0 = _proofForMember(hbKey, round, members, members[0]);

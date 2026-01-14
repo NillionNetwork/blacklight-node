@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
 import "forge-std/Test.sol";
 import "forge-std/StdInvariant.sol";
@@ -155,19 +155,21 @@ contract StakingInvariants is StdInvariant, Test {
         config = new ProtocolConfig(
             address(this),
             address(stakingOps),
-            address(0x1111),
-            address(0x2222),
-            address(0x3333),
+            address(this),
+            address(this),
+            address(this),
             2,
             0,
             10,
             0,
-            0,
-            0,
+            1,
+            1,
             10,
             10,
             100,
-            1e18
+            1e18,
+            1e18,
+            0
         );
 
         vm.prank(admin);

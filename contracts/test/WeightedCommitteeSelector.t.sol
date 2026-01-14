@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
 import "forge-std/Test.sol";
 
@@ -19,7 +19,8 @@ contract WeightedCommitteeSelectorTest is Test {
 
         vm.startPrank(admin);
         stakingOps = new StakingOperators(IERC20(address(stakeToken)), admin, 1 days);
-        selector = new WeightedCommitteeSelector(stakingOps, admin, 0, 1000);
+        selector = new WeightedCommitteeSelector(stakingOps, admin, 1, 1000);
+        stakingOps.setMaxActiveOperators(2000);
         stakingOps.setSnapshotter(address(this));
         vm.stopPrank();
     }

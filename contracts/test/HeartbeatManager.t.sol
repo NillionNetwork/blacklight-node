@@ -1,12 +1,39 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
 import "forge-std/Test.sol";
 import "./helpers/BlacklightFixture.sol";
 import "../src/mocks/MockERC20.sol";
+import "../src/Interfaces.sol";
 import "../src/RewardPolicy.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
+
+contract ToggleSlashingPolicy is ISlashingPolicy {
+    bool public shouldRevert;
+    uint256 public callCount;
+
+    constructor(bool shouldRevert_) {
+        shouldRevert = shouldRevert_;
+    }
+
+    function setShouldRevert(bool value) external {
+        shouldRevert = value;
+    }
+
+    function onRoundFinalized(
+        bytes32,
+        uint8,
+        Outcome,
+        bytes32,
+        uint32
+    ) external override {
+        callCount++;
+        if (shouldRevert) {
+            revert("slashing reverted");
+        }
+    }
+}
 
 contract HeartbeatManagerTest is BlacklightFixture {
     function setUp() public {
@@ -39,7 +66,7 @@ contract HeartbeatManagerTest is BlacklightFixture {
         assertTrue(snap != 0);
         assertEq(members.length, 10);
 
-        (HeartbeatManager.HeartbeatStatus status, uint8 currentRound, , , , ) = manager.heartbeats(hbKey);
+        (HeartbeatManager.HeartbeatStatus status, uint8 currentRound, , , , , , , , ) = manager.heartbeats(hbKey);
         assertEq(uint8(status), uint8(HeartbeatManager.HeartbeatStatus.Pending));
         assertEq(currentRound, 1);
 
@@ -68,7 +95,9 @@ contract HeartbeatManagerTest is BlacklightFixture {
         (uint64 snap, ) = _prepareCommittee(hbKey, 1, 0);
 
         vm.recordLogs();
+        vm.prank(ops[0]);
         manager.submitHeartbeat(rawHTX, snap);
+        vm.prank(ops[0]);
         manager.submitHeartbeat(rawHTX, snap);
 
         Vm.Log[] memory logs = vm.getRecordedLogs();
@@ -81,6 +110,34 @@ contract HeartbeatManagerTest is BlacklightFixture {
             }
         }
         assertEq(startedCount, 1, "round started twice");
+    }
+
+    function test_submitHeartbeat_refundsBondOnValidOutcome() public {
+        uint256 balanceBefore = stakeToken.balanceOf(ops[0]);
+        (bytes32 hbKey, uint8 round, , , address[] memory members) = _submitPointerAndGetRound();
+        assertEq(stakeToken.balanceOf(address(manager)), heartbeatBond);
+
+        for (uint256 i = 0; i < 5; i++) {
+            _vote(hbKey, round, members, members[i], 1);
+        }
+
+        _finalizeDefault(hbKey, round);
+        assertEq(stakeToken.balanceOf(ops[0]), balanceBefore);
+        assertEq(stakeToken.balanceOf(address(manager)), 0);
+    }
+
+    function test_submitHeartbeat_burnsBondOnInvalidOutcome() public {
+        uint256 balanceBefore = stakeToken.balanceOf(ops[0]);
+        (bytes32 hbKey, uint8 round, , , address[] memory members) = _submitPointerAndGetRound();
+
+        for (uint256 i = 0; i < 5; i++) {
+            _vote(hbKey, round, members, members[i], 2);
+        }
+
+        _finalizeDefault(hbKey, round);
+        assertEq(stakeToken.balanceOf(ops[0]), balanceBefore - heartbeatBond);
+        assertEq(stakeToken.balanceOf(address(0xdead)), heartbeatBond);
+        assertEq(stakeToken.balanceOf(address(manager)), 0);
     }
 
     function test_submitVerdict_revertsForNonMember() public {
@@ -97,10 +154,12 @@ contract HeartbeatManagerTest is BlacklightFixture {
         bytes memory rawHTX = _defaultRawHTX(123);
 
         vm.expectRevert(abi.encodeWithSelector(HeartbeatManager.SnapshotBlockUnavailable.selector, uint64(0)));
+        vm.prank(ops[0]);
         manager.submitHeartbeat(rawHTX, 0);
 
         uint64 future = uint64(block.number);
         vm.expectRevert(abi.encodeWithSelector(HeartbeatManager.SnapshotBlockUnavailable.selector, future));
+        vm.prank(ops[0]);
         manager.submitHeartbeat(rawHTX, future);
     }
 
@@ -140,7 +199,7 @@ contract HeartbeatManagerTest is BlacklightFixture {
 
         _finalizeDefault(hbKey, round);
         assertEq(uint8(manager.roundOutcome(hbKey, round)), uint8(ISlashingPolicy.Outcome.ValidThreshold));
-        (HeartbeatManager.HeartbeatStatus status, , , , , ) = manager.heartbeats(hbKey);
+        (HeartbeatManager.HeartbeatStatus status, , , , , , , , , ) = manager.heartbeats(hbKey);
         assertEq(uint8(status), uint8(HeartbeatManager.HeartbeatStatus.Verified));
     }
 
@@ -153,7 +212,7 @@ contract HeartbeatManagerTest is BlacklightFixture {
 
         _finalizeDefault(hbKey, round);
         assertEq(uint8(manager.roundOutcome(hbKey, round)), uint8(ISlashingPolicy.Outcome.InvalidThreshold));
-        (HeartbeatManager.HeartbeatStatus status, , , , , ) = manager.heartbeats(hbKey);
+        (HeartbeatManager.HeartbeatStatus status, , , , , , , , , ) = manager.heartbeats(hbKey);
         assertEq(uint8(status), uint8(HeartbeatManager.HeartbeatStatus.Invalid));
     }
 
@@ -162,6 +221,7 @@ contract HeartbeatManagerTest is BlacklightFixture {
         manager.pause();
 
         vm.expectRevert(Pausable.EnforcedPause.selector);
+        vm.prank(ops[0]);
         manager.submitHeartbeat(_defaultRawHTX(77), uint64(block.number - 1));
 
         bytes32[] memory proof = _proofForMember(hbKey, round, members, members[0]);
@@ -178,6 +238,7 @@ contract HeartbeatManagerTest is BlacklightFixture {
 
     function test_escalateOrExpire_inconclusive_startsNewRound_and_then_expires() public {
         // quorum requires 50%; only 1 vote => inconclusive
+        uint256 balanceBefore = stakeToken.balanceOf(ops[0]);
         (bytes32 hbKey, uint8 round1, , , address[] memory members1) = _submitPointerAndGetRound();
         _vote(hbKey, round1, members1, members1[0], 1);
 
@@ -191,7 +252,7 @@ contract HeartbeatManagerTest is BlacklightFixture {
         // round 1 finalized inconclusive and round2 started
         assertEq(uint8(manager.roundOutcome(hbKey, round1)), uint8(ISlashingPolicy.Outcome.Inconclusive));
 
-        (, uint8 currentRound, uint8 escalationLevel, , , ) = manager.heartbeats(hbKey);
+        (, uint8 currentRound, uint8 escalationLevel, , , , , , , ) = manager.heartbeats(hbKey);
         assertEq(currentRound, 2);
         assertEq(escalationLevel, 1);
 
@@ -211,8 +272,11 @@ contract HeartbeatManagerTest is BlacklightFixture {
         vm.warp(uint256(deadline2) + 1);
         manager.escalateOrExpire(hbKey, _defaultRawHTX(1));
 
-        (HeartbeatManager.HeartbeatStatus status2, , , , , ) = manager.heartbeats(hbKey);
+        (HeartbeatManager.HeartbeatStatus status2, , , , , , , , , ) = manager.heartbeats(hbKey);
         assertEq(uint8(status2), uint8(HeartbeatManager.HeartbeatStatus.Expired));
+        uint256 burned = (heartbeatBond * heartbeatBondBurnBps) / 10_000;
+        assertEq(stakeToken.balanceOf(ops[0]), balanceBefore - burned);
+        assertEq(stakeToken.balanceOf(address(0xdead)), burned);
     }
 
     function test_escalateOrExpire_revertsOnRawHashMismatch() public {
@@ -298,7 +362,9 @@ contract HeartbeatManagerTest is BlacklightFixture {
             config.responseWindow(),
             config.jailDuration(),
             2,
-            config.minOperatorStake()
+            config.minOperatorStake(),
+            config.heartbeatBond(),
+            config.heartbeatBondBurnBps()
         );
 
         (bytes32 hbKey, uint8 round, , , address[] memory members) = _submitPointerAndGetRound();
@@ -435,5 +501,72 @@ contract HeartbeatManagerTest is BlacklightFixture {
 
         vm.expectRevert(HeartbeatManager.RewardsAlreadyDone.selector);
         manager.distributeRewards(hbKey, round, voters);
+    }
+
+    function test_distributeRewards_revertsOnInconclusiveOutcome() public {
+        (bytes32 hbKey, uint8 round, , , address[] memory members) = _submitPointerAndGetRound();
+        _vote(hbKey, round, members, members[0], 1);
+
+        _finalizeDefault(hbKey, round);
+
+        address[] memory voters = new address[](1);
+        voters[0] = members[0];
+
+        vm.expectRevert(HeartbeatManager.InvalidOutcome.selector);
+        manager.distributeRewards(hbKey, round, voters);
+    }
+
+    function test_distributeRewards_revertsOnWeightMismatch_invalidOutcome() public {
+        (bytes32 hbKey, uint8 round, , , address[] memory members) = _submitPointerAndGetRound();
+        for (uint256 i = 0; i < 5; i++) _vote(hbKey, round, members, members[i], 2);
+
+        _finalizeDefault(hbKey, round);
+
+        address[] memory voters = new address[](4);
+        for (uint256 i = 0; i < 4; i++) voters[i] = members[i];
+
+        uint256 sumWeights = 4 * 2e18;
+        uint256 expectedStake = 5 * 2e18;
+        vm.expectRevert(
+            abi.encodeWithSelector(HeartbeatManager.InvalidVoterWeightSum.selector, sumWeights, expectedStake)
+        );
+        manager.distributeRewards(hbKey, round, voters);
+    }
+
+    function test_retrySlashing_retriesAfterFailure() public {
+        ToggleSlashingPolicy slashing = new ToggleSlashingPolicy(true);
+        config.setModules(address(stakingOps), address(selector), address(slashing), address(rewardPolicy));
+
+        (bytes32 hbKey, uint8 round, , , address[] memory members) = _submitPointerAndGetRound();
+        for (uint256 i = 0; i < 5; i++) _vote(hbKey, round, members, members[i], 1);
+
+        _finalizeDefault(hbKey, round);
+        assertEq(slashing.callCount(), 0);
+        assertFalse(manager.slashingNotified(hbKey, round));
+
+        slashing.setShouldRevert(false);
+        manager.retrySlashing(hbKey, round);
+
+        assertEq(slashing.callCount(), 1);
+        assertTrue(manager.slashingNotified(hbKey, round));
+    }
+
+    function test_retrySlashing_revertsWhenNotFinalized() public {
+        (bytes32 hbKey, uint8 round, , , ) = _submitPointerAndGetRound();
+        vm.expectRevert(HeartbeatManager.RoundNotFinalized.selector);
+        manager.retrySlashing(hbKey, round);
+    }
+
+    function test_setSlashingGasLimit_ownerOnly_and_nonZero() public {
+        address nonOwner = address(0xBEEF);
+        vm.prank(nonOwner);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, nonOwner));
+        manager.setSlashingGasLimit(123);
+
+        vm.expectRevert(HeartbeatManager.InvalidSlashingGasLimit.selector);
+        manager.setSlashingGasLimit(0);
+
+        manager.setSlashingGasLimit(123);
+        assertEq(manager.slashingGasLimit(), 123);
     }
 }
