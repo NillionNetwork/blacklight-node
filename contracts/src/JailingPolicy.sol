@@ -9,7 +9,14 @@ interface IHeartbeatManagerPolicyView {
     function getRoundForPolicy(bytes32 heartbeatKey, uint8 round)
         external
         view
-        returns (bool finalized, ISlashingPolicy.Outcome outcome, bytes32 committeeRoot, address stakingOps, uint64 jailDurationSec);
+        returns (
+            bool finalized,
+            ISlashingPolicy.Outcome outcome,
+            bytes32 committeeRoot,
+            address stakingOps,
+            uint64 jailDurationSec,
+            uint32 committeeSize
+        );
 }
 
 /// @title JailingPolicy
@@ -58,8 +65,8 @@ contract JailingPolicy is ISlashingPolicy {
         heartbeatManager = _heartbeatManager;
     }
 
-    function recordRound(bytes32 heartbeatKey, uint8 round, uint32 committeeSize) public {
-        (bool finalized, Outcome o2, bytes32 root2, address stakingOps, uint64 jailDurationSec) =
+    function recordRound(bytes32 heartbeatKey, uint8 round) public {
+        (bool finalized, Outcome o2, bytes32 root2, address stakingOps, uint64 jailDurationSec, uint32 committeeSize) =
             IHeartbeatManagerPolicyView(heartbeatManager).getRoundForPolicy(heartbeatKey, round);
 
         if (!finalized || root2 == bytes32(0)) revert RoundNotFinalized();
@@ -82,10 +89,10 @@ contract JailingPolicy is ISlashingPolicy {
         uint8 round,
         Outcome /*outcome*/,
         bytes32 /*committeeRoot*/,
-        uint32 committeeSize
+        uint32 /*committeeSize*/
     ) external override {
         if (msg.sender != heartbeatManager) revert NotHeartbeatManager();
-        recordRound(heartbeatKey, round, committeeSize);
+        recordRound(heartbeatKey, round);
     }
 
     function enforceJail(bytes32 heartbeatKey, uint8 round, address operator, bytes32[] calldata memberProof) public {

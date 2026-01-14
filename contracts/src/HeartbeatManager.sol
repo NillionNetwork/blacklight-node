@@ -582,10 +582,10 @@ contract HeartbeatManager is Pausable, ReentrancyGuard, Ownable, EIP712 {
     function getRoundForPolicy(bytes32 heartbeatKey, uint8 round)
         external
         view
-        returns (bool, ISlashingPolicy.Outcome, bytes32, address, uint64)
+        returns (bool, ISlashingPolicy.Outcome, bytes32, address, uint64, uint32)
     {
         RoundInfo storage r = rounds[heartbeatKey][round];
-        return (r.finalized, roundOutcome[heartbeatKey][round], r.committeeRoot, r.stakingOps, r.jailDurationSec);
+        return (r.finalized, roundOutcome[heartbeatKey][round], r.committeeRoot, r.stakingOps, r.jailDurationSec, r.committeeSize);
     }
 
     function nodeCount() external view returns (uint256) {
