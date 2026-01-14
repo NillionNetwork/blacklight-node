@@ -7,6 +7,7 @@ use crate::{
     types::Htx,
 };
 use alloy::{
+    contract::{CallBuilder, CallDecoder},
     primitives::{keccak256, Address, B256, U256},
     providers::Provider,
     sol,
@@ -130,14 +131,7 @@ impl<P: Provider + Clone> HeartbeatManagerClient<P> {
         let snapshot_id = snapshot_id.saturating_sub(1);
         let raw_htx = alloy::primitives::Bytes::try_from(htx)?;
         let call = self.contract.submitHeartbeat(raw_htx, snapshot_id);
-
-        // Estimate gas and add 50% buffer for variable node selection
-        let estimated_gas = call.estimate_gas().await.map_err(|e| {
-            let decoded = decode_any_error(&e);
-            anyhow!("submitHeartbeat would revert: {decoded}")
-        })?;
-        let gas_with_buffer = estimated_gas.saturating_add(estimated_gas / 2);
-
+        let gas_with_buffer = Self::overestimate_gas(&call).await?;
         self.submitter
             .with_gas_limit(gas_with_buffer)
             .invoke("submitHeartbeat", call)
@@ -161,7 +155,11 @@ impl<P: Provider + Clone> HeartbeatManagerClient<P> {
         let call = self
             .contract
             .submitVerdict(event.heartbeatKey, verdict, proofs);
-        self.submitter.invoke("submitVerdict", call).await
+        let gas_with_buffer = Self::overestimate_gas(&call).await?;
+        self.submitter
+            .with_gas_limit(gas_with_buffer)
+            .invoke("submitVerdict", call)
+            .await
     }
 
     /// Check if a specific node has responded to an HTX
@@ -446,6 +444,16 @@ impl<P: Provider + Clone> HeartbeatManagerClient<P> {
         }
 
         Ok(proof)
+    }
+
+    async fn overestimate_gas<D: CallDecoder>(call: &CallBuilder<&P, D>) -> anyhow::Result<u64> {
+        // Estimate gas and add a 50% buffer
+        let estimated_gas = call.estimate_gas().await.map_err(|e| {
+            let decoded = decode_any_error(&e);
+            anyhow!("failed to estimate gas: {decoded}")
+        })?;
+        let gas_with_buffer = estimated_gas.saturating_add(estimated_gas / 2);
+        Ok(gas_with_buffer)
     }
 }
 
