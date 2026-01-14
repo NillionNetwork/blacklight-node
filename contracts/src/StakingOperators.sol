@@ -31,6 +31,8 @@ contract StakingOperators is IStakingOperators, AccessControl, ReentrancyGuard, 
     error StakeOverflow();
     error BatchTooLarge();
     error InvalidUnstakeDelay();
+    error UnauthorizedStaker();
+    error StakerAlreadyBound();
 
     struct StakeCheckpoint { uint64 fromBlock; uint224 stake; }
     struct Unbonding { address staker; IStakingOperators.Tranche[] tranches; }
@@ -63,6 +65,7 @@ contract StakingOperators is IStakingOperators, AccessControl, ReentrancyGuard, 
 
     mapping(address => OperatorData) private _operators;
 
+    mapping(address => address) public approvedStaker;
     address[] private _activeOperators;
     mapping(address => uint256) private _activeIndexPlus1;
 
@@ -85,6 +88,7 @@ contract StakingOperators is IStakingOperators, AccessControl, ReentrancyGuard, 
         if (admin == address(0)) revert ZeroAddress();
         _stakingToken = token_;
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
+    event StakerApproved(address indexed operator, address indexed staker);
         if (initialUnstakeDelay < MIN_DELAY || initialUnstakeDelay > MAX_DELAY) revert InvalidUnstakeDelay();
         unstakeDelay = initialUnstakeDelay;
     }
@@ -212,14 +216,29 @@ contract StakingOperators is IStakingOperators, AccessControl, ReentrancyGuard, 
         return _activeOperators;
     }
 
+    function approveStaker(address staker) external whenNotPaused {
+        if (staker == address(0)) revert ZeroAddress();
+        if (operatorStaker[msg.sender] != address(0)) revert StakerAlreadyBound();
+        approvedStaker[msg.sender] = staker;
+        emit StakerApproved(msg.sender, staker);
+    }
+
     function stakeTo(address operator, uint256 amount) external override nonReentrant whenNotPaused {
         if (operator == address(0)) revert ZeroAddress();
         if (amount == 0) revert ZeroAmount();
 
         address currentStaker = operatorStaker[operator];
         if (currentStaker == address(0)) {
+            IProtocolConfig cfg = protocolConfig;
+            if (address(cfg) != address(0)) {
+                uint256 minStake = cfg.minOperatorStake();
+                if (minStake != 0 && amount < minStake) revert InsufficientStakeForActivation();
+            }
+            address approved = approvedStaker[operator];
+            if (approved != address(0) && msg.sender != operator && msg.sender != approved) revert UnauthorizedStaker();
             operatorStaker[operator] = msg.sender;
             _unbondings[operator].staker = msg.sender;
+            if (approved != address(0)) approvedStaker[operator] = address(0);
         } else if (currentStaker != msg.sender) revert DifferentStaker();
 
         _stakingToken.safeTransferFrom(msg.sender, address(this), amount);
@@ -236,7 +255,7 @@ contract StakingOperators is IStakingOperators, AccessControl, ReentrancyGuard, 
         if (operator == address(0)) revert ZeroAddress();
         if (amount == 0) revert ZeroAmount();
         if (operatorStaker[operator] != msg.sender) revert NotStaker();
-
+        // If MAX_TRANCHES_PER_OPERATOR is reached, callers must withdraw matured tranches before requesting more.
         uint256 bal = _operatorStake[operator];
         if (bal < amount) revert InsufficientStake();
         if (block.timestamp < _jailedUntil[operator]) revert OperatorJailed();
