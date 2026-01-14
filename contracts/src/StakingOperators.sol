@@ -290,7 +290,6 @@ contract StakingOperators is IStakingOperators, AccessControl, ReentrancyGuard, 
 
         Unbonding storage u = _unbondings[operator];
         uint256 len = u.tranches.length;
-        if (len == 0) revert NoUnbonding();
         if (msg.sender != u.staker) revert NotStaker();
 
         uint256 payout;
@@ -298,6 +297,13 @@ contract StakingOperators is IStakingOperators, AccessControl, ReentrancyGuard, 
 
         for (uint256 i = 0; i < len; ) {
             IStakingOperators.Tranche memory t = u.tranches[i];
+        if (len == 0) {
+            if (_operatorStake[operator] != 0) revert NoUnbonding();
+            operatorStaker[operator] = address(0);
+            u.staker = address(0);
+            _setActiveInSet(operator, _computeIsActive(operator));
+            return;
+        }
             if (block.timestamp >= t.releaseTime) payout += t.amount;
             else { u.tranches[writeIndex] = t; unchecked { ++writeIndex; } }
             unchecked { ++i; }
