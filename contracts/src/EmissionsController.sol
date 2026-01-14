@@ -37,6 +37,7 @@ contract EmissionsController is ReentrancyGuard, Ownable {
     /// @param remaining Remaining mintable amount under the cap.
     error GlobalCapExceeded(uint256 requested, uint256 remaining);
     error InvalidEpoch(uint256 epochId);
+    error ValueWithZeroEmission();
 
     event EpochMinted(
         uint256 indexed epoch,
@@ -144,6 +145,7 @@ contract EmissionsController is ReentrancyGuard, Ownable {
         if (globalMintCap != 0) {
             if (mintedTotal >= globalMintCap) revert GlobalCapExceeded(amount, 0);
             uint256 remaining = globalMintCap - mintedTotal;
+        if (amount == 0 && value != 0) revert ValueWithZeroEmission();
             if (amount > remaining) revert GlobalCapExceeded(amount, remaining);
         }
 
