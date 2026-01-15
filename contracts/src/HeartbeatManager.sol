@@ -535,10 +535,19 @@ contract HeartbeatManager is Pausable, ReentrancyGuard, Ownable, EIP712 {
         RoundInfo storage r = rounds[heartbeatKey][round];
         if (!r.finalized) revert RoundNotFinalized();
         if (rewardsDone[heartbeatKey][round]) revert RewardsAlreadyDone();
-        if (roundOutcome[heartbeatKey][round] != ISlashingPolicy.Outcome.ValidThreshold) revert InvalidOutcome();
+
+        ISlashingPolicy.Outcome outcome = roundOutcome[heartbeatKey][round];
+        if (outcome != ISlashingPolicy.Outcome.ValidThreshold && outcome != ISlashingPolicy.Outcome.InvalidThreshold) {
+            revert InvalidOutcome();
+        }
+
+        uint8 expectedVerdict = outcome == ISlashingPolicy.Outcome.ValidThreshold ? 1 : 2;
+        uint256 expectedStake = outcome == ISlashingPolicy.Outcome.ValidThreshold ? r.validStake : r.invalidStake;
 
         uint256 n = sortedVoters.length;
-        if (n != uint256(r.validVotesCount)) revert InvalidVoterCount(n, r.validVotesCount);
+        if (outcome == ISlashingPolicy.Outcome.ValidThreshold && n != uint256(r.validVotesCount)) {
+            revert InvalidVoterCount(n, r.validVotesCount);
+        }
 
         address last = address(0);
         uint256 sumWeights;
@@ -551,7 +560,7 @@ contract HeartbeatManager is Pausable, ReentrancyGuard, Ownable, EIP712 {
 
             uint256 packed = votePacked[heartbeatKey][round][op];
             if ((packed & RESPONDED_BIT) == 0) revert InvalidVoterInList();
-            if (uint8(packed & 0x3) != 1) revert InvalidVoterInList();
+            if (uint8(packed & 0x3) != expectedVerdict) revert InvalidVoterInList();
 
             uint256 wgt = _weight(packed);
             weights[i] = wgt;
@@ -560,7 +569,7 @@ contract HeartbeatManager is Pausable, ReentrancyGuard, Ownable, EIP712 {
             ++i;
         }
 
-        if (sumWeights != r.validStake) revert InvalidVoterWeightSum(sumWeights, r.validStake);
+        if (sumWeights != expectedStake) revert InvalidVoterWeightSum(sumWeights, expectedStake);
 
         IRewardPolicy(r.reward).accrueWeights(heartbeatKey, round, sortedVoters, weights);
         rewardsDone[heartbeatKey][round] = true;
