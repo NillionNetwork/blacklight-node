@@ -172,7 +172,7 @@ pub async fn validate_node_requirements(
         }
         WalletStatus::InsufficientFunds => {
             anyhow::bail!(
-                "Insufficient funds. Please ensure the address has at least {} ETH and try again.",
+                "Insufficient funds. Please try again with at least {} ETH and sufficient TEST tokens staked.",
                 format_ether(MIN_ETH_BALANCE)
             )
         }

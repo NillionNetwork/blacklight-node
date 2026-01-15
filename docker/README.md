@@ -17,39 +17,39 @@ The docker-compose setup includes:
 ### Start the entire system:
 
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
 
 ### View logs:
 
 ```bash
 # All services
-docker-compose logs -f
+docker compose logs -f
 
 # Specific service
-docker-compose logs -f node1
-docker-compose logs -f simulator
+docker compose logs -f node
+docker compose logs -f simulator
 
 # Multiple services
-docker-compose logs -f node1 node2 node3
+docker compose logs -f simulator node
 ```
 
 ### Start with the monitor (interactive TUI):
 
 ```bash
-docker-compose --profile monitor up
+docker compose --profile monitor up
 ```
 
 ### Stop the system:
 
 ```bash
-docker-compose down
+docker compose down
 ```
 
 ### Clean up everything (including volumes):
 
 ```bash
-docker-compose down -v
+docker compose down -v
 ```
 
 ## Architecture
@@ -73,15 +73,10 @@ docker-compose down -v
 └─────────────┘              └─────────────────┘
 ```
 
-## Node Addresses
+## Node Wallets (mnemonic-derived)
 
-Each node runs with a different Ethereum address from Anvil's default accounts:
-
-- **Node 1**: `0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC`
-- **Node 2**: `0x90F79bf6EB2c4f870365E785982E1f101E93b906`
-- **Node 3**: `0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65`
-- **Node 4**: `0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc`
-- **Node 5**: `0x976EA74026E726554dB657fA54763abd0C3a0aa9`
+Nodes no longer hardcode `PRIVATE_KEY`/`PUBLIC_KEY` in `docker-compose.yml`.
+Instead, each container derives a unique wallet from `MNEMONIC` using `cast` and an automatically allocated `mnemonic-index`.
 
 - **Simulator**: `0x70997970C51812dc3A010C7d01b50e0d17dc79C8`
 - **Deployer**: `0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266`
@@ -112,9 +107,9 @@ Control verbosity per service by modifying the `RUST_LOG` environment variable i
 
 Example for a specific node:
 ```yaml
-node1:
+node:
   environment:
-    - RUST_LOG=debug  # More verbose for node1
+    - RUST_LOG=debug  # More verbose for nodes
 ```
 
 ## Development Workflow
@@ -122,15 +117,15 @@ node1:
 ### Rebuild after code changes:
 
 ```bash
-docker-compose build
-docker-compose up -d
+docker compose build
+docker compose up -d
 ```
 
 ### Rebuild specific service:
 
 ```bash
-docker-compose build node1
-docker-compose up -d node1
+docker compose build node
+docker compose up -d node
 ```
 
 ### Interact with Anvil directly:
@@ -148,7 +143,7 @@ docker run --rm -v niluv_shared-data:/shared alpine cat /shared/contract_address
 ### Using the Monitor TUI:
 
 ```bash
-docker-compose --profile monitor up monitor
+docker compose --profile monitor up monitor
 ```
 
 Navigate with:
@@ -161,13 +156,13 @@ Navigate with:
 
 ```bash
 # Watch all node activity
-docker-compose logs -f node1 node2 node3 node4 node5
+docker compose logs -f node
 
 # Watch simulator submissions
-docker-compose logs -f simulator
+docker compose logs -f simulator
 
 # Follow all logs
-docker-compose logs -f
+docker compose logs -f
 ```
 
 ## Troubleshooting
@@ -176,17 +171,17 @@ docker-compose logs -f
 
 ```bash
 # Check logs
-docker-compose logs <service-name>
+docker compose logs <service-name>
 
 # Restart a specific service
-docker-compose restart <service-name>
+docker compose restart <service-name>
 ```
 
 ### Contract address not found:
 
 ```bash
 # Check if deployer ran successfully
-docker-compose logs deployer
+docker compose logs deployer
 
 # Verify shared volume
 docker run --rm -v niluv_shared-data:/shared alpine ls -la /shared
@@ -201,16 +196,16 @@ curl -X POST -H "Content-Type: application/json" \
   http://localhost:8545
 
 # Check node logs
-docker-compose logs node1
+docker compose logs node
 ```
 
 ### Start fresh:
 
 ```bash
 # Remove everything and start over
-docker-compose down -v
-docker-compose build --no-cache
-docker-compose up -d
+docker compose down -v
+docker compose build --no-cache
+docker compose up -d
 ```
 
 ## Network Access
@@ -235,12 +230,12 @@ docker run --rm -v niluv_node1-data:/data alpine ls -la /data
 ### Scale nodes:
 
 ```bash
-# Add more nodes by duplicating a node section in docker-compose.yml
-# Make sure to use unique:
-# - NODE_PRIVATE_KEY
-# - NODE_ID
-# - container_name
-# - volume name
+# Scale the single `node` service:
+docker compose up -d --scale node=5
+
+# Nodes derive unique wallets from MNEMONIC automatically.
+# If you want to shift indices (e.g. reserve low indices for deployer/simulator):
+MNEMONIC_BASE_INDEX=2 docker compose up -d --scale node=5
 ```
 
 ### Custom HTX data:

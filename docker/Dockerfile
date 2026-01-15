@@ -56,7 +56,6 @@ RUN mkdir -p ~/.cargo && \
 # Copy project files
 COPY Cargo.toml ./
 COPY src ./src
-COPY config ./config
 COPY data ./data
 
 WORKDIR /app
@@ -87,24 +86,32 @@ FROM --platform=$TARGETPLATFORM debian:bookworm-slim AS base_release
 
 ARG TARGETPLATFORM
 
-RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/* && \
+RUN apt-get update && apt-get install -y ca-certificates util-linux && rm -rf /var/lib/apt/lists/* && \
     useradd -u 1000 -m appuser && \
     mkdir -p /app && \
     chown -R appuser:appuser /app
 USER appuser
 WORKDIR /app
 
+
 # Runtime stage for niluv_node
 FROM base_release AS niluv_node
 COPY --from=builder /out/bin/niluv_node /usr/local/bin/niluv_node
 ENTRYPOINT ["/usr/local/bin/niluv_node"]
 
+# Foundry (cast) stage (for deriving keys from mnemonics at runtime)
+FROM ghcr.io/foundry-rs/foundry:stable AS foundry
+
+# Runtime stage for niluv_node
+FROM niluv_node AS niluv_node_test
+COPY --from=foundry /usr/local/bin/cast /usr/local/bin/cast
+COPY --chown=appuser:appuser --chmod=755 docker/entrypoints/derive_private_key.sh /usr/local/bin/derive_private_key.sh
+ENTRYPOINT ["/usr/local/bin/derive_private_key.sh", "/usr/local/bin/niluv_node"]
+
 # Runtime stage for nilcc_simulator
 FROM base_release AS nilcc_simulator
 COPY --from=builder /out/bin/nilcc_simulator /usr/local/bin/nilcc_simulator
-COPY --from=builder --chown=appuser:appuser /app/config /app/config
 COPY --from=builder --chown=appuser:appuser /app/data /app/data
-ENV CONFIG_PATH=/app/config/config.toml
 ENV HTXS_PATH=/app/data/htxs.json
 ENTRYPOINT ["/usr/local/bin/nilcc_simulator"]
 

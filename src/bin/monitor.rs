@@ -69,6 +69,16 @@ struct TokenHolder {
     balance: U256,
 }
 
+/// Validation status for an HTX - polled directly from contract (not streaming)
+#[derive(Debug, Clone)]
+struct HTXValidationStatus {
+    htx_id: String,
+    expected_validators: Vec<Address>,
+    actual_validators: Vec<Address>,
+    missing_validators: Vec<Address>,
+    is_complete: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum StakingInputField {
     PrivateKey,
@@ -178,6 +188,13 @@ struct MonitorState {
     transfer_target_address: String,
     transfer_amount: String,
     transfer_active_input: TransferInputField,
+    // Validation status state (polled, manual reload)
+    validation_statuses: Vec<HTXValidationStatus>,
+    validation_status_state: ratatui::widgets::ListState,
+    validation_last_refresh: std::time::Instant,
+    validation_is_loading: bool,
+    // Queue validation responses received before their request/assignment
+    pending_htx_responses: HashMap<String, HashSet<String>>,
 }
 
 #[tokio::main]
@@ -351,7 +368,7 @@ async fn main() -> Result<()> {
         nodes,
         htx_tracking,
         status_message: format!(
-            "Press 'q' to quit, 'r' to refresh, Tab/Shift+Tab to navigate - Live WebSocket mode (Loaded {} historical events)",
+            "Press 'q' to quit, 'r' to refresh nodes, 'v' to reload HTX data from chain - Live WebSocket mode (Loaded {} historical events)",
             total_events
         ),
         selected_node_index: None,
@@ -378,6 +395,11 @@ async fn main() -> Result<()> {
         transfer_target_address: String::new(),
         transfer_amount: String::new(),
         transfer_active_input: TransferInputField::None,
+        validation_statuses: Vec::new(),
+        validation_status_state: ratatui::widgets::ListState::default(),
+        validation_last_refresh: std::time::Instant::now(),
+        validation_is_loading: false,
+        pending_htx_responses: HashMap::new(),
     };
 
     run_monitor(client, initial_state).await
@@ -400,29 +422,50 @@ async fn run_monitor(client: NilUVClient, initial_state: MonitorState) -> Result
     let state = Arc::new(Mutex::new(initial_state));
     let client_arc = Arc::new(client);
 
-    // Spawn WebSocket event listeners
+    // Spawn WebSocket event listeners with reconnection logic
     let state_clone = state.clone();
     let client_clone = client_arc.clone();
     tokio::spawn(async move {
-        let _ = listen_htx_submitted(client_clone, state_clone).await;
+        loop {
+            if let Err(e) = listen_htx_submitted(client_clone.clone(), state_clone.clone()).await {
+                eprintln!("HTX submitted listener error: {}, reconnecting...", e);
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
     });
 
     let state_clone = state.clone();
     let client_clone = client_arc.clone();
     tokio::spawn(async move {
-        let _ = listen_htx_assigned(client_clone, state_clone).await;
+        loop {
+            if let Err(e) = listen_htx_assigned(client_clone.clone(), state_clone.clone()).await {
+                eprintln!("HTX assigned listener error: {}, reconnecting...", e);
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
     });
 
     let state_clone = state.clone();
     let client_clone = client_arc.clone();
     tokio::spawn(async move {
-        let _ = listen_htx_responded(client_clone, state_clone).await;
+        loop {
+            if let Err(e) = listen_htx_responded(client_clone.clone(), state_clone.clone()).await {
+                eprintln!("HTX responded listener error: {}, reconnecting...", e);
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
     });
 
     let state_clone = state.clone();
     let client_clone = client_arc.clone();
     tokio::spawn(async move {
-        let _ = listen_token_transfers(client_clone, state_clone).await;
+        loop {
+            if let Err(e) = listen_token_transfers(client_clone.clone(), state_clone.clone()).await
+            {
+                eprintln!("Token transfer listener error: {}, reconnecting...", e);
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
     });
 
     let result = run_monitor_loop(&mut terminal, client_arc, state).await;
@@ -612,6 +655,41 @@ async fn run_monitor_loop(
                                 }
                             }
                             continue;
+                        }
+                        KeyCode::Char('v') => {
+                            // Manual rebuild of HTX tracking + validation from contract logs
+                            if state_guard.current_tab == Tab::HTXTracking {
+                                state_guard.validation_is_loading = true;
+                                state_guard.status_message =
+                                    "Reloading HTX data from contract (polling)...".to_string();
+                                drop(state_guard);
+
+                                let result = reload_htx_data(&client).await;
+
+                                let mut state_guard = state.lock().await;
+                                state_guard.validation_is_loading = false;
+                                state_guard.validation_last_refresh = std::time::Instant::now();
+
+                                match result {
+                                    Ok((htx_map, statuses, total_events)) => {
+                                        state_guard.htx_tracking = htx_map;
+                                        state_guard.htx_tracking_state =
+                                            ratatui::widgets::TableState::default();
+                                        state_guard.validation_statuses = statuses;
+                                        state_guard.validation_status_state =
+                                            ratatui::widgets::ListState::default();
+                                        state_guard.status_message = format!(
+                                            "HTX data reloaded from chain ({} events)",
+                                            total_events
+                                        );
+                                    }
+                                    Err(e) => {
+                                        state_guard.status_message =
+                                            format!("Error reloading HTX data: {}", e);
+                                    }
+                                }
+                                continue;
+                            }
                         }
                         KeyCode::Tab => {
                             state_guard.current_tab = state_guard.current_tab.next();
@@ -956,8 +1034,7 @@ async fn run_monitor_loop(
                                                 // Use the existing client's staking and token contracts
                                                 (client.staking.clone(), client.token.clone())
                                             };
-                                            let amount_wei =
-                                                U256::from((amount_eth * 1e18) as u128);
+                                            let amount_wei = U256::from((amount_eth * 1e6) as u128);
                                             // First, approve the staking contract to spend tokens
                                             token_client.approve(staking_addr, amount_wei).await?;
 
@@ -1090,8 +1167,7 @@ async fn run_monitor_loop(
                                                 // Use the existing client's token contract
                                                 client.token.clone()
                                             };
-                                            let amount_wei =
-                                                U256::from((amount_eth * 1e18) as u128);
+                                            let amount_wei = U256::from((amount_eth * 1e6) as u128);
 
                                             token_client.mint(target_addr, amount_wei).await
                                         }
@@ -1282,7 +1358,7 @@ async fn run_monitor_loop(
     Ok(())
 }
 
-// WebSocket event listener for HTX submitted events
+// WebSocket event listener for HTX submitted events (parallel processing)
 async fn listen_htx_submitted(
     client: Arc<NilUVClient>,
     state: Arc<Mutex<MonitorState>>,
@@ -1317,7 +1393,7 @@ async fn listen_htx_submitted(
         .await
 }
 
-// WebSocket event listener for HTX assigned events
+// WebSocket event listener for HTX assigned events (parallel processing)
 async fn listen_htx_assigned(
     client: Arc<NilUVClient>,
     state: Arc<Mutex<MonitorState>>,
@@ -1332,24 +1408,31 @@ async fn listen_htx_assigned(
 
                 let mut state_guard = state.lock().await;
 
+                // Pull any pending responses first, then update tracking map
+                let pending = state_guard.pending_htx_responses.remove(&htx_id);
+
                 // Update tracking map
-                state_guard
+                let entry = state_guard
                     .htx_tracking
                     .entry(htx_id.clone())
-                    .and_modify(|tx| {
-                        tx.assigned_nodes.extend(nodes.iter().cloned());
-                    })
                     .or_insert_with(|| {
                         let mut assigned = HashSet::new();
-                        assigned.extend(nodes);
+                        assigned.extend(nodes.iter().cloned());
                         HTXTransaction {
-                            htx_id,
+                            htx_id: htx_id.clone(),
                             submitted_sender: None,
                             assigned_nodes: assigned,
                             responded_nodes: HashSet::new(),
                             timestamp: SystemTime::now(),
                         }
                     });
+                entry.assigned_nodes.extend(nodes.iter().cloned());
+                entry.timestamp = SystemTime::now();
+
+                // If we have queued responses that arrived before this assignment, merge them now
+                if let Some(pending) = pending {
+                    entry.responded_nodes.extend(pending.into_iter());
+                }
 
                 state_guard.last_update = std::time::Instant::now();
                 Ok(())
@@ -1358,7 +1441,7 @@ async fn listen_htx_assigned(
         .await
 }
 
-// WebSocket event listener for HTX responded events
+// WebSocket event listener for HTX responded events (parallel processing)
 async fn listen_htx_responded(
     client: Arc<NilUVClient>,
     state: Arc<Mutex<MonitorState>>,
@@ -1373,12 +1456,27 @@ async fn listen_htx_responded(
 
                 let mut state_guard = state.lock().await;
 
-                // Update tracking map
+                // If the assignment/request hasn't been seen yet, queue this response
+                if !state_guard
+                    .htx_tracking
+                    .get(&htx_id)
+                    .map(|tx| !tx.assigned_nodes.is_empty())
+                    .unwrap_or(false)
+                {
+                    state_guard
+                        .pending_htx_responses
+                        .entry(htx_id.clone())
+                        .or_default()
+                        .insert(node.clone());
+                }
+
+                // Update tracking map (creates entry if absent)
                 state_guard
                     .htx_tracking
                     .entry(htx_id.clone())
                     .and_modify(|tx| {
                         tx.responded_nodes.insert(node.clone());
+                        tx.timestamp = SystemTime::now();
                     })
                     .or_insert_with(|| {
                         let mut responded = HashSet::new();
@@ -1549,7 +1647,7 @@ fn render_overview(f: &mut Frame, area: Rect, state: &MonitorState) {
 
     // Format balances
     let token_balance_formatted =
-        format_units(state.token_balance, 18).unwrap_or_else(|_| "0".to_string());
+        format_units(state.token_balance, 6).unwrap_or_else(|_| "0".to_string());
     let eth_balance_formatted =
         format_units(state.eth_balance, 18).unwrap_or_else(|_| "0".to_string());
 
@@ -1682,7 +1780,7 @@ fn render_nodes(f: &mut Frame, area: Rect, state: &MonitorState) {
         .enumerate()
         .map(|(idx, node_info)| {
             let stake_formatted =
-                format_units(node_info.stake, 18).unwrap_or_else(|_| "0".to_string());
+                format_units(node_info.stake, 6).unwrap_or_else(|_| "0".to_string());
             let eth_balance_formatted =
                 format_units(node_info.eth_balance, 18).unwrap_or_else(|_| "0".to_string());
             let status = if node_info.is_registered {
@@ -1739,6 +1837,34 @@ fn render_nodes(f: &mut Frame, area: Rect, state: &MonitorState) {
 
 fn render_htx_tracking(f: &mut Frame, area: Rect, state: &mut MonitorState) {
     use ratatui::widgets::{Row, Table};
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3), // instructions/status
+            Constraint::Min(8),    // HTX table
+            Constraint::Min(8),    // Validation list
+        ])
+        .split(area);
+
+    // Instructions/status bar for manual reload
+    let last_refresh_secs = state.validation_last_refresh.elapsed().as_secs();
+    let status_text = if state.validation_is_loading {
+        "Reloading HTX data from contract...".to_string()
+    } else {
+        format!(
+            "Press 'v' to rebuild HTX tracking from chain logs (lookback {} blocks). Last reload: {}s ago",
+            VALIDATION_LOOKBACK_BLOCKS, last_refresh_secs
+        )
+    };
+    let instructions = Paragraph::new(status_text)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("HTX Tracking & Validation (Manual reload)"),
+        )
+        .style(Style::default().fg(Color::White));
+    f.render_widget(instructions, chunks[0]);
 
     // Convert HashMap to sorted Vec for display (reverse order - newest first)
     let mut transactions: Vec<&HTXTransaction> = state.htx_tracking.values().collect();
@@ -1827,7 +1953,97 @@ fn render_htx_tracking(f: &mut Frame, area: Rect, state: &mut MonitorState) {
         state.htx_tracking_state.select(Some(0));
     }
 
-    f.render_stateful_widget(table, area, &mut state.htx_tracking_state);
+    f.render_stateful_widget(table, chunks[1], &mut state.htx_tracking_state);
+
+    // Validation status list (previously its own tab)
+    // Initialize selection if not set and items exist
+    if state.validation_status_state.selected().is_none() && !state.validation_statuses.is_empty() {
+        state.validation_status_state.select(Some(0));
+    }
+
+    let list_items: Vec<ListItem> = state
+        .validation_statuses
+        .iter()
+        .enumerate()
+        .map(|(idx, status)| {
+            let htx_short = format_short_hex(&status.htx_id);
+            let expected = status.expected_validators.len();
+            let actual = status.actual_validators.len();
+            let missing = status.missing_validators.len();
+
+            let (status_icon, status_color) = if status.is_complete {
+                ("✓", Color::Green)
+            } else if actual > 0 {
+                ("◐", Color::Yellow) // Partial
+            } else {
+                ("✗", Color::Red)
+            };
+
+            let missing_text = if missing > 0 {
+                let missing_addrs: Vec<String> = status
+                    .missing_validators
+                    .iter()
+                    .map(|a| format_short_hex(&format!("{:?}", a)))
+                    .collect();
+                format!(" Missing: {}", missing_addrs.join(", "))
+            } else {
+                String::new()
+            };
+
+            let content = vec![
+                Span::raw(format!("{}. ", idx + 1)),
+                Span::styled(status_icon, Style::default().fg(status_color)),
+                Span::raw(format!(
+                    " {} | {}/{} validated",
+                    htx_short, actual, expected
+                )),
+                Span::styled(
+                    missing_text,
+                    Style::default().fg(Color::Red).add_modifier(Modifier::DIM),
+                ),
+            ];
+
+            ListItem::new(Line::from(content))
+        })
+        .collect();
+
+    // Summary stats
+    let complete_count = state
+        .validation_statuses
+        .iter()
+        .filter(|s| s.is_complete)
+        .count();
+    let partial_count = state
+        .validation_statuses
+        .iter()
+        .filter(|s| !s.is_complete && !s.actual_validators.is_empty())
+        .count();
+    let none_count = state
+        .validation_statuses
+        .iter()
+        .filter(|s| s.actual_validators.is_empty())
+        .count();
+
+    let title = format!(
+        "HTX Validation Status - Complete: {} | Partial: {} | None: {} - Use ↑↓ to scroll",
+        complete_count, partial_count, none_count
+    );
+
+    let list = List::new(list_items)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(title)
+                .title_style(Style::default().fg(Color::Magenta)),
+        )
+        .highlight_style(
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol("▶ ");
+
+    f.render_stateful_widget(list, chunks[2], &mut state.validation_status_state);
 }
 
 fn render_footer(f: &mut Frame, area: Rect, state: &MonitorState) {
@@ -1847,6 +2063,13 @@ fn render_footer(f: &mut Frame, area: Rect, state: &MonitorState) {
         ),
         Span::raw(": Refresh  "),
         Span::styled(
+            "v",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(": Reload HTX data  "),
+        Span::styled(
             "Tab",
             Style::default()
                 .fg(Color::Yellow)
@@ -1862,8 +2085,11 @@ fn render_footer(f: &mut Frame, area: Rect, state: &MonitorState) {
         Span::raw(": Navigate  "),
     ];
 
-    // Add node-specific controls when in Nodes tab
-    if state.current_tab == Tab::Nodes {
+    // Add node-specific controls when in list-based tabs
+    if state.current_tab == Tab::Nodes
+        || state.current_tab == Tab::HTXTracking
+        || state.current_tab == Tab::TokenHolders
+    {
         help_spans.extend(vec![
             Span::styled(
                 "↑↓",
@@ -2289,7 +2515,7 @@ fn render_transfer_eth(f: &mut Frame, area: Rect, state: &MonitorState) {
     f.render_widget(help, chunks[4]);
 }
 
-// WebSocket event listener for Transfer events
+// WebSocket event listener for Transfer events (parallel processing)
 // Refreshes token balances for all system addresses (nodes and operators)
 async fn listen_token_transfers(
     client: Arc<NilUVClient>,
@@ -2351,4 +2577,142 @@ async fn listen_token_transfers(
             }
         })
         .await
+}
+
+/// Load validation status by polling the contract directly (not via streaming)
+/// This queries historical events and computes which HTXs have missing validations
+/// Lookback for validation status - query more history than the default 10 blocks
+const VALIDATION_LOOKBACK_BLOCKS: u64 = 100;
+
+/// Reload HTX tracking data and validation statuses from chain logs (manual fetch)
+async fn reload_htx_data(
+    client: &NilUVClient,
+) -> Result<(
+    HashMap<String, HTXTransaction>,
+    Vec<HTXValidationStatus>,
+    usize,
+)> {
+    let mut htx_tracking: HashMap<String, HTXTransaction> = HashMap::new();
+    let mut total_events = 0usize;
+
+    // Fetch submitted events (no lookback API exposed, so use full helper)
+    if let Ok(events) = client.manager.get_htx_submitted_events().await {
+        total_events += events.len();
+        for e in events {
+            let htx_id = bytes_to_hex(e.heartbeatKey.as_slice());
+            let sender = format!("{:?}", e.submitter);
+            htx_tracking.insert(
+                htx_id.clone(),
+                HTXTransaction {
+                    htx_id,
+                    submitted_sender: Some(sender),
+                    assigned_nodes: HashSet::new(),
+                    responded_nodes: HashSet::new(),
+                    timestamp: SystemTime::now(),
+                },
+            );
+        }
+    }
+
+    // Fetch assigned/ responded events with lookback to guarantee atomic view
+    let assigned_events = client
+        .manager
+        .get_htx_assigned_events_with_lookback(VALIDATION_LOOKBACK_BLOCKS)
+        .await?;
+    total_events += assigned_events.len();
+
+    for e in &assigned_events {
+        let htx_id = bytes_to_hex(e.heartbeatKey.as_slice());
+        let nodes: Vec<_> = e.members.iter().map(|n| format!("{n:?}")).collect();
+        htx_tracking
+            .entry(htx_id.clone())
+            .and_modify(|tx| {
+                tx.assigned_nodes.extend(nodes.iter().cloned());
+                tx.timestamp = SystemTime::now();
+            })
+            .or_insert_with(|| {
+                let mut assigned = HashSet::new();
+                assigned.extend(nodes);
+                HTXTransaction {
+                    htx_id,
+                    submitted_sender: None,
+                    assigned_nodes: assigned,
+                    responded_nodes: HashSet::new(),
+                    timestamp: SystemTime::now(),
+                }
+            });
+    }
+
+    let responded_events = client
+        .manager
+        .get_htx_responded_events_with_lookback(VALIDATION_LOOKBACK_BLOCKS)
+        .await?;
+    total_events += responded_events.len();
+
+    for e in &responded_events {
+        let htx_id = bytes_to_hex(e.heartbeatKey.as_slice());
+        let node = format!("{:?}", e.operator);
+        htx_tracking
+            .entry(htx_id.clone())
+            .and_modify(|tx| {
+                tx.responded_nodes.insert(node.clone());
+                tx.timestamp = SystemTime::now();
+            })
+            .or_insert_with(|| {
+                let mut responded = HashSet::new();
+                responded.insert(node.clone());
+                HTXTransaction {
+                    htx_id,
+                    submitted_sender: None,
+                    assigned_nodes: HashSet::new(),
+                    responded_nodes: responded,
+                    timestamp: SystemTime::now(),
+                }
+            });
+    }
+
+    // Build validation status using the same events to avoid extra RPCs
+    let mut responded_map: HashMap<String, HashSet<Address>> = HashMap::new();
+    for event in &responded_events {
+        let htx_id = bytes_to_hex(event.heartbeatKey.as_slice());
+        responded_map
+            .entry(htx_id)
+            .or_default()
+            .insert(event.operator);
+    }
+
+    let mut statuses = Vec::new();
+    for event in assigned_events {
+        let htx_id = bytes_to_hex(event.heartbeatKey.as_slice());
+        let expected_validators: Vec<Address> = event.members.to_vec();
+        let expected_set: HashSet<Address> = expected_validators.iter().cloned().collect();
+
+        let actual_validators: Vec<Address> = responded_map
+            .get(&htx_id)
+            .map(|s| s.iter().cloned().collect())
+            .unwrap_or_default();
+        let actual_set: HashSet<Address> = actual_validators.iter().cloned().collect();
+
+        let missing_validators: Vec<Address> =
+            expected_set.difference(&actual_set).cloned().collect();
+
+        let is_complete = missing_validators.is_empty() && !expected_validators.is_empty();
+
+        statuses.push(HTXValidationStatus {
+            htx_id,
+            expected_validators,
+            actual_validators,
+            missing_validators,
+            is_complete,
+        });
+    }
+
+    // Sort statuses to highlight incomplete first
+    statuses.sort_by(|a, b| match (a.is_complete, b.is_complete) {
+        (false, true) => std::cmp::Ordering::Less,
+        (true, false) => std::cmp::Ordering::Greater,
+        _ => b.missing_validators.len().cmp(&a.missing_validators.len()),
+    });
+
+    Ok((htx_tracking, statuses, total_events))
 }
