@@ -176,11 +176,10 @@ contract JailingPolicy is ISlashingPolicy {
         uint256 packed = IHeartbeatManagerPolicyView(heartbeatManager).getVotePacked(heartbeatKey, round, operator);
         bool responded = (packed & RESPONDED_BIT) != 0;
 
-        if (!responded) return true; // non-voter always jailable
+        if (!responded) return outcome != Outcome.Inconclusive;
 
         uint8 verdict = uint8(packed & VERDICT_MASK);
 
-        // For inconclusive, only non-voters are punished.
         if (outcome == Outcome.Inconclusive) return false;
 
         if (outcome == Outcome.ValidThreshold) {

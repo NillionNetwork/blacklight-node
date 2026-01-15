@@ -39,6 +39,8 @@ interface IProtocolConfig {
     // Misc
     function maxVoteBatchSize() external view returns (uint256);
     function minOperatorStake() external view returns (uint256);
+    function heartbeatBond() external view returns (uint256);
+    function heartbeatBondBurnBps() external view returns (uint16);
 }
 
 interface ISlashingPolicy {

@@ -24,7 +24,7 @@ import "../src/JailingPolicy.sol";
 ///      - MOCK_STAKE_MINT / MOCK_REWARD_MINT (uints, only used when deploying TEST tokens)
 ///      - ProtocolConfig params (uint): BASE_COMMITTEE_SIZE, COMMITTEE_GROWTH_BPS, MAX_COMMITTEE_SIZE,
 ///        MAX_ESCALATIONS, QUORUM_BPS, VERIFICATION_BPS, RESPONSE_WINDOW_SEC, JAIL_DURATION_SEC,
-///        MAX_VOTE_BATCH, MIN_OPERATOR_STAKE
+///        MAX_VOTE_BATCH, MIN_OPERATOR_STAKE, HEARTBEAT_BOND, HEARTBEAT_BOND_BURN_BPS
 ///      - Staking params: UNSTAKE_DELAY_SEC
 ///      - Selector params: MIN_COMMITTEE_VP
 ///      - Reward params: REWARD_EPOCH_DURATION, REWARD_MAX_PAYOUT_PER_FINALIZE
@@ -52,6 +52,8 @@ contract DeployTestRCSystem is Script {
         uint256 jailDuration;
         uint256 maxVoteBatchSize;
         uint256 minOperatorStake;
+        uint256 heartbeatBond;
+        uint16 heartbeatBondBurnBps;
 
         uint256 unstakeDelay;
         uint256 minCommitteeVP;
@@ -111,7 +113,9 @@ contract DeployTestRCSystem is Script {
             p.responseWindow,
             p.jailDuration,
             p.maxVoteBatchSize,
-            p.minOperatorStake
+            p.minOperatorStake,
+            p.heartbeatBond,
+            p.heartbeatBondBurnBps
         );
         console2.log("ProtocolConfig:", address(config));
 
@@ -173,6 +177,8 @@ contract DeployTestRCSystem is Script {
         p.jailDuration = vm.envOr("JAIL_DURATION_SEC", uint256(2 minutes));
         p.maxVoteBatchSize = vm.envOr("MAX_VOTE_BATCH", uint256(100));
         p.minOperatorStake = vm.envOr("MIN_OPERATOR_STAKE", uint256(10e6));
+        p.heartbeatBond = vm.envOr("HEARTBEAT_BOND", uint256(10e6));
+        p.heartbeatBondBurnBps = uint16(vm.envOr("HEARTBEAT_BOND_BURN_BPS", uint256(1000)));
 
         p.unstakeDelay = vm.envOr("UNSTAKE_DELAY_SEC", uint256(1 days));
         p.minCommitteeVP = vm.envOr("MIN_COMMITTEE_VP", uint256(0));
