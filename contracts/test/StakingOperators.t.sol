@@ -96,6 +96,53 @@ contract StakingOperatorsTest is Test {
         vm.stopPrank();
     }
 
+    function test_stakeTo_allowsTopUpAfterMinIncrease() public {
+        address operator = address(0xB0B);
+        stakeToken.mint(operator, 3e18);
+
+        vm.startPrank(operator);
+        stakeToken.approve(address(stakingOps), type(uint256).max);
+        stakingOps.stakeTo(operator, 1e18);
+        vm.stopPrank();
+
+        config.setParams(
+            config.baseCommitteeSize(),
+            config.committeeSizeGrowthBps(),
+            config.maxCommitteeSize(),
+            config.maxEscalations(),
+            config.quorumBps(),
+            config.verificationBps(),
+            config.responseWindow(),
+            config.jailDuration(),
+            config.maxVoteBatchSize(),
+            2e18,
+            config.heartbeatBond(),
+            config.heartbeatBondBurnBps()
+        );
+
+        vm.startPrank(operator);
+        stakingOps.stakeTo(operator, 0.5e18);
+        vm.stopPrank();
+
+        assertEq(stakingOps.stakeOf(operator), 1.5e18);
+    }
+
+    function test_fullUnstakeStillClearsBinding() public {
+        address operator = address(0xB0B);
+        stakeToken.mint(operator, 2e18);
+
+        vm.startPrank(operator);
+        stakeToken.approve(address(stakingOps), type(uint256).max);
+        stakingOps.stakeTo(operator, 1e18);
+        stakingOps.requestUnstake(operator, 1e18);
+        vm.warp(block.timestamp + 1 days + 1);
+        stakingOps.withdrawUnstaked(operator);
+        vm.stopPrank();
+
+        assertEq(stakingOps.stakeOf(operator), 0);
+        assertEq(stakingOps.operatorStaker(operator), address(0));
+    }
+
     function test_requestUnstake_and_withdraw() public {
         address operator = address(0xB0B);
         stakeToken.mint(operator, 3e18);

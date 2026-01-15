@@ -49,6 +49,13 @@ contract StakingHandler is Test {
         if (bal == 0) return;
         uint256 a = bound(amount, 0, bal);
         if (a == 0) return;
+        if (stakingOps.operatorStaker(op) == address(0)) {
+            uint256 minStake = config.minOperatorStake();
+            if (minStake != 0) {
+                if (bal < minStake) return;
+                if (a < minStake) a = minStake;
+            }
+        }
 
         vm.prank(op);
         stakingOps.stakeTo(op, a);
