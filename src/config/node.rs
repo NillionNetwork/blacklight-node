@@ -146,8 +146,10 @@ pub async fn validate_node_requirements(
     // Determine wallet status and display unified banner
     let status = if was_wallet_created {
         WalletStatus::Created
-    } else if eth_balance < MIN_ETH_BALANCE || staked_balance == U256::ZERO {
-        WalletStatus::InsufficientFunds
+    } else if eth_balance < MIN_ETH_BALANCE {
+        WalletStatus::InsufficientEth
+    } else if staked_balance == U256::ZERO {
+        WalletStatus::InsufficientNil
     } else {
         WalletStatus::Ready
     };
@@ -170,11 +172,14 @@ pub async fn validate_node_requirements(
                 format_ether(MIN_ETH_BALANCE)
             )
         }
-        WalletStatus::InsufficientFunds => {
+        WalletStatus::InsufficientEth => {
             anyhow::bail!(
-                "Insufficient funds. Please try again with at least {} ETH and sufficient TEST tokens staked.",
+                "Insufficient funds. Please try again with at least {} ETH.",
                 format_ether(MIN_ETH_BALANCE)
             )
+        }
+        WalletStatus::InsufficientNil => {
+            anyhow::bail!("Insufficient funds. Please stake NIL and try again.")
         }
         WalletStatus::Ready => Ok(()),
     }
