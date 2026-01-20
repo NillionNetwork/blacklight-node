@@ -19,7 +19,9 @@ pub enum WalletStatus {
     /// Wallet was just created, needs funding
     Created,
     /// Wallet has no ETH balance
-    InsufficientFunds,
+    InsufficientEth,
+    /// Wallet has no NIL staked
+    InsufficientNil,
     /// Wallet is ready to operate
     Ready,
 }
@@ -85,7 +87,8 @@ pub fn display_wallet_status(
     // Header row based on status
     let (header, use_warn) = match status {
         WalletStatus::Created => ("✅  Account Created Successfully ✅", true),
-        WalletStatus::InsufficientFunds => ("❌  INSUFFICIENT FUNDS  ❌", true),
+        WalletStatus::InsufficientEth => ("❌  INSUFFICIENT ETH  ❌", true),
+        WalletStatus::InsufficientNil => ("❌  INSUFFICIENT NIL  ❌", true),
         WalletStatus::Ready => ("🎉 WALLET LOADED SUCCESSFULLY 🎉", false),
     };
     table.add_row(Row::new(vec![TableCell::builder(header)
@@ -136,20 +139,14 @@ pub fn display_wallet_status(
     // Status message based on wallet status and stake
     let status_message = match status {
         WalletStatus::Created => {
-            format!("❗ Please fund this address with at least {} ETH and stake NIL tokens to continue ❗", min_eth_formatted)
+            format!("❗ Please fund this address with at least {min_eth_formatted} ETH and stake NIL tokens to continue ❗")
         }
-        WalletStatus::InsufficientFunds => {
-            if !has_stake && !has_sufficient_eth {
-                format!("❗ Please fund this address with at least {} ETH and stake NIL tokens to continue ❗", min_eth_formatted)
-            } else if !has_stake {
-                "⚠️  Please stake NIL tokens to continue".to_string()
-            } else {
-                format!(
-                    "⚠️  Please fund this address with at least {} ETH for gas transactions",
-                    min_eth_formatted
-                )
-            }
+        WalletStatus::InsufficientEth => {
+            format!(
+                "⚠️  Please fund this address with at least {min_eth_formatted} ETH for gas transactions"
+            )
         }
+        WalletStatus::InsufficientNil => "⚠️  Please stake NIL tokens to continue".to_string(),
         WalletStatus::Ready => "✅ Ready to operate".to_string(),
     };
     table.add_row(Row::new(vec![TableCell::builder(status_message)
