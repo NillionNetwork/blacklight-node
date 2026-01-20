@@ -119,7 +119,7 @@ impl NodeConfig {
     }
 }
 
-/// Validates that the node has sufficient ETH balance and staked TEST tokens
+/// Validates that the node has sufficient ETH balance and staked NIL tokens
 /// Returns Ok(()) if ready, or Err if validation fails with user-friendly display
 pub async fn validate_node_requirements(
     client: &NilUVClient,
@@ -135,7 +135,7 @@ pub async fn validate_node_requirements(
         .context("Failed to check ETH balance")?;
 
     info!(
-        "Checking staked TEST token balance for address: {:?}",
+        "Checking staked NIL token balance for address: {:?}",
         address
     );
     let staked_balance = client.staking.stake_of(address).await.unwrap_or_else(|e| {

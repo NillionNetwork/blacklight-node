@@ -40,15 +40,16 @@ Follow these steps to run your own nilUV verification node on the network.
    - Display your wallet address and balances.
    - Stop and prompt you to fund your wallet with ETH and stake TEST tokens.
 
-2. Continue to [wallet setup](#wallet-setup-all-options) below to fund your wallet and stake TEST tokens before running the node.
+2. Continue to [wallet setup](#wallet-setup-all-options) below to fund your wallet and stake NIL tokens before running 
+   the node.
 
-### Get ETH and TEST tokens
+### Get ETH and NIL tokens
 
-Ask someone to send you ETH Sepolia and TEST tokens to the address displayed by the node when starting.
+Ask someone to send you ETH Sepolia and NIL tokens to the address displayed by the node when starting.
 
 ### Start the node
 
-After confirming your ETH balance and TEST token stake, start the nilUV node again:
+After confirming your ETH balance and NIL token stake, start the nilUV node again:
 
 ```bash
 docker run -it --rm -v ./:/app/ ghcr.io/nillionnetwork/niluv/niluv_node:latest

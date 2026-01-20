@@ -15,7 +15,7 @@ use anyhow::Result;
 sol!(
     #[sol(rpc)]
     #[derive(Debug)]
-    contract TESTToken {
+    contract NilToken {
         event Transfer(address indexed from, address indexed to, uint256 value);
 
         function name() public view virtual returns (string memory);
@@ -31,16 +31,16 @@ sol!(
 );
 
 // Optional: bring the instance & events into scope
-use TESTToken::TESTTokenInstance;
+use NilToken::NilTokenInstance;
 
-/// WebSocket-based client for interacting with the TESTToken ERC20 contract
+/// WebSocket-based client for interacting with the NilToken ERC20 contract
 #[derive(Clone)]
-pub struct TESTTokenClient<P: Provider + Clone> {
-    contract: TESTTokenInstance<P>,
+pub struct NilTokenClient<P: Provider + Clone> {
+    contract: NilTokenInstance<P>,
     submitter: TransactionSubmitter<Infallible>,
 }
 
-impl<P: Provider + Clone> TESTTokenClient<P> {
+impl<P: Provider + Clone> NilTokenClient<P> {
     /// Create a new WebSocket client from configuration
     pub fn new(
         provider: P,
@@ -48,7 +48,7 @@ impl<P: Provider + Clone> TESTTokenClient<P> {
         tx_lock: Arc<Mutex<()>>,
     ) -> Self {
         let contract_address = config.token_contract_address;
-        let contract = TESTTokenInstance::new(contract_address, provider.clone());
+        let contract = NilTokenInstance::new(contract_address, provider.clone());
         let submitter = TransactionSubmitter::new(tx_lock);
         Self {
             contract,
@@ -124,10 +124,10 @@ impl<P: Provider + Clone> TESTTokenClient<P> {
     /// Start listening for Transfer events (including mints where from == address(0))
     pub async fn listen_transfer_events<F, Fut>(self: Arc<Self>, callback: F) -> Result<()>
     where
-        F: FnMut(TESTToken::Transfer) -> Fut + Send,
+        F: FnMut(NilToken::Transfer) -> Fut + Send,
         Fut: std::future::Future<Output = Result<()>> + Send,
     {
-        let event_stream = self.contract.event_filter::<TESTToken::Transfer>();
+        let event_stream = self.contract.event_filter::<NilToken::Transfer>();
         let subscription = event_stream.subscribe().await?;
         let events = subscription.into_stream();
 

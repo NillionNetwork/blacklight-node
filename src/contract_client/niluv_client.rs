@@ -1,5 +1,5 @@
 use crate::contract_client::{
-    ContractConfig, HeartbeatManagerClient, StakingOperatorsClient, TESTTokenClient,
+    ContractConfig, HeartbeatManagerClient, NilTokenClient, StakingOperatorsClient,
 };
 
 use alloy::{
@@ -18,7 +18,7 @@ pub struct NilUVClient {
     provider: DynProvider,
     wallet: EthereumWallet,
     pub manager: HeartbeatManagerClient<DynProvider>,
-    pub token: TESTTokenClient<DynProvider>,
+    pub token: NilTokenClient<DynProvider>,
     pub staking: StakingOperatorsClient<DynProvider>,
 }
 
@@ -48,7 +48,7 @@ impl NilUVClient {
         // Instantiate contract clients using the shared provider
         let manager =
             HeartbeatManagerClient::new(provider.clone(), config.clone(), tx_lock.clone());
-        let token = TESTTokenClient::new(provider.clone(), config.clone(), tx_lock.clone());
+        let token = NilTokenClient::new(provider.clone(), config.clone(), tx_lock.clone());
         let staking = StakingOperatorsClient::new(provider.clone(), config, tx_lock.clone());
 
         Ok(Self {

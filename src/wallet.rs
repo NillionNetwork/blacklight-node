@@ -51,7 +51,7 @@ pub async fn check_balance(rpc_url: &str, address: Address) -> Result<U256> {
     Ok(balance)
 }
 
-/// Display wallet status banner with ETH balance and TEST stake information
+/// Display wallet status banner with ETH balance and NIL stake information
 /// This consolidated function handles all wallet states with a single implementation
 pub fn display_wallet_status(
     status: WalletStatus,
@@ -74,9 +74,9 @@ pub fn display_wallet_status(
         format!("{} ETH ❌ (min: {} ETH)", eth_formatted, min_eth_formatted)
     };
     let staked_balance_str = if has_stake {
-        format!("{} TEST ✅", staked_formatted)
+        format!("{} NIL ✅", staked_formatted)
     } else {
-        format!("{} TEST ❌", staked_formatted)
+        format!("{} NIL ❌", staked_formatted)
     };
 
     let mut table = Table::new();
@@ -113,9 +113,9 @@ pub fn display_wallet_status(
             .build(),
     ]));
 
-    // TEST Staked row (always shown)
+    // NIL Staked row (always shown)
     table.add_row(Row::new(vec![
-        TableCell::builder("TEST Staked")
+        TableCell::builder("NIL Staked")
             .alignment(CellAlignment::Right)
             .build(),
         TableCell::builder(staked_balance_str)
@@ -136,13 +136,13 @@ pub fn display_wallet_status(
     // Status message based on wallet status and stake
     let status_message = match status {
         WalletStatus::Created => {
-            format!("❗ Please fund this address with at least {} ETH and stake TEST tokens to continue ❗", min_eth_formatted)
+            format!("❗ Please fund this address with at least {} ETH and stake NIL tokens to continue ❗", min_eth_formatted)
         }
         WalletStatus::InsufficientFunds => {
             if !has_stake && !has_sufficient_eth {
-                format!("❗ Please fund this address with at least {} ETH and stake TEST tokens to continue ❗", min_eth_formatted)
+                format!("❗ Please fund this address with at least {} ETH and stake NIL tokens to continue ❗", min_eth_formatted)
             } else if !has_stake {
-                "⚠️  Please stake TEST tokens to continue".to_string()
+                "⚠️  Please stake NIL tokens to continue".to_string()
             } else {
                 format!(
                     "⚠️  Please fund this address with at least {} ETH for gas transactions",
