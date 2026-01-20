@@ -2,18 +2,18 @@ use alloy::primitives::Address;
 
 pub mod common;
 pub mod heartbeat_manager;
+pub mod nil_token;
 pub mod niluv_client;
 pub mod staking_operators;
-pub mod test_token;
 
 // ============================================================================
 // Client Type Re-exports
 // ============================================================================
 
 pub use heartbeat_manager::HeartbeatManagerClient;
+pub use nil_token::NilTokenClient;
 pub use niluv_client::NilUVClient;
 pub use staking_operators::StakingOperatorsClient;
-pub use test_token::TESTTokenClient;
 
 // ============================================================================
 // Contract Event Type Re-exports
@@ -25,8 +25,8 @@ pub use heartbeat_manager::HearbeatManager;
 // StakingOperators events
 pub use staking_operators::StakingOperators;
 
-// TESTToken events
-pub use test_token::TESTToken;
+// NilToken events
+pub use nil_token::NilToken;
 
 // ============================================================================
 // Type Aliases
@@ -44,7 +44,7 @@ pub type PrivateKey = String;
 /// Contains addresses for all three contracts in the system:
 /// - HeartbeatManager: Main routing and HTX verification logic
 /// - StakingOperators: Operator registration and staking
-/// - TESTToken: Test token for staking (mainnet will use real token)
+/// - NilToken: Test token for staking (mainnet will use real token)
 ///
 /// Also includes connection settings for WebSocket reliability.
 #[derive(Clone, Debug)]
@@ -76,7 +76,7 @@ impl ContractConfig {
     /// * `rpc_url` - Ethereum RPC endpoint (HTTP or WebSocket)
     /// * `manager_contract_address` - Address of deployed HeartbeatManager contract
     /// * `staking_contract_address` - Address of deployed StakingOperators contract
-    /// * `token_contract_address` - Address of deployed TESTToken contract
+    /// * `token_contract_address` - Address of deployed NilToken contract
     pub fn new(
         rpc_url: String,
         manager_contract_address: Address,

@@ -1,3 +1,4 @@
+use alloy::primitives::utils::{format_ether, format_units};
 use alloy::primitives::Address;
 use anyhow::Result;
 use clap::Parser;
@@ -19,8 +20,6 @@ use std::time::Duration;
 use tokio::sync::Notify;
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
-
-use alloy::primitives::utils::{format_ether, format_units};
 
 // ============================================================================
 // Signal Handling
@@ -461,7 +460,7 @@ async fn main() -> Result<()> {
     );
     let validation_client = NilUVClient::new(contract_config, config.private_key.clone()).await?;
 
-    // Validate node has sufficient ETH and staked TEST tokens
+    // Validate node has sufficient ETH and staked NIL tokens
     validate_node_requirements(
         &validation_client,
         &config.rpc_url,

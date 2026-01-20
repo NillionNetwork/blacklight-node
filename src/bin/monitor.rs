@@ -1575,7 +1575,7 @@ fn render_overview(f: &mut Frame, area: Rect, state: &MonitorState) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(7), // Connection info
-            Constraint::Length(8), // Stats (includes ETH and TEST balances)
+            Constraint::Length(8), // Stats (includes ETH and NIL balances)
             Constraint::Min(5),    // Details
         ])
         .split(area);
@@ -1663,9 +1663,9 @@ fn render_overview(f: &mut Frame, area: Rect, state: &MonitorState) {
             ),
         ]),
         Line::from(vec![
-            Span::styled("TEST Balance: ", Style::default().fg(Color::Cyan)),
+            Span::styled("NIL Balance: ", Style::default().fg(Color::Cyan)),
             Span::styled(
-                format!("{} TEST", token_balance_formatted),
+                format!("{} NIL", token_balance_formatted),
                 Style::default()
                     .fg(Color::Green)
                     .add_modifier(Modifier::BOLD),
@@ -1803,7 +1803,7 @@ fn render_nodes(f: &mut Frame, area: Rect, state: &MonitorState) {
                         .add_modifier(Modifier::BOLD),
                 ),
                 Span::raw(format!(
-                    " | {:?} | Stake: {} TEST | ETH: {}",
+                    " | {:?} | Stake: {} NIL | ETH: {}",
                     node_info.address, stake_formatted, eth_balance_formatted
                 )),
             ];
@@ -2176,11 +2176,7 @@ fn render_staking(f: &mut Frame, area: Rect, state: &MonitorState) {
         .scroll((0, target_scroll_offset));
 
     let amount_input = Paragraph::new(state.staking_amount.as_str())
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title("Amount (TEST)"),
-        )
+        .block(Block::default().borders(Borders::ALL).title("Amount (NIL)"))
         .style(amount_style)
         .scroll((0, 0));
 
@@ -2256,7 +2252,7 @@ fn render_token_holders(f: &mut Frame, area: Rect, state: &mut MonitorState) {
                         .fg(Color::Cyan)
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::raw(format!(" | Balance: {} TEST", balance_formatted)),
+                Span::raw(format!(" | Balance: {} NIL", balance_formatted)),
             ];
 
             ListItem::new(Line::from(content))
@@ -2274,7 +2270,7 @@ fn render_token_holders(f: &mut Frame, area: Rect, state: &mut MonitorState) {
             Block::default()
                 .borders(Borders::ALL)
                 .title(format!(
-                    "TEST Token Holders - Nodes & Operators ({}){}",
+                    "NIL Token Holders - Nodes & Operators ({}){}",
                     state.token_holders.len(),
                     scroll_help
                 ))
@@ -2351,7 +2347,7 @@ fn render_minting(f: &mut Frame, area: Rect, state: &MonitorState) {
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title("Amount (TEST tokens)"),
+                .title("Amount (NIL tokens)"),
         )
         .style(amount_style)
         .scroll((0, 0));
