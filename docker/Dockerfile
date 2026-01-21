@@ -87,10 +87,7 @@ FROM --platform=$TARGETPLATFORM debian:bookworm-slim AS base_release
 ARG TARGETPLATFORM
 
 RUN apt-get update && apt-get install -y ca-certificates util-linux && rm -rf /var/lib/apt/lists/* && \
-    useradd -u 1000 -m appuser && \
-    mkdir -p /app && \
-    chown -R appuser:appuser /app
-USER appuser
+    mkdir -p /app
 WORKDIR /app
 
 
@@ -105,13 +102,13 @@ FROM ghcr.io/foundry-rs/foundry:stable AS foundry
 # Runtime stage for niluv_node
 FROM niluv_node AS niluv_node_test
 COPY --from=foundry /usr/local/bin/cast /usr/local/bin/cast
-COPY --chown=appuser:appuser --chmod=755 docker/entrypoints/derive_private_key.sh /usr/local/bin/derive_private_key.sh
+COPY --chmod=755 docker/entrypoints/derive_private_key.sh /usr/local/bin/derive_private_key.sh
 ENTRYPOINT ["/usr/local/bin/derive_private_key.sh", "/usr/local/bin/niluv_node"]
 
 # Runtime stage for nilcc_simulator
 FROM base_release AS nilcc_simulator
 COPY --from=builder /out/bin/nilcc_simulator /usr/local/bin/nilcc_simulator
-COPY --from=builder --chown=appuser:appuser /app/data /app/data
+COPY --from=builder /app/data /app/data
 ENV HTXS_PATH=/app/data/htxs.json
 ENTRYPOINT ["/usr/local/bin/nilcc_simulator"]
 
