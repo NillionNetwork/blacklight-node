@@ -133,12 +133,18 @@ async fn process_htx_assignment(
         Ok(tx_hash) => {
             let count = verified_counter.fetch_add(1, Ordering::SeqCst) + 1;
 
-            match verification_result {
-                Ok(_) => {
-                    info!(tx_hash = ?tx_hash, "✅ VALID HTX verification submitted");
+            match (verdict, verification_result) {
+                (Verdict::Success, Ok(_)) => {
+                    info!(tx_hash=?tx_hash, "✅ VALID HTX verification submitted");
                 }
-                Err(e) => {
-                    info!(tx_hash = ?tx_hash, error = %e, "❌ INVALID HTX verification submitted");
+                (Verdict::Failure, Err(e)) => {
+                    info!(tx_hash=?tx_hash, error=?e, verdict="failure", "❌ INVALID HTX verification submitted");
+                }
+                (Verdict::Inconclusive, Err(e)) => {
+                    info!(tx_hash=?tx_hash, error=?e, verdict="inconclusive", "⚠️ INCONCLUSIVE HTX verification submitted");
+                }
+                (_, _) => {
+                    error!(tx_hash=?tx_hash, verdict=?verdict, "Unexpected verification state");
                 }
             }
 
