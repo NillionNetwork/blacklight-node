@@ -1,9 +1,11 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::contract_client::heartbeat_manager::Verdict;
 use crate::types::{NillionHtx, PhalaHtx};
 use anyhow::Context;
 use attestation_verification::sev::firmware::guest::AttestationReport;
+use attestation_verification::VerificationError as ExtVerificationError;
 use attestation_verification::{
     DefaultCertificateFetcher, MeasurementGenerator, ReportBundle, ReportFetcher, ReportVerifier,
 };
@@ -15,38 +17,94 @@ const ARTIFACTS_URL: &str = "https://nilcc.s3.eu-west-1.amazonaws.com";
 
 #[derive(Debug)]
 pub enum VerificationError {
+    // Inconclusive errors - operational/infrastructure failures
     NilccUrl(String),
     NilccJson(String),
     FetchReport(String),
-    VerifyReport(String),
-    MeasurementHash(String),
     BuilderUrl(String),
     BuilderJson(String),
+    PhalaEventLogParse(String),
+    FetchCerts(String),
+    DetectProcessor(String),
+
+    // Malicious errors - cryptographic verification failures
+    VerifyReport(String),
+    MeasurementHash(String),
     NotInBuilderIndex,
     PhalaComposeHashMismatch,
-    PhalaEventLogParse(String),
     PhalaQuoteVerify(String),
     PhalaPlatformVerify(String),
+    CertVerification(String),
+    InvalidMeasurement(String),
+    InvalidCertificate(String),
 }
 
 impl VerificationError {
+    /// Returns the verdict for this error.
+    ///
+    /// - `Verdict::Failure`: Cryptographic verification failed, indicating potential tampering.
+    /// - `Verdict::Inconclusive`: Operational failure (network, parsing, etc.) - cannot determine validity.
+    ///
+    /// Note: Never returns `Verdict::Success` since this is an error type.
+    pub fn verdict(&self) -> Verdict {
+        use VerificationError::*;
+        match self {
+            // Inconclusive - operational/infrastructure failures
+            NilccUrl(_)
+            | NilccJson(_)
+            | FetchReport(_)
+            | BuilderUrl(_)
+            | BuilderJson(_)
+            | PhalaEventLogParse(_)
+            | FetchCerts(_)
+            | InvalidCertificate(_)
+            | DetectProcessor(_) => Verdict::Inconclusive,
+
+            // Failure - cryptographic verification failures (indicates potential tampering)
+            VerifyReport(_)
+            | MeasurementHash(_)
+            | NotInBuilderIndex
+            | PhalaComposeHashMismatch
+            | PhalaQuoteVerify(_)
+            | PhalaPlatformVerify(_)
+            | CertVerification(_)
+            | InvalidMeasurement(_) => Verdict::Failure,
+        }
+    }
+
+    /// Returns whether this error indicates a definitive verification failure.
+    pub fn is_failure(&self) -> bool {
+        self.verdict() == Verdict::Failure
+    }
+
+    /// Returns whether this error is inconclusive (operational failure).
+    pub fn is_inconclusive(&self) -> bool {
+        self.verdict() == Verdict::Inconclusive
+    }
+
     pub fn message(&self) -> String {
         use VerificationError::*;
         match self {
+            // Inconclusive errors
             NilccUrl(e) => format!("invalid nilcc_measurement URL: {e}"),
             NilccJson(e) => format!("invalid nilcc_measurement JSON: {e}"),
             FetchReport(e) => format!("could not fetch attestation report: {e}"),
-            VerifyReport(e) => format!("could not verify attestation report: {e}"),
-            MeasurementHash(e) => format!("could not generate measurement hash: {e}"),
             BuilderUrl(e) => format!("invalid builder_measurement URL: {e}"),
-            BuilderJson(e) => {
-                format!("invalid builder_measurement JSON: {e}")
-            }
+            BuilderJson(e) => format!("invalid builder_measurement JSON: {e}"),
+            PhalaEventLogParse(e) => format!("failed to parse event_log: {e}"),
+            FetchCerts(e) => format!("could not fetch AMD certificates: {e}"),
+            DetectProcessor(e) => format!("could not detect processor type: {e}"),
+            InvalidCertificate(e) => format!("invalid certificate obtained from AMD: {e}"),
+
+            // Malicious errors
+            VerifyReport(e) => format!("attestation report verification failed: {e}"),
+            MeasurementHash(e) => format!("measurement hash verification failed: {e}"),
             NotInBuilderIndex => "measurement not found in builder index".to_string(),
             PhalaComposeHashMismatch => "compose-hash mismatch".to_string(),
-            PhalaEventLogParse(e) => format!("failed to parse event_log: {e}"),
             PhalaQuoteVerify(e) => format!("quote verification failed: {e}"),
             PhalaPlatformVerify(e) => format!("platform verification failed: {e}"),
+            CertVerification(e) => format!("certificate chain verification failed: {e}"),
+            InvalidMeasurement(e) => format!("measurement mismatch: {e}"),
         }
     }
 }
@@ -179,7 +237,22 @@ impl HtxVerifier {
         self.report_verifier
             .verify_report(&bundle.report, &measurement)
             .await
-            .map_err(|e| VerificationError::VerifyReport(e.to_string()))?;
+            .map_err(|e: attestation_verification::VerificationError| {
+                match e {
+                    // Inconclusive errors - infrastructure/operational failures (outside of host control)
+                    ExtVerificationError::FetchCerts(ref inner) => {
+                        VerificationError::FetchCerts(inner.to_string())
+                    }
+                    ExtVerificationError::DetectProcessor(ref inner) => {
+                        VerificationError::DetectProcessor(inner.to_string())
+                    }
+                    ExtVerificationError::InvalidCertificate(ref inner) => {
+                        VerificationError::InvalidCertificate(inner.to_string())
+                    }
+                    // Any other verification failures treated as malicious
+                    _ => VerificationError::VerifyReport(e.to_string()),
+                }
+            })?;
         Ok(bundle.report)
     }
 
@@ -259,5 +332,57 @@ mod tests {
 
         let err = VerificationError::PhalaPlatformVerify("platform error".to_string());
         assert!(err.message().contains("platform verification failed"));
+    }
+
+    #[test]
+    fn test_inconclusive_errors() {
+        // These are operational failures - don't indicate maliciousness
+        let inconclusive_errors = vec![
+            VerificationError::NilccUrl("network error".to_string()),
+            VerificationError::NilccJson("parse error".to_string()),
+            VerificationError::FetchReport("timeout".to_string()),
+            VerificationError::BuilderUrl("connection refused".to_string()),
+            VerificationError::BuilderJson("invalid json".to_string()),
+            VerificationError::PhalaEventLogParse("missing field".to_string()),
+            VerificationError::FetchCerts("AMD server unreachable".to_string()),
+            VerificationError::DetectProcessor("unknown CPU".to_string()),
+        ];
+
+        for err in inconclusive_errors {
+            assert_eq!(
+                err.verdict(),
+                Verdict::Inconclusive,
+                "Expected {:?} to be Inconclusive",
+                err
+            );
+            assert!(err.is_inconclusive());
+            assert!(!err.is_failure());
+        }
+    }
+
+    #[test]
+    fn test_failure_errors() {
+        // These are cryptographic failures - indicate potential tampering
+        let failure_errors = vec![
+            VerificationError::VerifyReport("signature invalid".to_string()),
+            VerificationError::MeasurementHash("hash mismatch".to_string()),
+            VerificationError::NotInBuilderIndex,
+            VerificationError::PhalaComposeHashMismatch,
+            VerificationError::PhalaQuoteVerify("quote failed".to_string()),
+            VerificationError::PhalaPlatformVerify("platform invalid".to_string()),
+            VerificationError::CertVerification("cert chain invalid".to_string()),
+            VerificationError::InvalidMeasurement("expected X got Y".to_string()),
+        ];
+
+        for err in failure_errors {
+            assert_eq!(
+                err.verdict(),
+                Verdict::Failure,
+                "Expected {:?} to be Failure",
+                err
+            );
+            assert!(err.is_failure());
+            assert!(!err.is_inconclusive());
+        }
     }
 }
