@@ -45,3 +45,7 @@ path = "src/bin/blacklight_node.rs"
 [[bin]]
 name = "monitor"
 path = "src/bin/monitor.rs"
+
+[[bin]]
+name = "keeper"
+path = "src/keeper/main.rs"

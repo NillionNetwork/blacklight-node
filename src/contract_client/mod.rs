@@ -2,8 +2,11 @@ use alloy::primitives::Address;
 
 pub mod blacklight_client;
 pub mod common;
+pub mod emissions_controller;
 pub mod heartbeat_manager;
+pub mod jailing_policy;
 pub mod nil_token;
+pub mod reward_policy;
 pub mod staking_operators;
 
 // ============================================================================
@@ -11,8 +14,11 @@ pub mod staking_operators;
 // ============================================================================
 
 pub use blacklight_client::BlacklightClient;
+pub use emissions_controller::EmissionsController;
 pub use heartbeat_manager::HeartbeatManagerClient;
+pub use jailing_policy::JailingPolicy;
 pub use nil_token::NilTokenClient;
+pub use reward_policy::RewardPolicy;
 pub use staking_operators::StakingOperatorsClient;
 
 // ============================================================================

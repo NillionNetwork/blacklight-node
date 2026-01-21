@@ -58,10 +58,39 @@ sol! {
         event HeartbeatEnqueued(bytes32 indexed heartbeatKey, bytes rawHTX, address indexed submitter);
         event RoundStarted(bytes32 indexed heartbeatKey, uint8 round, bytes32 committeeRoot, uint64 snapshotId, uint64 startedAt, uint64 deadline, address[] members, bytes rawHTX);
         event OperatorVoted(bytes32 indexed heartbeatKey, uint8 round, address indexed operator, uint8 verdict, uint256 weight);
+        event RoundFinalized(bytes32 indexed heartbeatKey, uint8 round, uint8 outcome);
+        event RewardsDistributed(bytes32 indexed heartbeatKey, uint8 indexed round, uint256 voterCount, uint256 totalWeight);
+        event RewardDistributionAbandoned(bytes32 indexed heartbeatKey, uint8 indexed round);
+        event SlashingCallbackFailed(bytes32 indexed heartbeatKey, uint8 indexed round, bytes lowLevelData);
 
         function submitHeartbeat(bytes calldata rawHTX, uint64 snapshotId) external whenNotPaused nonReentrant returns (bytes32 heartbeatKey);
         function submitVerdict(bytes32 heartbeatKey, uint8 verdict, bytes32[] calldata memberProof);
+        function escalateOrExpire(bytes32 heartbeatKey, bytes calldata rawHTX) external;
+        function isPastDeadline(bytes32 heartbeatKey) external view returns (bool);
+        function distributeRewards(bytes32 heartbeatKey, uint8 round, address[] calldata sortedVoters) external;
+        function retrySlashing(bytes32 heartbeatKey, uint8 round) external;
         function getVotePacked(bytes32 heartbeatKey, uint8 round, address operator) external view returns (uint256);
+        function rounds(bytes32 heartbeatKey, uint8 round) external view returns (
+            uint256 validStake,
+            uint256 invalidStake,
+            uint256 errorStake,
+            uint256 totalRespondedStake,
+            uint256 committeeTotalStake,
+            uint32 committeeSize,
+            uint64 snapshotId,
+            bytes32 committeeRoot,
+            uint64 startedAt,
+            uint64 deadline,
+            bool finalized,
+            address stakingOps,
+            address selector,
+            address slashing,
+            address reward,
+            uint16 quorumBps,
+            uint16 verificationBps,
+            uint64 responseWindowSec,
+            uint64 jailDurationSec
+        );
         function nodeCount() external view returns (uint256);
         function getNodes() external view returns (address[] memory);
     }
@@ -70,6 +99,10 @@ sol! {
 pub type RoundStartedEvent = HearbeatManager::RoundStarted;
 pub type OperatorVotedEvent = HearbeatManager::OperatorVoted;
 pub type HeartbeatEnqueuedEvent = HearbeatManager::HeartbeatEnqueued;
+pub type RoundFinalizedEvent = HearbeatManager::RoundFinalized;
+pub type RewardsDistributedEvent = HearbeatManager::RewardsDistributed;
+pub type RewardDistributionAbandonedEvent = HearbeatManager::RewardDistributionAbandoned;
+pub type SlashingCallbackFailedEvent = HearbeatManager::SlashingCallbackFailed;
 
 /// WebSocket-based client for real-time event streaming and contract interaction with
 /// HeartbeatManager
