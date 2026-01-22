@@ -1,7 +1,7 @@
 use alloy::primitives::{Address, Bytes, B256, U256};
 use alloy::providers::Provider;
 use alloy::rpc::types::BlockNumberOrTag;
-use anyhow::Result;
+use anyhow::{bail, Result};
 use blacklight::config::consts::{INITIAL_RECONNECT_DELAY_SECS, MAX_RECONNECT_DELAY_SECS};
 use blacklight::contract_client::common::errors::decode_any_error;
 use blacklight::contract_client::heartbeat_manager::{
@@ -343,31 +343,29 @@ async fn run_l2_event_listeners(
     ));
     tasks.spawn(listen_slashing_callback_failed(l2_client.clone()));
 
-    loop {
-        tokio::select! {
-            res = tasks.join_next() => {
-                match res {
-                    Some(Ok(Ok(()))) => {
-                        tasks.abort_all();
-                        return Err(anyhow::anyhow!("Listener exited unexpectedly"));
-                    }
-                    Some(Ok(Err(e))) => {
-                        tasks.abort_all();
-                        return Err(e);
-                    }
-                    Some(Err(e)) => {
-                        tasks.abort_all();
-                        return Err(anyhow::anyhow!("Listener task failed: {e}"));
-                    }
-                    None => {
-                        return Err(anyhow::anyhow!("No listener tasks running"));
-                    }
+    tokio::select! {
+        res = tasks.join_next() => {
+            match res {
+                Some(Ok(Ok(()))) => {
+                    tasks.abort_all();
+                    bail!("Listener exited unexpectedly")
+                }
+                Some(Ok(Err(e))) => {
+                    tasks.abort_all();
+                    Err(e)
+                }
+                Some(Err(e)) => {
+                    tasks.abort_all();
+                    bail!("Listener task failed: {e}")
+                }
+                None => {
+                    bail!("No listener tasks running")
                 }
             }
-            _ = shutdown_notify.notified() => {
-                tasks.abort_all();
-                return Ok(());
-            }
+        }
+        _ = shutdown_notify.notified() => {
+            tasks.abort_all();
+            Ok(())
         }
     }
 }
@@ -530,11 +528,11 @@ async fn listen_round_finalized(
                 };
                 let mut guard = state.lock().await;
                 let entry = guard.rounds.entry(key).or_insert_with(RoundState::new);
-                entry.outcome = Some(event.outcome as u8);
+                entry.outcome = Some(event.outcome);
                 info!(
                     heartbeat_key = ?event.heartbeatKey,
                     round = event.round,
-                    outcome = event.outcome as u8,
+                    outcome = event.outcome,
                     "Round finalized"
                 );
             }
@@ -753,7 +751,7 @@ async fn load_historical_events(
             round: event.round,
         };
         let entry = guard.rounds.entry(key).or_insert_with(RoundState::new);
-        entry.outcome = Some(event.outcome as u8);
+        entry.outcome = Some(event.outcome);
     }
     for (event, _log) in rewards_done {
         let key = RoundKey {
@@ -829,7 +827,7 @@ async fn process_escalations(
     state: Arc<Mutex<KeeperState>>,
     tick: TickContext,
 ) -> Result<()> {
-    let (candidates, fallback_heartbeats): (Vec<(B256, u8, u64, Bytes)>, Vec<(B256, Bytes)>) = {
+    let (candidates, fallback_heartbeats) = {
         let guard = state.lock().await;
         let mut best_rounds: HashMap<B256, (u8, u64, Bytes)> = HashMap::new();
         let mut fallback = Vec::new();
@@ -870,7 +868,7 @@ async fn process_escalations(
             best_rounds
                 .into_iter()
                 .map(|(k, (round, deadline, raw_htx))| (k, round, deadline, raw_htx))
-                .collect(),
+                .collect::<Vec<_>>(),
             fallback,
         )
     };
@@ -1513,9 +1511,7 @@ async fn run_l1_emissions_loop(
                 return Ok(());
             }
         }
-        if let Err(e) = process_emissions(l1_client.clone(), bridge_value).await {
-            return Err(e);
-        }
+        process_emissions(l1_client.clone(), bridge_value).await?;
     }
 }
 
