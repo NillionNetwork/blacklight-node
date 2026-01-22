@@ -145,7 +145,8 @@ async fn main() -> Result<()> {
 
     let l2_balance = l2_client.get_balance().await?;
     let l1_balance = l1_client.get_balance().await?;
-    info!(l2_balance = ?l2_balance, l1_balance = ?l1_balance, "Keeper wallet ready");
+    let address = l1_client.signer_address();
+    info!(l2_balance = ?l2_balance, l1_balance = ?l1_balance, "Keeper wallet {address} ready");
 
     info!("Press Ctrl+C to gracefully shutdown");
 
