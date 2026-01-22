@@ -1,10 +1,12 @@
 pub mod consts;
+pub mod keeper;
 pub mod monitor;
 pub mod node;
 pub mod simulator;
 
 // Re-export for convenience
 pub use consts::*;
+pub use keeper::{CliArgs as KeeperCliArgs, KeeperConfig};
 pub use monitor::{CliArgs as MonitorCliArgs, MonitorConfig};
 pub use node::{validate_node_requirements, CliArgs as NodeCliArgs, NodeConfig};
 pub use simulator::{CliArgs as SimulatorCliArgs, SimulatorConfig};

@@ -3,13 +3,14 @@ use alloy::providers::Provider;
 use alloy::rpc::types::BlockNumberOrTag;
 use anyhow::{bail, Result};
 use blacklight::config::consts::{INITIAL_RECONNECT_DELAY_SECS, MAX_RECONNECT_DELAY_SECS};
+use blacklight::config::{KeeperCliArgs, KeeperConfig};
 use blacklight::contract_client::common::errors::decode_any_error;
 use blacklight::contract_client::heartbeat_manager::{
     HeartbeatEnqueuedEvent, RewardDistributionAbandonedEvent, RewardsDistributedEvent,
     RoundFinalizedEvent, RoundStartedEvent, SlashingCallbackFailedEvent,
 };
 use blacklight::keeper::client::RewardPolicyInstance;
-use blacklight::keeper::{KeeperCliArgs, KeeperConfig, L1EmissionsClient, L2KeeperClient};
+use blacklight::keeper::{L1EmissionsClient, L2KeeperClient};
 use clap::Parser;
 use futures_util::StreamExt;
 use std::collections::HashMap;
