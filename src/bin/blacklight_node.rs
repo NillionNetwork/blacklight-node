@@ -1,19 +1,20 @@
 use alloy::primitives::utils::{format_ether, format_units};
 use alloy::primitives::Address;
 use anyhow::Result;
-use clap::Parser;
 use blacklight::{
     config::{
         consts::{INITIAL_RECONNECT_DELAY_SECS, MAX_RECONNECT_DELAY_SECS, MIN_ETH_BALANCE},
         validate_node_requirements, NodeCliArgs, NodeConfig,
     },
     contract_client::{
+        blacklightClient,
         heartbeat_manager::{RoundStartedEvent, Verdict},
-        ContractConfig, blacklightClient,
+        ContractConfig,
     },
     types::Htx,
     verification::HtxVerifier,
 };
+use clap::Parser;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -448,7 +449,8 @@ async fn main() -> Result<()> {
         config.staking_contract_address,
         config.token_contract_address,
     );
-    let validation_client = blacklightClient::new(contract_config, config.private_key.clone()).await?;
+    let validation_client =
+        blacklightClient::new(contract_config, config.private_key.clone()).await?;
 
     // Validate node has sufficient ETH and staked NIL tokens
     validate_node_requirements(

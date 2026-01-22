@@ -1,18 +1,18 @@
 use alloy::primitives::Address;
 
+pub mod blacklight_client;
 pub mod common;
 pub mod heartbeat_manager;
 pub mod nil_token;
-pub mod blacklight_client;
 pub mod staking_operators;
 
 // ============================================================================
 // Client Type Re-exports
 // ============================================================================
 
+pub use blacklight_client::blacklightClient;
 pub use heartbeat_manager::HeartbeatManagerClient;
 pub use nil_token::NilTokenClient;
-pub use blacklight_client::blacklightClient;
 pub use staking_operators::StakingOperatorsClient;
 
 // ============================================================================

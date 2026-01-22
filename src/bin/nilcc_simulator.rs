@@ -2,12 +2,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
-use clap::Parser;
 use blacklight::{
     config::{SimulatorCliArgs, SimulatorConfig},
-    contract_client::{ContractConfig, blacklightClient},
+    contract_client::{blacklightClient, ContractConfig},
     types::{NillionHtx, NillionHtxV1},
 };
+use clap::Parser;
 use rand::Rng;
 use tokio::time::interval;
 use tracing::{error, info, warn};

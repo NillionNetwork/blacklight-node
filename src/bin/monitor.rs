@@ -1,5 +1,7 @@
 use alloy::primitives::{utils::format_units, Address, U256};
 use anyhow::Result;
+use blacklight::config::{MonitorCliArgs, MonitorConfig};
+use blacklight::contract_client::{blacklightClient, ContractConfig};
 use clap::Parser;
 use crossterm::{
     event::{
@@ -9,8 +11,6 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use blacklight::config::{MonitorCliArgs, MonitorConfig};
-use blacklight::contract_client::{ContractConfig, blacklightClient};
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -1025,7 +1025,8 @@ async fn run_monitor_loop(
                                                 );
 
                                                 let new_client =
-                                                    blacklightClient::new(config, private_key).await?;
+                                                    blacklightClient::new(config, private_key)
+                                                        .await?;
                                                 (
                                                     new_client.staking.clone(),
                                                     new_client.token.clone(),
@@ -1161,7 +1162,8 @@ async fn run_monitor_loop(
                                                 );
 
                                                 let new_client =
-                                                    blacklightClient::new(config, private_key).await?;
+                                                    blacklightClient::new(config, private_key)
+                                                        .await?;
                                                 new_client.token
                                             } else {
                                                 // Use the existing client's token contract
@@ -1294,7 +1296,8 @@ async fn run_monitor_loop(
                                                 );
 
                                                 let new_client =
-                                                    blacklightClient::new(config, private_key).await?;
+                                                    blacklightClient::new(config, private_key)
+                                                        .await?;
                                                 new_client.send_eth(target_addr, amount_wei).await
                                             } else {
                                                 // Use the existing client
