@@ -457,6 +457,7 @@ impl<P: Provider + Clone> HeartbeatManagerClient<P> {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Verdict {
     Success,
     Failure,

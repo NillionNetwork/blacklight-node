@@ -12,7 +12,7 @@ use niluv::{
         ContractConfig, NilUVClient,
     },
     types::Htx,
-    verification::{HtxVerifier, VerificationError},
+    verification::HtxVerifier,
 };
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -121,23 +121,7 @@ async fn process_htx_assignment(
     };
     let verdict = match verification_result {
         Ok(_) => Verdict::Success,
-        Err(ref e) => match e {
-            // Inconclusive cases
-            VerificationError::NilccUrl(_) | // Could be a regionally blocked URL
-            VerificationError::BuilderUrl(_) | // Could be a regionally blocked URL
-            VerificationError::NotInBuilderIndex | // ?? Report may be valid but user may not want to give the measurement (could even be considered relatively valid)
-            VerificationError::PhalaEventLogParse(_) => Verdict::Inconclusive,  // ?? Event log parse considered as inconclusive or failure?
-
-            // Failure cases
-            VerificationError::NilccJson(_) | // ?? Should be a failure considered you retrieved it from the URL?
-            VerificationError::FetchReport(_) | // Given the URL was accessible, the report should have been accessible as well
-            VerificationError::VerifyReport(_) | // Given the report was accessible, the verification should have succeeded
-            VerificationError::MeasurementHash(_) | // Given the URL was accessible, the measurement hash should have been accessible as well
-            VerificationError::BuilderJson(_) | // ??  Considering you retrieved it from the URL, it should be a failure
-            VerificationError::PhalaComposeHashMismatch | // Should be always failure
-            VerificationError::PhalaQuoteVerify(_) | // Quotes should always be valid
-            VerificationError::PhalaPlatformVerify(_) => Verdict::Failure
-        },
+        Err(ref e) => e.verdict(),
     };
 
     // Submit the verification result
@@ -149,12 +133,18 @@ async fn process_htx_assignment(
         Ok(tx_hash) => {
             let count = verified_counter.fetch_add(1, Ordering::SeqCst) + 1;
 
-            match verification_result {
-                Ok(_) => {
-                    info!(tx_hash = ?tx_hash, "✅ VALID HTX verification submitted");
+            match (verdict, verification_result) {
+                (Verdict::Success, Ok(_)) => {
+                    info!(tx_hash=?tx_hash, "✅ VALID HTX verification submitted");
                 }
-                Err(e) => {
-                    info!(tx_hash = ?tx_hash, error = %e, "❌ INVALID HTX verification submitted");
+                (Verdict::Failure, Err(e)) => {
+                    info!(tx_hash=?tx_hash, error=?e, verdict="failure", "❌ INVALID HTX verification submitted");
+                }
+                (Verdict::Inconclusive, Err(e)) => {
+                    info!(tx_hash=?tx_hash, error=?e, verdict="inconclusive", "⚠️ INCONCLUSIVE HTX verification submitted");
+                }
+                (_, _) => {
+                    error!(tx_hash=?tx_hash, verdict=?verdict, "Unexpected verification state");
                 }
             }
 
