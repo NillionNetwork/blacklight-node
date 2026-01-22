@@ -1,18 +1,18 @@
 use alloy::primitives::Address;
 
+pub mod blacklight_client;
 pub mod common;
 pub mod heartbeat_manager;
 pub mod nil_token;
-pub mod niluv_client;
 pub mod staking_operators;
 
 // ============================================================================
 // Client Type Re-exports
 // ============================================================================
 
+pub use blacklight_client::BlacklightClient;
 pub use heartbeat_manager::HeartbeatManagerClient;
 pub use nil_token::NilTokenClient;
-pub use niluv_client::NilUVClient;
 pub use staking_operators::StakingOperatorsClient;
 
 // ============================================================================
@@ -39,7 +39,7 @@ pub type PrivateKey = String;
 // Contract Configuration
 // ============================================================================
 
-/// Configuration for connecting to NilUV smart contracts
+/// Configuration for connecting to blacklight smart contracts
 ///
 /// Contains addresses for all three contracts in the system:
 /// - HeartbeatManager: Main routing and HTX verification logic
@@ -185,7 +185,7 @@ mod tests {
     /// - `TEST_PRIVATE_KEY`: Private key for signing (default: Anvil account #0)
     ///
     /// Uses hardcoded contract addresses that should match your test deployment.
-    async fn create_test_client() -> Result<NilUVClient, Box<dyn std::error::Error>> {
+    async fn create_test_client() -> Result<BlacklightClient, Box<dyn std::error::Error>> {
         // Read configuration from environment (with defaults for local Anvil)
         let rpc_url =
             env::var("TEST_RPC_URL").unwrap_or_else(|_| "http://localhost:8545".to_string());
@@ -207,7 +207,7 @@ mod tests {
 
         // Create client with configuration
         let config = ContractConfig::new(rpc_url, manager_address, staking_address, token_address);
-        let client = NilUVClient::new(config, private_key).await?;
+        let client = BlacklightClient::new(config, private_key).await?;
 
         Ok(client)
     }

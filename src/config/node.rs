@@ -8,15 +8,15 @@ use clap::Parser;
 
 use crate::config::consts::{MIN_ETH_BALANCE, STATE_FILE_NODE};
 use crate::config::{ChainArgs, ChainConfig};
-use crate::contract_client::NilUVClient;
+use crate::contract_client::BlacklightClient;
 use crate::state::StateFile;
 use crate::wallet::{display_wallet_status, generate_wallet, WalletStatus};
 use tracing::{error, info};
 
-/// CLI arguments for the NilUV node
+/// CLI arguments for the blacklight node
 #[derive(Parser, Debug)]
-#[command(name = "niluv_node")]
-#[command(about = "NilUV verifier node", long_about = None)]
+#[command(name = "blacklight_node")]
+#[command(about = "blacklight verifier node", long_about = None)]
 pub struct CliArgs {
     #[clap(flatten)]
     pub chain_args: ChainArgs,
@@ -122,7 +122,7 @@ impl NodeConfig {
 /// Validates that the node has sufficient ETH balance and staked NIL tokens
 /// Returns Ok(()) if ready, or Err if validation fails with user-friendly display
 pub async fn validate_node_requirements(
-    client: &NilUVClient,
+    client: &BlacklightClient,
     rpc_url: &str,
     was_wallet_created: bool,
 ) -> Result<()> {
@@ -186,7 +186,7 @@ pub async fn validate_node_requirements(
 }
 
 fn default_cache_path() -> PathBuf {
-    temp_dir().join("niluv-cache")
+    temp_dir().join("blacklight-cache")
 }
 
 fn default_cert_cache_path() -> PathBuf {

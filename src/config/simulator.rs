@@ -11,7 +11,7 @@ use tracing::info;
 /// CLI arguments for the NilCC simulator
 #[derive(Parser, Debug)]
 #[command(name = "nilcc_simulator")]
-#[command(about = "NilUV Server - Submits HTXs to the smart contract", long_about = None)]
+#[command(about = "blacklight Server - Submits HTXs to the smart contract", long_about = None)]
 pub struct CliArgs {
     #[clap(flatten)]
     pub chain_args: ChainArgs,

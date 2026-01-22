@@ -1,5 +1,5 @@
-# Multi-stage Dockerfile for nilUV project with cross-compilation support
-# Builds all binaries: niluv_node, nilcc_simulator, monitor
+# Multi-stage Dockerfile for blacklight project with cross-compilation support
+# Builds all binaries: blacklight_node, nilcc_simulator, monitor
 
 FROM --platform=$BUILDPLATFORM rust:1.91-slim-trixie AS builder
 
@@ -77,7 +77,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     fi && \
     cargo build --release --target $RUST_TARGET --bins && \
     mkdir -p /out/bin && \
-    cp target/$RUST_TARGET/release/niluv_node /out/bin/ && \
+    cp target/$RUST_TARGET/release/blacklight_node /out/bin/ && \
     cp target/$RUST_TARGET/release/nilcc_simulator /out/bin/ && \
     cp target/$RUST_TARGET/release/monitor /out/bin/
 
@@ -91,19 +91,19 @@ RUN apt-get update && apt-get install -y ca-certificates util-linux && rm -rf /v
 WORKDIR /app
 
 
-# Runtime stage for niluv_node
-FROM base_release AS niluv_node
-COPY --from=builder /out/bin/niluv_node /usr/local/bin/niluv_node
-ENTRYPOINT ["/usr/local/bin/niluv_node"]
+# Runtime stage for blacklight_node
+FROM base_release AS blacklight_node
+COPY --from=builder /out/bin/blacklight_node /usr/local/bin/blacklight_node
+ENTRYPOINT ["/usr/local/bin/blacklight_node"]
 
 # Foundry (cast) stage (for deriving keys from mnemonics at runtime)
 FROM ghcr.io/foundry-rs/foundry:stable AS foundry
 
-# Runtime stage for niluv_node
-FROM niluv_node AS niluv_node_test
+# Runtime stage for blacklight_node
+FROM blacklight_node AS blacklight_node_test
 COPY --from=foundry /usr/local/bin/cast /usr/local/bin/cast
 COPY --chmod=755 docker/entrypoints/derive_private_key.sh /usr/local/bin/derive_private_key.sh
-ENTRYPOINT ["/usr/local/bin/derive_private_key.sh", "/usr/local/bin/niluv_node"]
+ENTRYPOINT ["/usr/local/bin/derive_private_key.sh", "/usr/local/bin/blacklight_node"]
 
 # Runtime stage for nilcc_simulator
 FROM base_release AS nilcc_simulator
