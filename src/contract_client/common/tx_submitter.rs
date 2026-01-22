@@ -39,6 +39,8 @@ impl<S: SolInterface + Debug + Clone> TransactionSubmitter<S> {
             None => call,
         };
 
+        let call = call.max_priority_fee_per_gas(0);
+
         // Acquire lock and send
         let _guard = self.tx_lock.lock().await;
         let pending = call.send().await.map_err(|e| {

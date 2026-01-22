@@ -81,6 +81,7 @@ impl BlacklightClient {
         let tx = TransactionRequest {
             to: Some(TxKind::Call(to)),
             value: Some(amount),
+            max_priority_fee_per_gas: Some(0),
             ..Default::default()
         };
 
