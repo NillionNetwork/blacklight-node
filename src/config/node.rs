@@ -8,7 +8,7 @@ use clap::Parser;
 
 use crate::config::consts::{MIN_ETH_BALANCE, STATE_FILE_NODE};
 use crate::config::{ChainArgs, ChainConfig};
-use crate::contract_client::blacklightClient;
+use crate::contract_client::BlacklightClient;
 use crate::state::StateFile;
 use crate::wallet::{display_wallet_status, generate_wallet, WalletStatus};
 use tracing::{error, info};
@@ -122,7 +122,7 @@ impl NodeConfig {
 /// Validates that the node has sufficient ETH balance and staked NIL tokens
 /// Returns Ok(()) if ready, or Err if validation fails with user-friendly display
 pub async fn validate_node_requirements(
-    client: &blacklightClient,
+    client: &BlacklightClient,
     rpc_url: &str,
     was_wallet_created: bool,
 ) -> Result<()> {

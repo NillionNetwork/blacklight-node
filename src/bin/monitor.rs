@@ -1,7 +1,7 @@
 use alloy::primitives::{utils::format_units, Address, U256};
 use anyhow::Result;
 use blacklight::config::{MonitorCliArgs, MonitorConfig};
-use blacklight::contract_client::{blacklightClient, ContractConfig};
+use blacklight::contract_client::{BlacklightClient, ContractConfig};
 use clap::Parser;
 use crossterm::{
     event::{
@@ -214,7 +214,7 @@ async fn main() -> Result<()> {
         config.staking_contract_address,
         config.token_contract_address,
     );
-    let client = blacklightClient::new(contract_config, config.private_key).await?;
+    let client = BlacklightClient::new(contract_config, config.private_key).await?;
 
     // Initial data fetch for node count and list
     let node_count = client.manager.node_count().await?.to::<usize>();
@@ -405,7 +405,7 @@ async fn main() -> Result<()> {
     run_monitor(client, initial_state).await
 }
 
-async fn run_monitor(client: blacklightClient, initial_state: MonitorState) -> Result<()> {
+async fn run_monitor(client: BlacklightClient, initial_state: MonitorState) -> Result<()> {
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -485,7 +485,7 @@ async fn run_monitor(client: blacklightClient, initial_state: MonitorState) -> R
 
 async fn run_monitor_loop(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    client: Arc<blacklightClient>,
+    client: Arc<BlacklightClient>,
     state: Arc<Mutex<MonitorState>>,
 ) -> Result<()> {
     loop {
@@ -1025,7 +1025,7 @@ async fn run_monitor_loop(
                                                 );
 
                                                 let new_client =
-                                                    blacklightClient::new(config, private_key)
+                                                    BlacklightClient::new(config, private_key)
                                                         .await?;
                                                 (
                                                     new_client.staking.clone(),
@@ -1162,7 +1162,7 @@ async fn run_monitor_loop(
                                                 );
 
                                                 let new_client =
-                                                    blacklightClient::new(config, private_key)
+                                                    BlacklightClient::new(config, private_key)
                                                         .await?;
                                                 new_client.token
                                             } else {
@@ -1296,7 +1296,7 @@ async fn run_monitor_loop(
                                                 );
 
                                                 let new_client =
-                                                    blacklightClient::new(config, private_key)
+                                                    BlacklightClient::new(config, private_key)
                                                         .await?;
                                                 new_client.send_eth(target_addr, amount_wei).await
                                             } else {
@@ -1363,7 +1363,7 @@ async fn run_monitor_loop(
 
 // WebSocket event listener for HTX submitted events (parallel processing)
 async fn listen_htx_submitted(
-    client: Arc<blacklightClient>,
+    client: Arc<BlacklightClient>,
     state: Arc<Mutex<MonitorState>>,
 ) -> Result<()> {
     let manager = Arc::new(client.manager.clone());
@@ -1398,7 +1398,7 @@ async fn listen_htx_submitted(
 
 // WebSocket event listener for HTX assigned events (parallel processing)
 async fn listen_htx_assigned(
-    client: Arc<blacklightClient>,
+    client: Arc<BlacklightClient>,
     state: Arc<Mutex<MonitorState>>,
 ) -> Result<()> {
     let manager = Arc::new(client.manager.clone());
@@ -1446,7 +1446,7 @@ async fn listen_htx_assigned(
 
 // WebSocket event listener for HTX responded events (parallel processing)
 async fn listen_htx_responded(
-    client: Arc<blacklightClient>,
+    client: Arc<BlacklightClient>,
     state: Arc<Mutex<MonitorState>>,
 ) -> Result<()> {
     let manager = Arc::new(client.manager.clone());
@@ -1550,7 +1550,7 @@ fn render_header(f: &mut Frame, area: Rect, state: &MonitorState) {
     let header = Paragraph::new(Line::from(tab_spans)).block(
         Block::default()
             .borders(Borders::ALL)
-            .title("blacklight Contract Monitor")
+            .title("Blacklight Contract Monitor")
             .title_style(
                 Style::default()
                     .fg(Color::Cyan)
@@ -2517,7 +2517,7 @@ fn render_transfer_eth(f: &mut Frame, area: Rect, state: &MonitorState) {
 // WebSocket event listener for Transfer events (parallel processing)
 // Refreshes token balances for all system addresses (nodes and operators)
 async fn listen_token_transfers(
-    client: Arc<blacklightClient>,
+    client: Arc<BlacklightClient>,
     state: Arc<Mutex<MonitorState>>,
 ) -> Result<()> {
     let token_arc = Arc::new(client.token.clone());
@@ -2585,7 +2585,7 @@ const VALIDATION_LOOKBACK_BLOCKS: u64 = 100;
 
 /// Reload HTX tracking data and validation statuses from chain logs (manual fetch)
 async fn reload_htx_data(
-    client: &blacklightClient,
+    client: &BlacklightClient,
 ) -> Result<(
     HashMap<String, HTXTransaction>,
     Vec<HTXValidationStatus>,

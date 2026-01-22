@@ -11,7 +11,7 @@ use tracing::info;
 /// CLI arguments for the blacklight monitor
 #[derive(Parser, Debug)]
 #[command(name = "monitor")]
-#[command(about = "blacklight Contract Monitor - Interactive TUI", long_about = None)]
+#[command(about = "Blacklight Contract Monitor - Interactive TUI", long_about = None)]
 pub struct CliArgs {
     #[clap(flatten)]
     pub chain_args: ChainArgs,

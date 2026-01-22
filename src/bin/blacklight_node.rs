@@ -7,9 +7,8 @@ use blacklight::{
         validate_node_requirements, NodeCliArgs, NodeConfig,
     },
     contract_client::{
-        blacklightClient,
         heartbeat_manager::{RoundStartedEvent, Verdict},
-        ContractConfig,
+        BlacklightClient, ContractConfig,
     },
     types::Htx,
     verification::HtxVerifier,
@@ -68,7 +67,7 @@ async fn setup_shutdown_handler(shutdown_notify: Arc<Notify>) {
 // ============================================================================
 
 /// Print status information (ETH balance, staked balance, verified HTXs)
-async fn print_status(client: &blacklightClient, verified_count: u64) -> Result<()> {
+async fn print_status(client: &BlacklightClient, verified_count: u64) -> Result<()> {
     let eth_balance = client.get_balance().await?;
     let node_address = client.signer_address();
     let staked_balance = client.staking.stake_of(node_address).await?;
@@ -89,7 +88,7 @@ async fn print_status(client: &blacklightClient, verified_count: u64) -> Result<
 
 /// Process a single HTX assignment - verifies and submits result
 async fn process_htx_assignment(
-    client: Arc<blacklightClient>,
+    client: Arc<BlacklightClient>,
     event: RoundStartedEvent,
     verifier: &HtxVerifier,
     verified_counter: Arc<AtomicU64>,
@@ -182,7 +181,7 @@ async fn process_htx_assignment(
 
 /// Process backlog of historical assignments
 async fn process_assignment_backlog(
-    client: Arc<blacklightClient>,
+    client: Arc<BlacklightClient>,
     node_address: Address,
     verifier: &HtxVerifier,
     verified_counter: Arc<AtomicU64>,
@@ -250,7 +249,7 @@ async fn process_assignment_backlog(
 // ============================================================================
 
 /// Register node with the contract if not already registered
-async fn register_node_if_needed(client: &blacklightClient, node_address: Address) -> Result<()> {
+async fn register_node_if_needed(client: &BlacklightClient, node_address: Address) -> Result<()> {
     info!(node_address = %node_address, "Checking node registration");
 
     let is_registered = client.staking.is_active_operator(node_address).await?;
@@ -275,7 +274,7 @@ async fn register_node_if_needed(client: &blacklightClient, node_address: Addres
 async fn create_client_with_retry(
     config: &NodeConfig,
     shutdown_notify: &Arc<Notify>,
-) -> Result<blacklightClient> {
+) -> Result<BlacklightClient> {
     let mut reconnect_delay = Duration::from_secs(INITIAL_RECONNECT_DELAY_SECS);
     let max_reconnect_delay = Duration::from_secs(MAX_RECONNECT_DELAY_SECS);
 
@@ -288,7 +287,7 @@ async fn create_client_with_retry(
 
     loop {
         let client_result =
-            blacklightClient::new(contract_config.clone(), config.private_key.clone()).await;
+            BlacklightClient::new(contract_config.clone(), config.private_key.clone()).await;
 
         match client_result {
             Ok(client) => {
@@ -319,7 +318,7 @@ async fn create_client_with_retry(
 
 /// Listen for HTX assignment events and process them
 async fn run_event_listener(
-    client: Arc<blacklightClient>,
+    client: Arc<BlacklightClient>,
     node_address: Address,
     shutdown_notify: Arc<Notify>,
     verifier: &HtxVerifier,
@@ -406,7 +405,7 @@ async fn deactivate_node_on_shutdown(
         config.token_contract_address,
     );
 
-    let client = blacklightClient::new(contract_config, config.private_key.clone()).await?;
+    let client = BlacklightClient::new(contract_config, config.private_key.clone()).await?;
     let tx_hash = client.staking.deactivate_operator().await?;
     info!(tx_hash = ?tx_hash, "Node deactivated successfully");
 
@@ -450,7 +449,7 @@ async fn main() -> Result<()> {
         config.token_contract_address,
     );
     let validation_client =
-        blacklightClient::new(contract_config, config.private_key.clone()).await?;
+        BlacklightClient::new(contract_config, config.private_key.clone()).await?;
 
     // Validate node has sufficient ETH and staked NIL tokens
     validate_node_requirements(

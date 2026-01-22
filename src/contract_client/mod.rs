@@ -10,7 +10,7 @@ pub mod staking_operators;
 // Client Type Re-exports
 // ============================================================================
 
-pub use blacklight_client::blacklightClient;
+pub use blacklight_client::BlacklightClient;
 pub use heartbeat_manager::HeartbeatManagerClient;
 pub use nil_token::NilTokenClient;
 pub use staking_operators::StakingOperatorsClient;
@@ -185,7 +185,7 @@ mod tests {
     /// - `TEST_PRIVATE_KEY`: Private key for signing (default: Anvil account #0)
     ///
     /// Uses hardcoded contract addresses that should match your test deployment.
-    async fn create_test_client() -> Result<blacklightClient, Box<dyn std::error::Error>> {
+    async fn create_test_client() -> Result<BlacklightClient, Box<dyn std::error::Error>> {
         // Read configuration from environment (with defaults for local Anvil)
         let rpc_url =
             env::var("TEST_RPC_URL").unwrap_or_else(|_| "http://localhost:8545".to_string());
@@ -207,7 +207,7 @@ mod tests {
 
         // Create client with configuration
         let config = ContractConfig::new(rpc_url, manager_address, staking_address, token_address);
-        let client = blacklightClient::new(config, private_key).await?;
+        let client = BlacklightClient::new(config, private_key).await?;
 
         Ok(client)
     }

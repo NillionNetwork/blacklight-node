@@ -61,7 +61,7 @@ docker compose down -v
 └──────┬──────┘
        │
        ├── Deploy Contract
-       │   (blacklightRouter)
+       │   (HeartbeatManager)
        │
        ├──────────────────────────────┐
        │                              │

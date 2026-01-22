@@ -14,7 +14,7 @@ use tokio::sync::Mutex;
 
 /// High-level wrapper bundling all contract clients with a shared Alloy provider.
 #[derive(Clone)]
-pub struct blacklightClient {
+pub struct BlacklightClient {
     provider: DynProvider,
     wallet: EthereumWallet,
     pub manager: HeartbeatManagerClient<DynProvider>,
@@ -22,7 +22,7 @@ pub struct blacklightClient {
     pub staking: StakingOperatorsClient<DynProvider>,
 }
 
-impl blacklightClient {
+impl BlacklightClient {
     pub async fn new(config: ContractConfig, private_key: String) -> anyhow::Result<Self> {
         let rpc_url = config.rpc_url.clone();
         let ws_url = rpc_url

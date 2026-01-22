@@ -4,7 +4,7 @@ use std::time::Duration;
 use anyhow::Result;
 use blacklight::{
     config::{SimulatorCliArgs, SimulatorConfig},
-    contract_client::{blacklightClient, ContractConfig},
+    contract_client::{BlacklightClient, ContractConfig},
     types::{NillionHtx, NillionHtxV1},
 };
 use clap::Parser;
@@ -38,7 +38,7 @@ fn load_config() -> Result<SimulatorConfig> {
     Ok(config)
 }
 
-async fn setup_client(config: &SimulatorConfig) -> Result<blacklightClient> {
+async fn setup_client(config: &SimulatorConfig) -> Result<BlacklightClient> {
     let contract_config = ContractConfig::new(
         config.rpc_url.clone(),
         config.manager_contract_address,
@@ -46,7 +46,7 @@ async fn setup_client(config: &SimulatorConfig) -> Result<blacklightClient> {
         config.token_contract_address,
     );
 
-    let client = blacklightClient::new(contract_config, config.private_key.clone()).await?;
+    let client = BlacklightClient::new(contract_config, config.private_key.clone()).await?;
 
     info!(
         contract = %client.manager.address(),
@@ -71,7 +71,7 @@ fn load_htxs(path: &str) -> Vec<NillionHtxV1> {
 }
 
 async fn run_submission_loop(
-    client: blacklightClient,
+    client: BlacklightClient,
     htxs: Vec<NillionHtxV1>,
     slot_ms: u64,
 ) -> Result<()> {
@@ -99,7 +99,7 @@ const MAX_RETRIES: u32 = 3;
 const RETRY_DELAY_MS: u64 = 500;
 
 async fn submit_next_htx(
-    client: &Arc<blacklightClient>,
+    client: &Arc<BlacklightClient>,
     htxs: &Arc<Vec<NillionHtxV1>>,
     slot: u64,
 ) -> Result<()> {
