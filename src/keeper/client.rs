@@ -5,12 +5,13 @@ use alloy::{
     signers::local::PrivateKeySigner,
 };
 
-use crate::contract_client::{EmissionsController, HearbeatManager, JailingPolicy, RewardPolicy};
 use crate::contract_client::reward_policy::ERC20;
+use crate::contract_client::{EmissionsController, HearbeatManager, JailingPolicy, RewardPolicy};
 
 pub type HeartbeatManagerInstance = HearbeatManager::HearbeatManagerInstance<DynProvider>;
 pub type JailingPolicyInstance = JailingPolicy::JailingPolicyInstance<DynProvider>;
-pub type EmissionsControllerInstance = EmissionsController::EmissionsControllerInstance<DynProvider>;
+pub type EmissionsControllerInstance =
+    EmissionsController::EmissionsControllerInstance<DynProvider>;
 pub type RewardPolicyInstance = RewardPolicy::RewardPolicyInstance<DynProvider>;
 pub type ERC20Instance = ERC20::ERC20Instance<DynProvider>;
 
