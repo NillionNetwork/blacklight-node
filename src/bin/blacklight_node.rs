@@ -2,14 +2,14 @@ use alloy::primitives::utils::{format_ether, format_units};
 use alloy::primitives::Address;
 use anyhow::Result;
 use clap::Parser;
-use niluv::{
+use blacklight::{
     config::{
         consts::{INITIAL_RECONNECT_DELAY_SECS, MAX_RECONNECT_DELAY_SECS, MIN_ETH_BALANCE},
         validate_node_requirements, NodeCliArgs, NodeConfig,
     },
     contract_client::{
         heartbeat_manager::{RoundStartedEvent, Verdict},
-        ContractConfig, NilUVClient,
+        ContractConfig, blacklightClient,
     },
     types::Htx,
     verification::HtxVerifier,
@@ -67,7 +67,7 @@ async fn setup_shutdown_handler(shutdown_notify: Arc<Notify>) {
 // ============================================================================
 
 /// Print status information (ETH balance, staked balance, verified HTXs)
-async fn print_status(client: &NilUVClient, verified_count: u64) -> Result<()> {
+async fn print_status(client: &blacklightClient, verified_count: u64) -> Result<()> {
     let eth_balance = client.get_balance().await?;
     let node_address = client.signer_address();
     let staked_balance = client.staking.stake_of(node_address).await?;
@@ -88,7 +88,7 @@ async fn print_status(client: &NilUVClient, verified_count: u64) -> Result<()> {
 
 /// Process a single HTX assignment - verifies and submits result
 async fn process_htx_assignment(
-    client: Arc<NilUVClient>,
+    client: Arc<blacklightClient>,
     event: RoundStartedEvent,
     verifier: &HtxVerifier,
     verified_counter: Arc<AtomicU64>,
@@ -181,7 +181,7 @@ async fn process_htx_assignment(
 
 /// Process backlog of historical assignments
 async fn process_assignment_backlog(
-    client: Arc<NilUVClient>,
+    client: Arc<blacklightClient>,
     node_address: Address,
     verifier: &HtxVerifier,
     verified_counter: Arc<AtomicU64>,
@@ -249,7 +249,7 @@ async fn process_assignment_backlog(
 // ============================================================================
 
 /// Register node with the contract if not already registered
-async fn register_node_if_needed(client: &NilUVClient, node_address: Address) -> Result<()> {
+async fn register_node_if_needed(client: &blacklightClient, node_address: Address) -> Result<()> {
     info!(node_address = %node_address, "Checking node registration");
 
     let is_registered = client.staking.is_active_operator(node_address).await?;
@@ -274,7 +274,7 @@ async fn register_node_if_needed(client: &NilUVClient, node_address: Address) ->
 async fn create_client_with_retry(
     config: &NodeConfig,
     shutdown_notify: &Arc<Notify>,
-) -> Result<NilUVClient> {
+) -> Result<blacklightClient> {
     let mut reconnect_delay = Duration::from_secs(INITIAL_RECONNECT_DELAY_SECS);
     let max_reconnect_delay = Duration::from_secs(MAX_RECONNECT_DELAY_SECS);
 
@@ -287,7 +287,7 @@ async fn create_client_with_retry(
 
     loop {
         let client_result =
-            NilUVClient::new(contract_config.clone(), config.private_key.clone()).await;
+            blacklightClient::new(contract_config.clone(), config.private_key.clone()).await;
 
         match client_result {
             Ok(client) => {
@@ -318,7 +318,7 @@ async fn create_client_with_retry(
 
 /// Listen for HTX assignment events and process them
 async fn run_event_listener(
-    client: Arc<NilUVClient>,
+    client: Arc<blacklightClient>,
     node_address: Address,
     shutdown_notify: Arc<Notify>,
     verifier: &HtxVerifier,
@@ -405,7 +405,7 @@ async fn deactivate_node_on_shutdown(
         config.token_contract_address,
     );
 
-    let client = NilUVClient::new(contract_config, config.private_key.clone()).await?;
+    let client = blacklightClient::new(contract_config, config.private_key.clone()).await?;
     let tx_hash = client.staking.deactivate_operator().await?;
     info!(tx_hash = ?tx_hash, "Node deactivated successfully");
 
@@ -427,9 +427,9 @@ async fn main() -> Result<()> {
         // Silence Alloy framework noise
         .add_directive("alloy=warn".parse()?)
         .add_directive("alloy_pubsub=error".parse()?)
-        // Keep niluv logs at info level
-        .add_directive("niluv=info".parse()?)
-        .add_directive("niluv_node=info".parse()?);
+        // Keep blacklight logs at info level
+        .add_directive("blacklight=info".parse()?)
+        .add_directive("blacklight_node=info".parse()?);
 
     tracing_subscriber::registry()
         .with(fmt::layer().with_ansi(true))
@@ -448,7 +448,7 @@ async fn main() -> Result<()> {
         config.staking_contract_address,
         config.token_contract_address,
     );
-    let validation_client = NilUVClient::new(contract_config, config.private_key.clone()).await?;
+    let validation_client = blacklightClient::new(contract_config, config.private_key.clone()).await?;
 
     // Validate node has sufficient ETH and staked NIL tokens
     validate_node_requirements(

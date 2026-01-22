@@ -25,7 +25,7 @@ pub struct ChainArgs {
     #[arg(long, env = "MANAGER_CONTRACT_ADDRESS")]
     pub manager_contract_address: Option<String>,
 
-    /// NilUV staking contract address
+    /// blacklight staking contract address
     #[arg(long, env = "STAKING_CONTRACT_ADDRESS")]
     pub staking_contract_address: Option<String>,
 

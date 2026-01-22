@@ -2,11 +2,11 @@ services:
   # Anvil - Local Ethereum testnet
   anvil:
     image: ghcr.io/nillionnetwork/blacklight-contracts/anvil:sha-64cd680
-    container_name: niluv-anvil
+    container_name: blacklight-anvil
     ports:
       - "8545:8545"
     networks:
-      - niluv-network
+      - blacklight-network
     command: ["--accounts", "15"] # Define the number of accounts to create
     healthcheck:
       test: [ "CMD-SHELL", "curl -sf -X POST -H 'Content-Type: application/json' --data '{\"jsonrpc\":\"2.0\",\"method\":\"eth_blockNumber\",\"params\":[],\"id\":1}' http://localhost:8545 || exit 1" ]
@@ -21,7 +21,7 @@ services:
       context: .
       dockerfile: docker/Dockerfile
       target: nilcc_simulator
-    container_name: niluv-simulator
+    container_name: blacklight-simulator
     depends_on:
       anvil:
         condition: service_healthy
@@ -35,7 +35,7 @@ services:
       - MANAGER_CONTRACT_ADDRESS=0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9
       - RUST_LOG=info
     networks:
-      - niluv-network
+      - blacklight-network
     restart: unless-stopped
 
   # NilCC Simulator - Submits HTXs to the contract
@@ -44,7 +44,7 @@ services:
       context: .
       dockerfile: docker/Dockerfile
       target: nilcc_simulator
-    container_name: niluv-simulator-2
+    container_name: blacklight-simulator-2
     depends_on:
       anvil:
         condition: service_healthy
@@ -58,31 +58,31 @@ services:
       - MANAGER_CONTRACT_ADDRESS=0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9
       - RUST_LOG=info
     networks:
-      - niluv-network
+      - blacklight-network
     restart: unless-stopped
 
   # Initialize the mnemonic allocation volume with correct permissions
   node-init:
     image: busybox:latest
-    container_name: niluv-node-init
+    container_name: blacklight-node-init
     volumes:
       - node-mnemonic-alloc:/alloc/mnemonic
     command: ["sh", "-c", "chown -R 1000:1000 /alloc/mnemonic"]
     user: root
 
-  # nilUV nodes
+  # blacklight nodes
   node:
     build:
       context: .
       dockerfile: docker/Dockerfile
-      target: niluv_node_test
+      target: blacklight_node_test
     depends_on:
       anvil:
         condition: service_healthy
       node-init:
         condition: service_completed_successfully
     deploy:
-      replicas: 10 # IMPORTANT: Define the number of accounts to create in the anvil container as 1 for the deployer, 2 for the simulators, X for the nodes 
+      replicas: 10 # IMPORTANT: Define the number of accounts to create in the anvil container as 1 for the deployer, 2 for the simulators, X for the nodes
     environment:
       - RPC_URL=http://anvil:8545
       - TOKEN_CONTRACT_ADDRESS=0x5FbDB2315678afecb367f032d93F642f64180aa3
@@ -98,11 +98,11 @@ services:
     volumes:
       - node-mnemonic-alloc:/alloc/mnemonic
     networks:
-      - niluv-network
+      - blacklight-network
     restart: unless-stopped
 
 networks:
-  niluv-network:
+  blacklight-network:
     driver: bridge
 
 volumes:

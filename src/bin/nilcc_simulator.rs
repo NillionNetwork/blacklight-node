@@ -3,9 +3,9 @@ use std::time::Duration;
 
 use anyhow::Result;
 use clap::Parser;
-use niluv::{
+use blacklight::{
     config::{SimulatorCliArgs, SimulatorConfig},
-    contract_client::{ContractConfig, NilUVClient},
+    contract_client::{ContractConfig, blacklightClient},
     types::{NillionHtx, NillionHtxV1},
 };
 use rand::Rng;
@@ -38,7 +38,7 @@ fn load_config() -> Result<SimulatorConfig> {
     Ok(config)
 }
 
-async fn setup_client(config: &SimulatorConfig) -> Result<NilUVClient> {
+async fn setup_client(config: &SimulatorConfig) -> Result<blacklightClient> {
     let contract_config = ContractConfig::new(
         config.rpc_url.clone(),
         config.manager_contract_address,
@@ -46,7 +46,7 @@ async fn setup_client(config: &SimulatorConfig) -> Result<NilUVClient> {
         config.token_contract_address,
     );
 
-    let client = NilUVClient::new(contract_config, config.private_key.clone()).await?;
+    let client = blacklightClient::new(contract_config, config.private_key.clone()).await?;
 
     info!(
         contract = %client.manager.address(),
@@ -71,7 +71,7 @@ fn load_htxs(path: &str) -> Vec<NillionHtxV1> {
 }
 
 async fn run_submission_loop(
-    client: NilUVClient,
+    client: blacklightClient,
     htxs: Vec<NillionHtxV1>,
     slot_ms: u64,
 ) -> Result<()> {
@@ -99,7 +99,7 @@ const MAX_RETRIES: u32 = 3;
 const RETRY_DELAY_MS: u64 = 500;
 
 async fn submit_next_htx(
-    client: &Arc<NilUVClient>,
+    client: &Arc<blacklightClient>,
     htxs: &Arc<Vec<NillionHtxV1>>,
     slot: u64,
 ) -> Result<()> {

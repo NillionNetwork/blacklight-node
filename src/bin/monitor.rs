@@ -9,8 +9,8 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use niluv::config::{MonitorCliArgs, MonitorConfig};
-use niluv::contract_client::{ContractConfig, NilUVClient};
+use blacklight::config::{MonitorCliArgs, MonitorConfig};
+use blacklight::contract_client::{ContractConfig, blacklightClient};
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -214,7 +214,7 @@ async fn main() -> Result<()> {
         config.staking_contract_address,
         config.token_contract_address,
     );
-    let client = NilUVClient::new(contract_config, config.private_key).await?;
+    let client = blacklightClient::new(contract_config, config.private_key).await?;
 
     // Initial data fetch for node count and list
     let node_count = client.manager.node_count().await?.to::<usize>();
@@ -405,7 +405,7 @@ async fn main() -> Result<()> {
     run_monitor(client, initial_state).await
 }
 
-async fn run_monitor(client: NilUVClient, initial_state: MonitorState) -> Result<()> {
+async fn run_monitor(client: blacklightClient, initial_state: MonitorState) -> Result<()> {
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -485,7 +485,7 @@ async fn run_monitor(client: NilUVClient, initial_state: MonitorState) -> Result
 
 async fn run_monitor_loop(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    client: Arc<NilUVClient>,
+    client: Arc<blacklightClient>,
     state: Arc<Mutex<MonitorState>>,
 ) -> Result<()> {
     loop {
@@ -1025,7 +1025,7 @@ async fn run_monitor_loop(
                                                 );
 
                                                 let new_client =
-                                                    NilUVClient::new(config, private_key).await?;
+                                                    blacklightClient::new(config, private_key).await?;
                                                 (
                                                     new_client.staking.clone(),
                                                     new_client.token.clone(),
@@ -1161,7 +1161,7 @@ async fn run_monitor_loop(
                                                 );
 
                                                 let new_client =
-                                                    NilUVClient::new(config, private_key).await?;
+                                                    blacklightClient::new(config, private_key).await?;
                                                 new_client.token
                                             } else {
                                                 // Use the existing client's token contract
@@ -1294,7 +1294,7 @@ async fn run_monitor_loop(
                                                 );
 
                                                 let new_client =
-                                                    NilUVClient::new(config, private_key).await?;
+                                                    blacklightClient::new(config, private_key).await?;
                                                 new_client.send_eth(target_addr, amount_wei).await
                                             } else {
                                                 // Use the existing client
@@ -1360,7 +1360,7 @@ async fn run_monitor_loop(
 
 // WebSocket event listener for HTX submitted events (parallel processing)
 async fn listen_htx_submitted(
-    client: Arc<NilUVClient>,
+    client: Arc<blacklightClient>,
     state: Arc<Mutex<MonitorState>>,
 ) -> Result<()> {
     let manager = Arc::new(client.manager.clone());
@@ -1395,7 +1395,7 @@ async fn listen_htx_submitted(
 
 // WebSocket event listener for HTX assigned events (parallel processing)
 async fn listen_htx_assigned(
-    client: Arc<NilUVClient>,
+    client: Arc<blacklightClient>,
     state: Arc<Mutex<MonitorState>>,
 ) -> Result<()> {
     let manager = Arc::new(client.manager.clone());
@@ -1443,7 +1443,7 @@ async fn listen_htx_assigned(
 
 // WebSocket event listener for HTX responded events (parallel processing)
 async fn listen_htx_responded(
-    client: Arc<NilUVClient>,
+    client: Arc<blacklightClient>,
     state: Arc<Mutex<MonitorState>>,
 ) -> Result<()> {
     let manager = Arc::new(client.manager.clone());
@@ -1547,7 +1547,7 @@ fn render_header(f: &mut Frame, area: Rect, state: &MonitorState) {
     let header = Paragraph::new(Line::from(tab_spans)).block(
         Block::default()
             .borders(Borders::ALL)
-            .title("NilUV Contract Monitor")
+            .title("blacklight Contract Monitor")
             .title_style(
                 Style::default()
                     .fg(Color::Cyan)
@@ -2514,7 +2514,7 @@ fn render_transfer_eth(f: &mut Frame, area: Rect, state: &MonitorState) {
 // WebSocket event listener for Transfer events (parallel processing)
 // Refreshes token balances for all system addresses (nodes and operators)
 async fn listen_token_transfers(
-    client: Arc<NilUVClient>,
+    client: Arc<blacklightClient>,
     state: Arc<Mutex<MonitorState>>,
 ) -> Result<()> {
     let token_arc = Arc::new(client.token.clone());
@@ -2582,7 +2582,7 @@ const VALIDATION_LOOKBACK_BLOCKS: u64 = 100;
 
 /// Reload HTX tracking data and validation statuses from chain logs (manual fetch)
 async fn reload_htx_data(
-    client: &NilUVClient,
+    client: &blacklightClient,
 ) -> Result<(
     HashMap<String, HTXTransaction>,
     Vec<HTXValidationStatus>,

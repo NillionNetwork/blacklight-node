@@ -48,7 +48,7 @@ IDX="$(cat "${ID_FILE}")"
 PRIVATE_KEY="$(cast wallet private-key --mnemonic "${MNEMONIC}" --mnemonic-index "${IDX}")"
 export PRIVATE_KEY
 
-# Optional: exported for logging/visibility (niluv_node itself only needs PRIVATE_KEY)
+# Optional: exported for logging/visibility (blacklight_node itself only needs PRIVATE_KEY)
 PUBLIC_KEY="$(cast wallet address --mnemonic "${MNEMONIC}" --mnemonic-index "${IDX}")"
 export PUBLIC_KEY
 
