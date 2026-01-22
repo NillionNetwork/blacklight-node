@@ -20,6 +20,7 @@ jobs:
       matrix:
         target:
           - blacklight_node
+          - keeper
     steps:
       - name: Checkout
         uses: actions/checkout@v4

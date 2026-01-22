@@ -1,5 +1,5 @@
 # Multi-stage Dockerfile for blacklight project with cross-compilation support
-# Builds all binaries: blacklight_node, nilcc_simulator, monitor
+# Builds all binaries: blacklight_node, nilcc_simulator, monitor, keeper
 
 FROM --platform=$BUILDPLATFORM rust:1.91-slim-trixie AS builder
 
@@ -79,7 +79,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     mkdir -p /out/bin && \
     cp target/$RUST_TARGET/release/blacklight_node /out/bin/ && \
     cp target/$RUST_TARGET/release/nilcc_simulator /out/bin/ && \
-    cp target/$RUST_TARGET/release/monitor /out/bin/
+    cp target/$RUST_TARGET/release/monitor /out/bin/ && \
+    cp target/$RUST_TARGET/release/keeper /out/bin/
 
 
 FROM --platform=$TARGETPLATFORM debian:bookworm-slim AS base_release
@@ -116,4 +117,9 @@ ENTRYPOINT ["/usr/local/bin/nilcc_simulator"]
 FROM base_release AS monitor
 COPY --from=builder /out/bin/monitor /usr/local/bin/monitor
 ENTRYPOINT ["/usr/local/bin/monitor"]
+
+# Runtime stage for keeper
+FROM base_release AS keeper
+COPY --from=builder /out/bin/keeper /usr/local/bin/keeper
+ENTRYPOINT ["/usr/local/bin/keeper"]
 
