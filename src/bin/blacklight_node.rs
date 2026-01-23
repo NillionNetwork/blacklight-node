@@ -419,11 +419,12 @@ async fn deactivate_node_on_shutdown(
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize tracing with filters to reduce noise from dependencies
-    let filter = EnvFilter::from_default_env()
-        .add_directive(tracing::Level::INFO.into())
+    let filter = EnvFilter::builder()
+        .with_default_directive(tracing::Level::ERROR.into())
+        .with_default_directive("attestation_verification=warn".parse()?)
+        .from_env_lossy()
         // Silence noisy attestation verification modules
         .add_directive("nilcc_artifacts=warn".parse()?)
-        .add_directive("attestation_verification=warn".parse()?)
         // Silence Alloy framework noise
         .add_directive("alloy=warn".parse()?)
         .add_directive("alloy_pubsub=error".parse()?)

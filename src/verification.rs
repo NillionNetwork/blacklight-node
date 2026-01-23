@@ -1,17 +1,24 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::contract_client::heartbeat_manager::Verdict;
 use crate::types::{NillionHtx, PhalaHtx};
 use anyhow::Context;
+use async_trait::async_trait;
+use attestation_verification::nilcc_artifacts::downloader::DownloadError;
+use attestation_verification::nilcc_artifacts::Artifacts;
+use attestation_verification::report::{
+    DefaultReportArtifactsDownloader, ReportArtifactsDownloader,
+};
 use attestation_verification::sev::firmware::guest::AttestationReport;
-use attestation_verification::VerificationError as ExtVerificationError;
 use attestation_verification::{
     DefaultCertificateFetcher, MeasurementGenerator, ReportBundle, ReportFetcher, ReportVerifier,
 };
+use attestation_verification::{VerificationError as ExtVerificationError, VmType};
 use dcap_qvl::collateral::get_collateral_and_verify;
 use reqwest::Client;
 use sha2::{Digest, Sha256};
+use tokio::sync::Mutex;
 
 const ARTIFACTS_URL: &str = "https://nilcc.s3.eu-west-1.amazonaws.com";
 
@@ -122,11 +129,16 @@ pub struct HtxVerifier {
     report_fetcher: Arc<ReportFetcher>,
     report_verifier: Arc<ReportVerifier>,
     artifact_cache: PathBuf,
+    verify_lock: Arc<Mutex<()>>,
 }
 
 impl HtxVerifier {
     pub fn new(artifact_cache: PathBuf, cert_cache: PathBuf) -> anyhow::Result<Self> {
-        let report_fetcher = ReportFetcher::new(artifact_cache.clone(), ARTIFACTS_URL.to_string());
+        let report_fetcher = ReportFetcher::new(
+            artifact_cache.clone(),
+            ARTIFACTS_URL.to_string(),
+            Box::new(LockedDownloader::default()),
+        );
         let fetcher =
             DefaultCertificateFetcher::new(cert_cache).context("Creating certificate fetcher")?;
         let report_verifier = ReportVerifier::new(Arc::new(fetcher));
@@ -134,6 +146,7 @@ impl HtxVerifier {
             report_fetcher: Arc::new(report_fetcher),
             report_verifier: Arc::new(report_verifier),
             artifact_cache,
+            verify_lock: Default::default(),
         })
     }
 
@@ -155,7 +168,7 @@ impl HtxVerifier {
             .expect("Failed to build HTTP client");
 
         let report = self
-            .verify_report(
+            .verify_nillion_report(
                 &htx.workload_measurement.url,
                 htx.workload_measurement.docker_compose_hash,
             )
@@ -206,7 +219,7 @@ impl HtxVerifier {
         }
     }
 
-    async fn verify_report(
+    async fn verify_nillion_report(
         &self,
         report_url: &str,
         docker_compose_hash: [u8; 32],
@@ -234,6 +247,8 @@ impl HtxVerifier {
         )
         .generate()
         .map_err(|e| VerificationError::MeasurementHash(e.to_string()))?;
+        // Hold the lock so we prevent writing to the filesystem twice when fetching/caching certs
+        let _guard = self.verify_lock.lock().await;
         self.report_verifier
             .verify_report(&bundle.report, &measurement)
             .await
@@ -306,6 +321,26 @@ impl HtxVerifier {
             })?;
 
         Ok(())
+    }
+}
+
+#[derive(Default)]
+struct LockedDownloader(Mutex<()>);
+
+#[async_trait]
+impl ReportArtifactsDownloader for LockedDownloader {
+    async fn download(
+        &self,
+        nilcc_version: String,
+        vm_type: VmType,
+        artifacts_url: String,
+        download_path: &Path,
+    ) -> Result<Artifacts, DownloadError> {
+        let _guard = self.0.lock().await;
+        let downloader = DefaultReportArtifactsDownloader;
+        downloader
+            .download(nilcc_version, vm_type, artifacts_url, download_path)
+            .await
     }
 }
 
