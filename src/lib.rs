@@ -3,6 +3,7 @@ pub mod types;
 
 // Utilities
 pub mod config;
+pub mod retry;
 
 pub mod state;
 pub mod wallet;

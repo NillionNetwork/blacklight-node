@@ -10,6 +10,7 @@ use blacklight::{
         heartbeat_manager::{RoundStartedEvent, Verdict},
         BlacklightClient, ContractConfig,
     },
+    retry::RetryConfig,
     types::Htx,
     verification::HtxVerifier,
 };
@@ -101,11 +102,15 @@ async fn process_htx_assignment(
         Ok(htx) => match htx {
             Htx::Nillion(htx) => {
                 info!(htx_id = ?htx_id, "Detected nilCC HTX");
-                verifier.verify_nillion_htx(&htx).await
+                verifier
+                    .verify_nillion_htx_with_retry(&htx, RetryConfig::default())
+                    .await
             }
             Htx::Phala(htx) => {
                 info!(htx_id = ?htx_id, "Detected Phala HTX");
-                verifier.verify_phala_htx(&htx).await
+                verifier
+                    .verify_phala_htx_with_retry(&htx, RetryConfig::default())
+                    .await
             }
         },
         Err(e) => {
