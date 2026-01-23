@@ -42,7 +42,7 @@ pub struct CliArgs {
     pub private_key: String,
 
     /// ETH value (wei) to forward for L1 -> L2 bridge messages
-    #[arg(long, env = "L1_BRIDGE_VALUE_WEI")]
+    #[arg(long, env = "L1_BRIDGE_VALUE_WEI", default_value_t = Default::default())]
     pub l1_bridge_value_wei: U256,
 
     /// Lookback blocks for historical event queries
