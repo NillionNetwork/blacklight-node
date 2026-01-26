@@ -5,6 +5,7 @@ use anyhow::{bail, Result};
 use blacklight::config::consts::{INITIAL_RECONNECT_DELAY_SECS, MAX_RECONNECT_DELAY_SECS};
 use blacklight::config::{KeeperCliArgs, KeeperConfig};
 use blacklight::contract_client::common::errors::decode_any_error;
+use blacklight::contract_client::common::overestimate_gas;
 use blacklight::contract_client::heartbeat_manager::{
     HeartbeatEnqueuedEvent, RewardDistributionAbandonedEvent, RewardsDistributedEvent,
     RoundFinalizedEvent, RoundStartedEvent, SlashingCallbackFailedEvent,
@@ -1092,7 +1093,8 @@ async fn try_distribute_rewards(
         l2_client
             .heartbeat_manager()
             .distributeRewards(key.heartbeat_key, key.round, voters);
-    match call.send().await {
+    let gas_with_buffer = overestimate_gas(&call).await?;
+    match call.gas(gas_with_buffer).send().await {
         Ok(pending) => {
             let receipt = pending.get_receipt().await?;
             info!(
