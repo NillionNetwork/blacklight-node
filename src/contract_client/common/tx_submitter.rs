@@ -42,12 +42,14 @@ impl<S: SolInterface + Debug + Clone> TransactionSubmitter<S> {
         };
 
         let provider = call.provider.clone();
-        let gas_price = provider.get_gas_price().await?;
+        let estimate = provider.estimate_eip1559_fees().await?;
 
-        let priority_fee = 0u128;
+        // Our L2 requires a minimum priority fee of 1 wei
+        let priority_fee = 1u128;
         let call = call
             .max_priority_fee_per_gas(priority_fee)
-            .max_fee_per_gas(gas_price);
+            .max_fee_per_gas(estimate.max_fee_per_gas);
+
         let estimated_gas = call.clone().estimate_gas().await?;
 
         // Acquire lock and send
@@ -61,7 +63,15 @@ impl<S: SolInterface + Debug + Clone> TransactionSubmitter<S> {
         let receipt = pending.get_receipt().await?;
         let tx_hash = receipt.transaction_hash;
 
-        Self::log_fee_details(&provider, method, tx_hash, &receipt, estimated_gas).await;
+        Self::log_fee_details(
+            &provider,
+            method,
+            tx_hash,
+            &receipt,
+            estimated_gas,
+            estimate.max_priority_fee_per_gas,
+        )
+        .await;
 
         // Validate success
         if !receipt.status() {
@@ -99,6 +109,7 @@ impl<S: SolInterface + Debug + Clone> TransactionSubmitter<S> {
         tx_hash: B256,
         receipt: &TransactionReceipt,
         estimated_gas: u64,
+        estimated_priority_fee: u128,
     ) {
         // Fetch actual transaction to get the real fee parameters
         let (tx_max_fee, tx_max_priority_fee) =
@@ -121,8 +132,9 @@ impl<S: SolInterface + Debug + Clone> TransactionSubmitter<S> {
         };
 
         let total_cost = receipt.effective_gas_price * receipt.gas_used as u128;
-
-        if actual_priority_fee.unwrap_or(0) > 0 {
+        let actual_priority_fee = actual_priority_fee.unwrap_or(0);
+        if actual_priority_fee < (estimated_priority_fee as u128).saturating_sub(1_000_000_000u128)
+        {
             warn!(
                 method = %method,
                 tx_hash = ?tx_hash,
@@ -133,7 +145,8 @@ impl<S: SolInterface + Debug + Clone> TransactionSubmitter<S> {
                 tx_max_fee = ?tx_max_fee,
                 tx_max_priority_fee = ?tx_max_priority_fee,
                 actual_priority_fee = ?actual_priority_fee,
-                "💰 transaction gas details (priority fee detected)"
+                estimated_priority_fee = ?estimated_priority_fee,
+                "💰 transaction gas details (priority fee may be too low)"
             );
         } else {
             info!(
@@ -146,6 +159,7 @@ impl<S: SolInterface + Debug + Clone> TransactionSubmitter<S> {
                 tx_max_fee = ?tx_max_fee,
                 tx_max_priority_fee = ?tx_max_priority_fee,
                 actual_priority_fee = ?actual_priority_fee,
+                estimated_priority_fee = ?estimated_priority_fee,
                 "💰 transaction gas details"
             );
         }
