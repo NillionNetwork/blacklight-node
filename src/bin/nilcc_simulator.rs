@@ -116,7 +116,7 @@ async fn submit_next_htx(
         // Randomly select an HTX and make it unique by appending a random nonce to workload_id
         // This prevents "HTX already exists" errors when multiple submissions land in the same block
         // Scope rng to drop it before await (ThreadRng is not Send)
-        let htx: Htx = {
+        let htx = {
             let mut rng = rand::rng();
             let idx = rng.random_range(0..htxs.len());
             let nonce: u128 = rng.random_range(0..u128::MAX); // 128-bit random number
@@ -130,8 +130,7 @@ async fn submit_next_htx(
                 }
             }
             htx
-        }
-        .into();
+        };
 
         if attempt == 0 {
             info!(slot, node_count = %node_count, "Submitting HTX");
@@ -139,7 +138,7 @@ async fn submit_next_htx(
             info!(slot, attempt, "Retrying HTX submission");
         }
 
-        match client.manager.submit_htx(&htx.into()).await {
+        match client.manager.submit_htx(&htx).await {
             Ok(tx_hash) => {
                 info!(slot, tx_hash = ?tx_hash, "HTX submitted");
                 return Ok(());

@@ -1,26 +1,23 @@
+use crate::contract_client::common::event_helper::{
+    listen_events, listen_events_filtered, BlockRange,
+};
 use crate::{
     config::consts::DEFAULT_LOOKBACK_BLOCKS,
     contract_client::{
-        common::tx_submitter::TransactionSubmitter,
+        common::{overestimate_gas, tx_submitter::TransactionSubmitter},
         heartbeat_manager::HearbeatManager::HearbeatManagerInstance,
     },
     types::Htx,
 };
 use alloy::{
-    contract::{CallBuilder, CallDecoder},
     primitives::{keccak256, Address, B256, U256},
     providers::Provider,
     sol,
     sol_types::SolValue,
 };
+use anyhow::{anyhow, bail, Context, Result};
 use std::sync::Arc;
 use tokio::sync::Mutex;
-
-use crate::contract_client::common::errors::decode_any_error;
-use crate::contract_client::common::event_helper::{
-    listen_events, listen_events_filtered, BlockRange,
-};
-use anyhow::{anyhow, bail, Context, Result};
 
 sol! {
     interface ISlashingPolicy {
@@ -164,7 +161,7 @@ impl<P: Provider + Clone> HeartbeatManagerClient<P> {
         let snapshot_id = snapshot_id.saturating_sub(1);
         let raw_htx = alloy::primitives::Bytes::try_from(htx)?;
         let call = self.contract.submitHeartbeat(raw_htx, snapshot_id);
-        let gas_with_buffer = Self::overestimate_gas(&call).await?;
+        let gas_with_buffer = overestimate_gas(&call).await?;
         self.submitter
             .with_gas_limit(gas_with_buffer)
             .invoke("submitHeartbeat", call)
@@ -188,7 +185,7 @@ impl<P: Provider + Clone> HeartbeatManagerClient<P> {
         let call = self
             .contract
             .submitVerdict(event.heartbeatKey, verdict, proofs);
-        let gas_with_buffer = Self::overestimate_gas(&call).await?;
+        let gas_with_buffer = overestimate_gas(&call).await?;
         self.submitter
             .with_gas_limit(gas_with_buffer)
             .invoke("submitVerdict", call)
@@ -477,16 +474,6 @@ impl<P: Provider + Clone> HeartbeatManagerClient<P> {
         }
 
         Ok(proof)
-    }
-
-    async fn overestimate_gas<D: CallDecoder>(call: &CallBuilder<&P, D>) -> anyhow::Result<u64> {
-        // Estimate gas and add a 50% buffer
-        let estimated_gas = call.estimate_gas().await.map_err(|e| {
-            let decoded = decode_any_error(&e);
-            anyhow!("failed to estimate gas: {decoded}")
-        })?;
-        let gas_with_buffer = estimated_gas.saturating_add(estimated_gas / 2);
-        Ok(gas_with_buffer)
     }
 }
 
