@@ -7,6 +7,8 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+use crate::retry::{retry, IntoAnyhow, RetryConfig};
+
 #[derive(Clone)]
 pub(crate) struct TransactionSubmitter<S> {
     tx_lock: Arc<Mutex<()>>,
@@ -67,6 +69,34 @@ impl<S: SolInterface + Debug + Clone> TransactionSubmitter<S> {
         }
 
         Ok(tx_hash)
+    }
+
+    /// Invoke a contract method with automatic retry on failure.
+    ///
+    /// This wraps `invoke()` with retry logic, using the provided configuration.
+    /// All errors from `invoke()` are considered retryable.
+    ///
+    /// # Arguments
+    /// * `method` - Method name for logging
+    /// * `config` - Retry configuration
+    /// * `call_fn` - Function that produces the CallBuilder (called on each retry)
+    pub(crate) async fn invoke_with_retry<P, D, F>(
+        &self,
+        method: &str,
+        config: RetryConfig,
+        call_fn: F,
+    ) -> Result<B256>
+    where
+        P: Provider + Clone,
+        D: alloy::contract::CallDecoder + Clone,
+        F: Fn() -> CallBuilder<P, D>,
+    {
+        retry(config, method, || async {
+            let call = call_fn();
+            self.invoke(method, call).await
+        })
+        .await
+        .into_anyhow()
     }
 
     pub(crate) fn with_gas_limit(&self, limit: u64) -> Self {

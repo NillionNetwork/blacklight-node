@@ -60,3 +60,17 @@ const fn eth_to_wei(eth: f64) -> U256 {
 /// Minimum ETH balance required to continue operating
 /// Node will initiate shutdown if balance falls below this threshold
 pub const MIN_ETH_BALANCE: U256 = eth_to_wei(0.00001);
+
+// =============================================================================
+// Retry Configuration
+// =============================================================================
+
+/// Default delay between retry attempts in seconds
+pub const DEFAULT_RETRY_DELAY_SECS: u64 = 30;
+
+/// Default delay between retry attempts for read operations in seconds
+/// Shorter than write operations since reads are fast and idempotent
+pub const DEFAULT_READ_RETRY_DELAY_SECS: u64 = 5;
+
+/// Default maximum number of retry attempts
+pub const DEFAULT_MAX_RETRY_ATTEMPTS: u32 = 3;

@@ -9,6 +9,7 @@ use tokio::sync::Mutex;
 use crate::contract_client::common::{
     event_helper::listen_events, tx_submitter::TransactionSubmitter,
 };
+use crate::retry::{retry, RetryConfig};
 use anyhow::Result;
 
 // Generate type-safe contract bindings from ABI
@@ -67,32 +68,74 @@ impl<P: Provider + Clone> NilTokenClient<P> {
 
     /// Returns the name of the token
     pub async fn name(&self) -> Result<String> {
-        Ok(self.contract.name().call().await?)
+        retry(RetryConfig::for_reads(), "name", || async {
+            self.contract
+                .name()
+                .call()
+                .await
+                .map_err(|e| anyhow::anyhow!("{e}"))
+        })
+        .await
     }
 
     /// Returns the symbol of the token
     pub async fn symbol(&self) -> Result<String> {
-        Ok(self.contract.symbol().call().await?)
+        retry(RetryConfig::for_reads(), "symbol", || async {
+            self.contract
+                .symbol()
+                .call()
+                .await
+                .map_err(|e| anyhow::anyhow!("{e}"))
+        })
+        .await
     }
 
     /// Returns the number of decimals the token uses
     pub async fn decimals(&self) -> Result<u8> {
-        Ok(self.contract.decimals().call().await?)
+        retry(RetryConfig::for_reads(), "decimals", || async {
+            self.contract
+                .decimals()
+                .call()
+                .await
+                .map_err(|e| anyhow::anyhow!("{e}"))
+        })
+        .await
     }
 
     /// Returns the total token supply
     pub async fn total_supply(&self) -> Result<U256> {
-        Ok(self.contract.totalSupply().call().await?)
+        retry(RetryConfig::for_reads(), "totalSupply", || async {
+            self.contract
+                .totalSupply()
+                .call()
+                .await
+                .map_err(|e| anyhow::anyhow!("{e}"))
+        })
+        .await
     }
 
     /// Returns the token balance of an account
     pub async fn balance_of(&self, account: Address) -> Result<U256> {
-        Ok(self.contract.balanceOf(account).call().await?)
+        retry(RetryConfig::for_reads(), "balanceOf", || async {
+            self.contract
+                .balanceOf(account)
+                .call()
+                .await
+                .map_err(|e| anyhow::anyhow!("{e}"))
+        })
+        .await
     }
 
     /// Returns the remaining number of tokens that spender is allowed to spend on behalf of owner
     pub async fn allowance(&self, owner: Address, spender: Address) -> Result<U256> {
-        Ok(self.contract.allowance(owner, spender).call().await?)
+        retry(RetryConfig::for_reads(), "allowance", || async {
+            self.contract
+                .allowance(owner, spender)
+                .call()
+                .await
+                .map_err(|e| anyhow::anyhow!("{e}"))
+        })
+        .await
     }
 
     // ------------------------------------------------------------------------
@@ -101,20 +144,29 @@ impl<P: Provider + Clone> NilTokenClient<P> {
 
     /// Transfers tokens to a recipient
     pub async fn transfer(&self, to: Address, amount: U256) -> Result<B256> {
-        let call = self.contract.transfer(to, amount);
-        self.submitter.invoke("transfer", call).await
+        self.submitter
+            .invoke_with_retry("transfer", RetryConfig::default(), || {
+                self.contract.transfer(to, amount)
+            })
+            .await
     }
 
     /// Approves a spender to spend tokens on behalf of the caller
     pub async fn approve(&self, spender: Address, amount: U256) -> Result<B256> {
-        let call = self.contract.approve(spender, amount);
-        self.submitter.invoke("approve", call).await
+        self.submitter
+            .invoke_with_retry("approve", RetryConfig::default(), || {
+                self.contract.approve(spender, amount)
+            })
+            .await
     }
 
     /// Mints new tokens (requires owner privileges)
     pub async fn mint(&self, to: Address, amount: U256) -> Result<B256> {
-        let call = self.contract.mint(to, amount);
-        self.submitter.invoke("mint", call).await
+        self.submitter
+            .invoke_with_retry("mint", RetryConfig::default(), || {
+                self.contract.mint(to, amount)
+            })
+            .await
     }
 
     // ------------------------------------------------------------------------

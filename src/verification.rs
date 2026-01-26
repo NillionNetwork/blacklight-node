@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::contract_client::heartbeat_manager::Verdict;
+use crate::retry::{retry_with_classifier, RetryConfig};
 use crate::types::{NillionHtx, PhalaHtx};
 use anyhow::Context;
 use async_trait::async_trait;
@@ -321,6 +322,50 @@ impl HtxVerifier {
             })?;
 
         Ok(())
+    }
+
+    /// Verify a Nillion HTX with automatic retry for operational failures.
+    ///
+    /// Only retries errors classified as "inconclusive" (network/operational failures).
+    /// Cryptographic verification failures are not retried.
+    ///
+    /// # Arguments
+    /// * `htx` - The Nillion HTX to verify
+    /// * `config` - Retry configuration
+    pub async fn verify_nillion_htx_with_retry(
+        &self,
+        htx: &NillionHtx,
+        config: RetryConfig,
+    ) -> Result<(), VerificationError> {
+        retry_with_classifier(
+            config,
+            "verify_nillion_htx",
+            || async { self.verify_nillion_htx(htx).await },
+            |err| err.is_inconclusive(),
+        )
+        .await
+    }
+
+    /// Verify a Phala HTX with automatic retry for operational failures.
+    ///
+    /// Only retries errors classified as "inconclusive" (network/operational failures).
+    /// Cryptographic verification failures are not retried.
+    ///
+    /// # Arguments
+    /// * `htx` - The Phala HTX to verify
+    /// * `config` - Retry configuration
+    pub async fn verify_phala_htx_with_retry(
+        &self,
+        htx: &PhalaHtx,
+        config: RetryConfig,
+    ) -> Result<(), VerificationError> {
+        retry_with_classifier(
+            config,
+            "verify_phala_htx",
+            || async { self.verify_phala_htx(htx).await },
+            |err| err.is_inconclusive(),
+        )
+        .await
     }
 }
 

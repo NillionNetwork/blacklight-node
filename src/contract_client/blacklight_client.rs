@@ -1,6 +1,7 @@
 use crate::contract_client::{
     ContractConfig, HeartbeatManagerClient, NilTokenClient, StakingOperatorsClient,
 };
+use crate::retry::{retry, RetryConfig};
 
 use alloy::{
     network::{Ethereum, EthereumWallet, NetworkWallet},
@@ -68,12 +69,24 @@ impl BlacklightClient {
     /// Get the balance of the wallet
     pub async fn get_balance(&self) -> anyhow::Result<U256> {
         let address = self.signer_address();
-        Ok(self.provider.get_balance(address).await?)
+        retry(RetryConfig::for_reads(), "getBalance", || async {
+            self.provider
+                .get_balance(address)
+                .await
+                .map_err(|e| anyhow::anyhow!("{e}"))
+        })
+        .await
     }
 
     /// Get the balance of a specific address
     pub async fn get_balance_of(&self, address: Address) -> anyhow::Result<U256> {
-        Ok(self.provider.get_balance(address).await?)
+        retry(RetryConfig::for_reads(), "getBalance", || async {
+            self.provider
+                .get_balance(address)
+                .await
+                .map_err(|e| anyhow::anyhow!("{e}"))
+        })
+        .await
     }
 
     /// Send ETH to an address

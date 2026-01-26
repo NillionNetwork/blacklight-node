@@ -8,6 +8,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::contract_client::common::tx_submitter::TransactionSubmitter;
+use crate::retry::{retry, RetryConfig};
 use anyhow::Result;
 // Generate type-safe contract bindings from ABI
 sol!(
@@ -84,26 +85,50 @@ impl<P: Provider + Clone> StakingOperatorsClient<P> {
 
     /// Returns the address of the staking token
     pub async fn staking_token(&self) -> Result<Address> {
-        // Solidity: function stakingToken() external view returns (address)
-        Ok(self.contract.stakingToken().call().await?)
+        retry(RetryConfig::for_reads(), "stakingToken", || async {
+            self.contract
+                .stakingToken()
+                .call()
+                .await
+                .map_err(|e| anyhow::anyhow!("{e}"))
+        })
+        .await
     }
 
     /// Returns the total stake amount for a specific operator
     pub async fn stake_of(&self, operator: Address) -> Result<U256> {
-        // Solidity: function stakeOf(address) external view returns (uint256)
-        Ok(self.contract.stakeOf(operator).call().await?)
+        retry(RetryConfig::for_reads(), "stakeOf", || async {
+            self.contract
+                .stakeOf(operator)
+                .call()
+                .await
+                .map_err(|e| anyhow::anyhow!("{e}"))
+        })
+        .await
     }
 
     /// Checks if an operator is active
     pub async fn is_active_operator(&self, operator: Address) -> Result<bool> {
-        // Solidity: function isActiveOperator(address) external view returns (bool)
-        Ok(self.contract.isActiveOperator(operator).call().await?)
+        retry(RetryConfig::for_reads(), "isActiveOperator", || async {
+            self.contract
+                .isActiveOperator(operator)
+                .call()
+                .await
+                .map_err(|e| anyhow::anyhow!("{e}"))
+        })
+        .await
     }
 
     /// Returns a list of all currently active operators
     pub async fn get_active_operators(&self) -> Result<Vec<Address>> {
-        // Solidity: function getActiveOperators() external view returns (address[])
-        Ok(self.contract.getActiveOperators().call().await?)
+        retry(RetryConfig::for_reads(), "getActiveOperators", || async {
+            self.contract
+                .getActiveOperators()
+                .call()
+                .await
+                .map_err(|e| anyhow::anyhow!("{e}"))
+        })
+        .await
     }
 
     /// Returns a list of all registered operators (active and inactive)
@@ -145,20 +170,29 @@ impl<P: Provider + Clone> StakingOperatorsClient<P> {
 
     /// Stakes tokens to a specific operator
     pub async fn stake_to(&self, operator: Address, amount: U256) -> Result<B256> {
-        let call = self.contract.stakeTo(operator, amount);
-        self.submitter.invoke("stakeTo", call).await
+        self.submitter
+            .invoke_with_retry("stakeTo", RetryConfig::default(), || {
+                self.contract.stakeTo(operator, amount)
+            })
+            .await
     }
 
     /// Requests to unstake tokens from an operator
     pub async fn request_unstake(&self, operator: Address, amount: U256) -> Result<B256> {
-        let call = self.contract.requestUnstake(operator, amount);
-        self.submitter.invoke("requestUnstake", call).await
+        self.submitter
+            .invoke_with_retry("requestUnstake", RetryConfig::default(), || {
+                self.contract.requestUnstake(operator, amount)
+            })
+            .await
     }
 
     /// Withdraws unstaked tokens after the unbonding period has passed
     pub async fn withdraw_unstaked(&self, operator: Address) -> Result<B256> {
-        let call = self.contract.withdrawUnstaked(operator);
-        self.submitter.invoke("withdrawUnstaked", call).await
+        self.submitter
+            .invoke_with_retry("withdrawUnstaked", RetryConfig::default(), || {
+                self.contract.withdrawUnstaked(operator)
+            })
+            .await
     }
 
     // ------------------------------------------------------------------------
@@ -167,13 +201,19 @@ impl<P: Provider + Clone> StakingOperatorsClient<P> {
 
     /// Registers the caller as an operator or updates their metadata
     pub async fn register_operator(&self, metadata_uri: String) -> Result<B256> {
-        let call = self.contract.registerOperator(metadata_uri);
-        self.submitter.invoke("registerOperator", call).await
+        self.submitter
+            .invoke_with_retry("registerOperator", RetryConfig::default(), || {
+                self.contract.registerOperator(metadata_uri.clone())
+            })
+            .await
     }
 
     /// Deactivates the caller as an operator
     pub async fn deactivate_operator(&self) -> Result<B256> {
-        let call = self.contract.deactivateOperator();
-        self.submitter.invoke("deactivateOperator", call).await
+        self.submitter
+            .invoke_with_retry("deactivateOperator", RetryConfig::default(), || {
+                self.contract.deactivateOperator()
+            })
+            .await
     }
 }
