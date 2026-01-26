@@ -5,7 +5,7 @@ use anyhow::Result;
 use blacklight::{
     config::{SimulatorCliArgs, SimulatorConfig},
     contract_client::{BlacklightClient, ContractConfig},
-    types::{NillionHtx, NillionHtxV1},
+    types::{Htx, NillionHtx, PhalaHtx},
 };
 use clap::Parser;
 use rand::Rng;
@@ -19,7 +19,7 @@ async fn main() -> Result<()> {
 
     let config = load_config()?;
     let client = setup_client(&config).await?;
-    let htxs = load_htxs(&config.htxs_path);
+    let htxs: Vec<Htx> = load_htxs(&config.htxs_path);
 
     run_submission_loop(client, htxs, config.slot_ms).await
 }
@@ -57,9 +57,9 @@ async fn setup_client(config: &SimulatorConfig) -> Result<BlacklightClient> {
     Ok(client)
 }
 
-fn load_htxs(path: &str) -> Vec<NillionHtxV1> {
+fn load_htxs(path: &str) -> Vec<Htx> {
     let htxs_json = std::fs::read_to_string(path).unwrap_or_else(|_| "[]".to_string());
-    let htxs: Vec<NillionHtxV1> = serde_json::from_str(&htxs_json).unwrap_or_default();
+    let htxs: Vec<Htx> = serde_json::from_str(&htxs_json).unwrap_or_default();
 
     if htxs.is_empty() {
         warn!(path = %path, "No HTXs loaded");
@@ -70,11 +70,7 @@ fn load_htxs(path: &str) -> Vec<NillionHtxV1> {
     htxs
 }
 
-async fn run_submission_loop(
-    client: BlacklightClient,
-    htxs: Vec<NillionHtxV1>,
-    slot_ms: u64,
-) -> Result<()> {
+async fn run_submission_loop(client: BlacklightClient, htxs: Vec<Htx>, slot_ms: u64) -> Result<()> {
     let mut ticker = interval(Duration::from_millis(slot_ms));
     let mut slot = 0u64;
     let client = Arc::new(client);
@@ -100,7 +96,7 @@ const RETRY_DELAY_MS: u64 = 500;
 
 async fn submit_next_htx(
     client: &Arc<BlacklightClient>,
-    htxs: &Arc<Vec<NillionHtxV1>>,
+    htxs: &Arc<Vec<Htx>>,
     slot: u64,
 ) -> Result<()> {
     if htxs.is_empty() {
@@ -120,14 +116,22 @@ async fn submit_next_htx(
         // Randomly select an HTX and make it unique by appending a random nonce to workload_id
         // This prevents "HTX already exists" errors when multiple submissions land in the same block
         // Scope rng to drop it before await (ThreadRng is not Send)
-        let htx = {
+        let htx: Htx = {
             let mut rng = rand::rng();
             let idx = rng.random_range(0..htxs.len());
             let nonce: u128 = rng.random_range(0..u128::MAX); // 128-bit random number
             let mut htx = htxs[idx].clone();
-            htx.workload_id.current = format!("{}-{:x}", htx.workload_id.current, nonce);
+            match &mut htx {
+                Htx::Nillion(NillionHtx::V1(htx)) => {
+                    htx.workload_id.current = format!("{}-{:x}", htx.workload_id.current, nonce);
+                }
+                Htx::Phala(PhalaHtx::V1(htx)) => {
+                    htx.app_compose = format!("{}-{:x}", htx.app_compose, nonce);
+                }
+            }
             htx
-        };
+        }
+        .into();
 
         if attempt == 0 {
             info!(slot, node_count = %node_count, "Submitting HTX");
@@ -135,7 +139,7 @@ async fn submit_next_htx(
             info!(slot, attempt, "Retrying HTX submission");
         }
 
-        match client.manager.submit_htx(&NillionHtx::V1(htx).into()).await {
+        match client.manager.submit_htx(&htx.into()).await {
             Ok(tx_hash) => {
                 info!(slot, tx_hash = ?tx_hash, "HTX submitted");
                 return Ok(());
