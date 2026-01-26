@@ -878,7 +878,7 @@ async fn process_escalations(
 
     for (heartbeat_key, round, deadline, raw_htx) in candidates {
         if let Some(now) = tick.now {
-            if now < deadline {
+            if now <= deadline {
                 continue;
             }
         } else {
