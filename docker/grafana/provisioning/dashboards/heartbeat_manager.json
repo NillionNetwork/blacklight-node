@@ -790,7 +790,7 @@
       "title": "Operator Details",
       "transformations": [
         { "id": "merge", "options": {} },
-        { "id": "organize", "options": { "excludeByName": { "Time": true }, "indexByName": {}, "renameByName": { "Value #A": "Stake (NIL)", "Value #B": "ETH Balance", "Value #C": "Active", "operator": "Operator" } } }
+        { "id": "organize", "options": { "excludeByName": { "Time": true, "instance": true, "job": true, "__name__": true }, "indexByName": {}, "renameByName": { "Value #A": "Stake (NIL)", "Value #B": "ETH Balance", "Value #C": "Active", "operator": "Operator" } } }
       ],
       "type": "table"
     },
