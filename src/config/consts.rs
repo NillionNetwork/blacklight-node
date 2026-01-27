@@ -41,7 +41,7 @@ pub const MAX_RECONNECT_DELAY_SECS: u64 = 60; // 60 seconds for release
 // =============================================================================
 
 /// Default number of blocks to look back when querying historical events
-pub const DEFAULT_LOOKBACK_BLOCKS: u64 = 50; // Fewer blocks for release (performance)
+pub const DEFAULT_LOOKBACK_BLOCKS: u64 = 1000; // Fewer blocks for release (performance)
 
 /// Solidity Error(string) function selector
 /// Used for decoding revert messages from contract calls

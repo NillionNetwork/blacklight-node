@@ -282,6 +282,20 @@ impl<P: Provider + Clone> HeartbeatManagerClient<P> {
         listen_events(subscription.into_stream(), "OperatorVoted", callback).await
     }
 
+    /// Start listening for round finalized events
+    pub async fn listen_htx_finalized_events<F, Fut>(self: Arc<Self>, callback: F) -> Result<()>
+    where
+        F: FnMut(RoundFinalizedEvent) -> Fut + Send,
+        Fut: std::future::Future<Output = Result<()>> + Send,
+    {
+        let subscription = self
+            .contract
+            .event_filter::<RoundFinalizedEvent>()
+            .subscribe()
+            .await?;
+        listen_events(subscription.into_stream(), "RoundFinalized", callback).await
+    }
+
     // ------------------------------------------------------------------------
     // Historical Event Query Methods
     // ------------------------------------------------------------------------
@@ -396,6 +410,46 @@ impl<P: Provider + Clone> HeartbeatManagerClient<P> {
         let mut filter = self
             .contract
             .event_filter::<OperatorVotedEvent>()
+            .from_block(range.from_block);
+
+        if let Some(to_block) = range.to_block {
+            filter = filter.to_block(to_block);
+        }
+
+        let events = filter.query().await?;
+        Ok(events.into_iter().map(|(event, _log)| event).collect())
+    }
+
+    /// Get HTX finalized events from recent history (default: last 1000 blocks)
+    /// Use get_htx_finalized_events_with_lookback for custom lookback
+    pub async fn get_htx_finalized_events(&self) -> Result<Vec<RoundFinalizedEvent>> {
+        self.get_htx_finalized_events_with_lookback(DEFAULT_LOOKBACK_BLOCKS)
+            .await
+    }
+
+    /// Get HTX finalized events with custom block lookback limit
+    /// Set lookback to u64::MAX to search entire history
+    pub async fn get_htx_finalized_events_with_lookback(
+        &self,
+        lookback_blocks: u64,
+    ) -> Result<Vec<RoundFinalizedEvent>> {
+        let current_block = self.get_block_number().await?;
+        let range = if lookback_blocks == u64::MAX {
+            BlockRange::all()
+        } else {
+            BlockRange::from_lookback(current_block, lookback_blocks)
+        };
+        self.get_htx_finalized_events_in_range(range).await
+    }
+
+    /// Get HTX finalized events within a specific block range
+    pub async fn get_htx_finalized_events_in_range(
+        &self,
+        range: BlockRange,
+    ) -> Result<Vec<RoundFinalizedEvent>> {
+        let mut filter = self
+            .contract
+            .event_filter::<RoundFinalizedEvent>()
             .from_block(range.from_block);
 
         if let Some(to_block) = range.to_block {

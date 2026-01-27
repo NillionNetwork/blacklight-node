@@ -12,8 +12,8 @@ use anyhow::Result;
 use blacklight::config::{MetricsCliArgs, MetricsConfig};
 use blacklight::contract_client::{BlacklightClient, ContractConfig, HeartbeatManagerClient};
 use blacklight::metrics::{
-    collect_htx_enqueued, collect_operator_voted, collect_round_started, load_historical_events,
-    poll_operator_data, register_metrics, start_http_server, MetricsState,
+    collect_htx_enqueued, collect_operator_voted, collect_round_finalized, collect_round_started,
+    load_historical_events, poll_operator_data, register_metrics, start_http_server, MetricsState,
 };
 use clap::Parser;
 use std::sync::Arc;
@@ -100,6 +100,11 @@ async fn main() -> Result<()> {
         contract_config.clone(),
         tx_lock.clone(),
     ));
+    let manager_finalized = Arc::new(HeartbeatManagerClient::new(
+        provider.clone(),
+        contract_config.clone(),
+        tx_lock.clone(),
+    ));
 
     // HeartbeatEnqueued collector
     tasks.spawn(async move {
@@ -129,6 +134,16 @@ async fn main() -> Result<()> {
         loop {
             if let Err(e) = collect_operator_voted(manager_voted.clone()).await {
                 error!("OperatorVoted collector error: {}", e);
+                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+            }
+        }
+    });
+
+    // RoundFinalized collector
+    tasks.spawn(async move {
+        loop {
+            if let Err(e) = collect_round_finalized(manager_finalized.clone()).await {
+                error!("RoundFinalized collector error: {}", e);
                 tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
             }
         }

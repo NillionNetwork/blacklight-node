@@ -293,7 +293,7 @@
       "gridPos": { "h": 8, "w": 16, "x": 8, "y": 5 },
       "id": 108,
       "options": {
-        "legend": { "calcs": ["sum", "last"], "displayMode": "table", "placement": "right", "showLegend": true },
+        "legend": { "calcs": ["last"], "displayMode": "table", "placement": "right", "showLegend": true },
         "tooltip": { "mode": "multi", "sort": "desc" }
       },
       "targets": [

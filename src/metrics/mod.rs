@@ -11,8 +11,8 @@ pub mod registry;
 
 // Re-exports for convenience
 pub use collectors::{
-    collect_htx_enqueued, collect_operator_voted, collect_round_started, load_historical_events,
-    mark_htx_finalized, poll_operator_data, MetricsState,
+    collect_htx_enqueued, collect_operator_voted, collect_round_finalized, collect_round_started,
+    load_historical_events, mark_htx_finalized, poll_operator_data, MetricsState,
 };
 pub use http_server::start_http_server;
 pub use registry::register_metrics;

@@ -102,6 +102,19 @@ pub async fn load_historical_events(
             .inc_by(weight_f64);
     }
 
+    // Load RoundFinalized events
+    let finalized_events = client
+        .manager
+        .get_htx_finalized_events_with_lookback(lookback_blocks)
+        .await?;
+    info!(
+        "Loaded {} RoundFinalized events",
+        finalized_events.len()
+    );
+    for event in &finalized_events {
+        record_round_finalized(event.round, event.outcome);
+    }
+
     info!("Historical event loading complete");
     Ok(())
 }
@@ -111,14 +124,24 @@ pub async fn collect_htx_enqueued(
     manager: Arc<HeartbeatManagerClient<DynProvider>>,
 ) -> Result<()> {
     info!("Starting HeartbeatEnqueued event listener");
-    manager
+    let result = manager
         .listen_htx_submitted_events(|event| async move {
             let submitter = format_address(event.submitter);
             HTX_ENQUEUED_TOTAL.with_label_values(&[&submitter]).inc();
             debug!("HeartbeatEnqueued: submitter={}", submitter);
             Ok(())
         })
-        .await
+        .await;
+    match result {
+        Ok(()) => {
+            warn!("HeartbeatEnqueued subscription ended unexpectedly");
+            Ok(())
+        }
+        Err(e) => {
+            warn!("HeartbeatEnqueued subscription error: {}", e);
+            Err(e)
+        }
+    }
 }
 
 /// Collect RoundStarted events (live streaming)
@@ -127,7 +150,7 @@ pub async fn collect_round_started(
     state: Arc<RwLock<MetricsState>>,
 ) -> Result<()> {
     info!("Starting RoundStarted event listener");
-    manager
+    let result = manager
         .listen_htx_assigned_events(move |event| {
             let state = state.clone();
             async move {
@@ -151,7 +174,17 @@ pub async fn collect_round_started(
                 Ok(())
             }
         })
-        .await
+        .await;
+    match result {
+        Ok(()) => {
+            warn!("RoundStarted subscription ended unexpectedly");
+            Ok(())
+        }
+        Err(e) => {
+            warn!("RoundStarted subscription error: {}", e);
+            Err(e)
+        }
+    }
 }
 
 /// Collect OperatorVoted events (live streaming)
@@ -159,7 +192,7 @@ pub async fn collect_operator_voted(
     manager: Arc<HeartbeatManagerClient<DynProvider>>,
 ) -> Result<()> {
     info!("Starting OperatorVoted event listener");
-    manager
+    let result = manager
         .listen_htx_responded_events(|event| async move {
             let operator = format_address(event.operator);
             let verdict = verdict_to_string(event.verdict).to_string();
@@ -178,7 +211,44 @@ pub async fn collect_operator_voted(
             );
             Ok(())
         })
-        .await
+        .await;
+    match result {
+        Ok(()) => {
+            warn!("OperatorVoted subscription ended unexpectedly");
+            Ok(())
+        }
+        Err(e) => {
+            warn!("OperatorVoted subscription error: {}", e);
+            Err(e)
+        }
+    }
+}
+
+/// Collect RoundFinalized events (live streaming)
+pub async fn collect_round_finalized(
+    manager: Arc<HeartbeatManagerClient<DynProvider>>,
+) -> Result<()> {
+    info!("Starting RoundFinalized event listener");
+    let result = manager
+        .listen_htx_finalized_events(|event| async move {
+            record_round_finalized(event.round, event.outcome);
+            debug!(
+                "RoundFinalized: heartbeatKey={:?}, round={}, outcome={}",
+                event.heartbeatKey, event.round, event.outcome
+            );
+            Ok(())
+        })
+        .await;
+    match result {
+        Ok(()) => {
+            warn!("RoundFinalized subscription ended unexpectedly");
+            Ok(())
+        }
+        Err(e) => {
+            warn!("RoundFinalized subscription error: {}", e);
+            Err(e)
+        }
+    }
 }
 
 /// Poll operator data periodically (stake, ETH balance, active status)
