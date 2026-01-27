@@ -10,6 +10,7 @@ pub mod wallet;
 // Business logic
 pub mod contract_client;
 pub mod keeper;
+pub mod metrics;
 pub mod verification;
 
 // Re-exports for convenience

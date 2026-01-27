@@ -1,0 +1,66 @@
+# Docker Compose overlay for metrics monitoring stack
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.metrics.yml up
+
+services:
+  # Metrics Exporter - Prometheus metrics for HeartbeatManager
+  metrics-exporter:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: metrics_exporter
+    container_name: blacklight-metrics-exporter
+    environment:
+      - TOKEN_CONTRACT_ADDRESS=0x32DEAe728473cb948B4D8661ac0f2755133D4173
+      - STAKING_CONTRACT_ADDRESS=0x89c1312Cedb0B0F67e4913D2076bd4a860652B69
+      - MANAGER_CONTRACT_ADDRESS=0x0Ee49a8f50293Fa5d05Ba6d1FC136e7F79b2eA4f
+      - RPC_URL=https://rpc.nillion.network
+      - METRICS_PORT=9090
+      - OPERATOR_POLL_INTERVAL_SECS=30
+      - LOOKBACK_BLOCKS=1000
+      - RUST_LOG=info
+    ports:
+      - "9090:9090"
+    restart: unless-stopped
+
+  # Prometheus - Time series database for metrics
+  prometheus:
+    image: prom/prometheus:v2.47.0
+    container_name: blacklight-prometheus
+    depends_on:
+      - metrics-exporter
+    volumes:
+      - ./docker/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    ports:
+      - "9091:9090"
+    restart: unless-stopped
+
+  # Grafana - Visualization and dashboards
+  grafana:
+    image: grafana/grafana:10.2.0
+    container_name: blacklight-grafana
+    depends_on:
+      - prometheus
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=blacklight
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=grafana-clock-panel,grafana-piechart-panel
+    volumes:
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+
+volumes:
+  prometheus-data:
+    driver: local
+  grafana-data:
+    driver: local

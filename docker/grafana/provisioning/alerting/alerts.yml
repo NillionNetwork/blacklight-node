@@ -1,0 +1,327 @@
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: Blacklight Alerts
+    folder: Blacklight
+    interval: 1m
+    rules:
+      # Alert when slashing callback failures occur
+      - uid: slashing-failure-alert
+        title: Slashing Callback Failed
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: Prometheus
+            model:
+              expr: increase(slashing_callback_failed_total[5m])
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params: []
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - B
+                  reducer:
+                    params: []
+                    type: last
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              reducer: last
+              refId: B
+              type: reduce
+          - refId: C
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 0
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - C
+                  reducer:
+                    params: []
+                    type: last
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: B
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        annotations:
+          description: "A slashing callback has failed. Manual intervention may be required."
+          summary: Slashing callback failure detected
+        labels:
+          severity: critical
+        isPaused: false
+
+      # Alert when there are too many active HTXs (possible stuck state)
+      - uid: stuck-htx-alert
+        title: High Active HTX Count
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: Prometheus
+            model:
+              expr: htx_active_count
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params: []
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - B
+                  reducer:
+                    params: []
+                    type: last
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              reducer: last
+              refId: B
+              type: reduce
+          - refId: C
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 100
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - C
+                  reducer:
+                    params: []
+                    type: last
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: B
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        noDataState: OK
+        execErrState: Error
+        for: 10m
+        annotations:
+          description: "There are more than 100 active HTXs for over 10 minutes. HTXs may be stuck."
+          summary: Possible stuck HTXs detected
+        labels:
+          severity: warning
+        isPaused: false
+
+      # Alert when operator ETH balance is low
+      - uid: low-operator-balance-alert
+        title: Low Operator ETH Balance
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: Prometheus
+            model:
+              expr: operator_eth_balance_wei
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params: []
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - B
+                  reducer:
+                    params: []
+                    type: last
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              reducer: min
+              refId: B
+              type: reduce
+          - refId: C
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 10000000000000
+                    type: lt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - C
+                  reducer:
+                    params: []
+                    type: last
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: B
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        noDataState: OK
+        execErrState: Error
+        for: 5m
+        annotations:
+          description: "An operator's ETH balance has dropped below 0.00001 ETH (10^13 wei). They may not be able to submit transactions."
+          summary: Low operator ETH balance
+        labels:
+          severity: warning
+        isPaused: false
+
+      # Alert on high WebSocket reconnection rate
+      - uid: websocket-disconnect-alert
+        title: High WebSocket Reconnection Rate
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: Prometheus
+            model:
+              expr: increase(websocket_reconnects_total[5m])
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params: []
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - B
+                  reducer:
+                    params: []
+                    type: last
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              reducer: last
+              refId: B
+              type: reduce
+          - refId: C
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 5
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - C
+                  reducer:
+                    params: []
+                    type: last
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: B
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        annotations:
+          description: "More than 5 WebSocket reconnection attempts in the last 5 minutes. There may be network connectivity issues."
+          summary: High WebSocket reconnection rate
+        labels:
+          severity: warning
+        isPaused: false

@@ -80,7 +80,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cp target/$RUST_TARGET/release/blacklight_node /out/bin/ && \
     cp target/$RUST_TARGET/release/nilcc_simulator /out/bin/ && \
     cp target/$RUST_TARGET/release/monitor /out/bin/ && \
-    cp target/$RUST_TARGET/release/keeper /out/bin/
+    cp target/$RUST_TARGET/release/keeper /out/bin/ && \
+    cp target/$RUST_TARGET/release/metrics_exporter /out/bin/
 
 
 FROM --platform=$TARGETPLATFORM debian:bookworm-slim AS base_release
@@ -122,4 +123,10 @@ ENTRYPOINT ["/usr/local/bin/monitor"]
 FROM base_release AS keeper
 COPY --from=builder /out/bin/keeper /usr/local/bin/keeper
 ENTRYPOINT ["/usr/local/bin/keeper"]
+
+# Runtime stage for metrics_exporter
+FROM base_release AS metrics_exporter
+COPY --from=builder /out/bin/metrics_exporter /usr/local/bin/metrics_exporter
+EXPOSE 9090
+ENTRYPOINT ["/usr/local/bin/metrics_exporter"]
 

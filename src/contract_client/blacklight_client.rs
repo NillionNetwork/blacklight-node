@@ -89,4 +89,9 @@ impl BlacklightClient {
 
         Ok(tx_hash)
     }
+
+    /// Get a clone of the underlying provider for creating new clients
+    pub fn provider(&self) -> DynProvider {
+        self.provider.clone()
+    }
 }

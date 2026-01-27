@@ -1,0 +1,979 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "id": 100,
+      "panels": [],
+      "title": "Voting Summary",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "fixedColor": "green", "mode": "fixed" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 1 },
+      "id": 101,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "sum(operator_votes_total{verdict=\"valid\"})",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "title": "Valid Votes",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "fixedColor": "red", "mode": "fixed" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }] },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 1 },
+      "id": 102,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "sum(operator_votes_total{verdict=\"invalid\"})",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "title": "Invalid Votes",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "fixedColor": "yellow", "mode": "fixed" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "yellow", "value": null }] },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 1 },
+      "id": 103,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "sum(operator_votes_total{verdict=\"error\"})",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "title": "Error Votes",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "fixedColor": "blue", "mode": "fixed" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 1 },
+      "id": 104,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "sum(operator_votes_total)",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "title": "Total Votes",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 10 }, { "color": "red", "value": 50 }] },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 1 },
+      "id": 105,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "htx_active_count",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "title": "Active HTXs",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "fixedColor": "purple", "mode": "fixed" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "purple", "value": null }] },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 1 },
+      "id": 106,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "sum(htx_enqueued_total)",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "title": "Total HTXs Submitted",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "hideFrom": { "legend": false, "tooltip": false, "viz": false } },
+          "mappings": [],
+          "unit": "none"
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "valid" }, "properties": [{ "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "invalid" }, "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "error" }, "properties": [{ "id": "color", "value": { "fixedColor": "yellow", "mode": "fixed" } }] }
+        ]
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 5 },
+      "id": 107,
+      "options": {
+        "legend": { "displayMode": "table", "placement": "right", "showLegend": true, "values": ["value", "percent"] },
+        "pieType": "donut",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "sum by (verdict) (operator_votes_total)",
+          "legendFormat": "{{verdict}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Vote Distribution",
+      "type": "piechart"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "Votes",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 20,
+            "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+          "unit": "none"
+        },
+        "overrides": [
+          { "matcher": { "id": "byRegexp", "options": ".*valid.*" }, "properties": [{ "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }] },
+          { "matcher": { "id": "byRegexp", "options": ".*invalid.*" }, "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }] },
+          { "matcher": { "id": "byRegexp", "options": ".*error.*" }, "properties": [{ "id": "color", "value": { "fixedColor": "yellow", "mode": "fixed" } }] }
+        ]
+      },
+      "gridPos": { "h": 8, "w": 16, "x": 8, "y": 5 },
+      "id": 108,
+      "options": {
+        "legend": { "calcs": ["sum", "last"], "displayMode": "table", "placement": "right", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "sum by (verdict) (operator_votes_total)",
+          "legendFormat": "{{verdict}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Votes Over Time by Verdict",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 13 },
+      "id": 200,
+      "panels": [],
+      "title": "Operator Voting Details",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "custom": { "align": "auto", "cellOptions": { "type": "auto" }, "inspect": false },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+          "unit": "none"
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "operator" }, "properties": [{ "id": "custom.width", "value": 380 }] },
+          { "matcher": { "id": "byName", "options": "Operator" }, "properties": [{ "id": "custom.width", "value": 380 }] },
+          { "matcher": { "id": "byName", "options": "Valid" }, "properties": [{ "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }, { "id": "custom.cellOptions", "value": { "mode": "gradient", "type": "color-background" } }] },
+          { "matcher": { "id": "byName", "options": "Invalid" }, "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }, { "id": "custom.cellOptions", "value": { "mode": "gradient", "type": "color-background" } }] },
+          { "matcher": { "id": "byName", "options": "Error" }, "properties": [{ "id": "color", "value": { "fixedColor": "yellow", "mode": "fixed" } }, { "id": "custom.cellOptions", "value": { "mode": "gradient", "type": "color-background" } }] }
+        ]
+      },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 14 },
+      "id": 201,
+      "options": {
+        "cellHeight": "sm",
+        "footer": { "countRows": false, "fields": "", "reducer": ["sum"], "show": true },
+        "showHeader": true,
+        "sortBy": [{ "desc": true, "displayName": "Total" }]
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "sum by (operator) (operator_votes_total{verdict=\"valid\"})",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "valid",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "sum by (operator) (operator_votes_total{verdict=\"invalid\"})",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "invalid",
+          "refId": "B"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "sum by (operator) (operator_votes_total{verdict=\"error\"})",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "error",
+          "refId": "C"
+        }
+      ],
+      "title": "Votes by Operator",
+      "transformations": [
+        { "id": "merge", "options": {} },
+        { "id": "organize", "options": { "excludeByName": { "Time": true }, "indexByName": {}, "renameByName": { "Value #A": "Valid", "Value #B": "Invalid", "Value #C": "Error", "operator": "Operator" } } },
+        { "id": "calculateField", "options": { "alias": "Total", "binary": { "left": "Valid", "operator": "+", "reducer": "sum", "right": "Invalid" }, "mode": "reduceRow", "reduce": { "include": ["Valid", "Invalid", "Error"], "reducer": "sum" }, "replaceFields": false } }
+      ],
+      "type": "table"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 24 },
+      "id": 300,
+      "panels": [],
+      "title": "Round Outcomes",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "fixedColor": "green", "mode": "fixed" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 25 },
+      "id": 301,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "sum(htx_rounds_finalized_total{outcome=\"valid_threshold\"})",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "title": "Finalized Valid",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "fixedColor": "red", "mode": "fixed" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }] },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 25 },
+      "id": 302,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "sum(htx_rounds_finalized_total{outcome=\"invalid_threshold\"})",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "title": "Finalized Invalid",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "fixedColor": "orange", "mode": "fixed" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "orange", "value": null }] },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 25 },
+      "id": 303,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "sum(htx_rounds_finalized_total{outcome=\"inconclusive\"})",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "title": "Finalized Inconclusive",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "fixedColor": "blue", "mode": "fixed" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 25 },
+      "id": 304,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "sum(htx_rounds_started_total)",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "title": "Total Rounds Started",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "hideFrom": { "legend": false, "tooltip": false, "viz": false } },
+          "mappings": [],
+          "unit": "none"
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "valid_threshold" }, "properties": [{ "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "invalid_threshold" }, "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "inconclusive" }, "properties": [{ "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } }] }
+        ]
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 29 },
+      "id": 305,
+      "options": {
+        "legend": { "displayMode": "table", "placement": "right", "showLegend": true, "values": ["value", "percent"] },
+        "pieType": "donut",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "sum by (outcome) (htx_rounds_finalized_total)",
+          "legendFormat": "{{outcome}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Round Outcome Distribution",
+      "type": "piechart"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "normal" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+          "unit": "none"
+        },
+        "overrides": [
+          { "matcher": { "id": "byRegexp", "options": ".*valid_threshold.*" }, "properties": [{ "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }] },
+          { "matcher": { "id": "byRegexp", "options": ".*invalid_threshold.*" }, "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }] },
+          { "matcher": { "id": "byRegexp", "options": ".*inconclusive.*" }, "properties": [{ "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } }] }
+        ]
+      },
+      "gridPos": { "h": 8, "w": 16, "x": 8, "y": 29 },
+      "id": 306,
+      "options": {
+        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "increase(htx_rounds_finalized_total[1m])",
+          "legendFormat": "{{outcome}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Rounds Finalized Over Time",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 37 },
+      "id": 400,
+      "panels": [],
+      "title": "Operator Stakes & Balances",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "fixedColor": "blue", "mode": "fixed" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 38 },
+      "id": 401,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "operators_total",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "title": "Total Operators",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "fixedColor": "green", "mode": "fixed" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 38 },
+      "id": 402,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "sum(operator_is_active)",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "title": "Active Operators",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "description": "Total staked amount converted to ETH (10^18 wei = 1 ETH)",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "fixedColor": "purple", "mode": "fixed" },
+          "decimals": 4,
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "purple", "value": null }] },
+          "unit": "suffix: ETH"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 38 },
+      "id": 403,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "total_staked_wei / 1e18",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "title": "Total Staked",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 38 },
+      "id": 404,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "current_block_number",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "title": "Current Block",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "description": "Operator stakes converted to ETH",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "custom": { "align": "auto", "cellOptions": { "type": "auto" }, "inspect": false },
+          "decimals": 4,
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+          "unit": "none"
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "Operator" }, "properties": [{ "id": "custom.width", "value": 380 }] },
+          { "matcher": { "id": "byName", "options": "Stake (ETH)" }, "properties": [{ "id": "custom.cellOptions", "value": { "mode": "gradient", "type": "gauge" } }, { "id": "color", "value": { "mode": "continuous-BlPu" } }] },
+          { "matcher": { "id": "byName", "options": "ETH Balance" }, "properties": [{ "id": "custom.cellOptions", "value": { "mode": "gradient", "type": "gauge" } }, { "id": "color", "value": { "mode": "continuous-GrYlRd" } }, { "id": "thresholds", "value": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "yellow", "value": 0.01 }, { "color": "green", "value": 0.1 }] } }] },
+          { "matcher": { "id": "byName", "options": "Active" }, "properties": [{ "id": "mappings", "value": [{ "options": { "0": { "color": "red", "index": 1, "text": "No" }, "1": { "color": "green", "index": 0, "text": "Yes" } }, "type": "value" }] }, { "id": "custom.cellOptions", "value": { "type": "color-text" } }] }
+        ]
+      },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 42 },
+      "id": 405,
+      "options": {
+        "cellHeight": "sm",
+        "footer": { "countRows": false, "fields": "", "reducer": ["sum"], "show": false },
+        "showHeader": true,
+        "sortBy": [{ "desc": true, "displayName": "Stake (ETH)" }]
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "operator_stake_wei / 1e18",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "stake",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "operator_eth_balance_wei / 1e18",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "balance",
+          "refId": "B"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "operator_is_active",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "active",
+          "refId": "C"
+        }
+      ],
+      "title": "Operator Details",
+      "transformations": [
+        { "id": "merge", "options": {} },
+        { "id": "organize", "options": { "excludeByName": { "Time": true }, "indexByName": {}, "renameByName": { "Value #A": "Stake (ETH)", "Value #B": "ETH Balance", "Value #C": "Active", "operator": "Operator" } } }
+      ],
+      "type": "table"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 52 },
+      "id": 500,
+      "panels": [],
+      "title": "System Health",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }] },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 53 },
+      "id": 501,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "slashing_callback_failed_total",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "title": "Slashing Failures",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 5 }, { "color": "red", "value": 10 }] },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 53 },
+      "id": 502,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "websocket_reconnects_total",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "title": "WebSocket Reconnects",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "fixedColor": "blue", "mode": "fixed" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 53 },
+      "id": 503,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "sum(rewards_distributed_total)",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "title": "Rewards Distributed",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 57 },
+      "id": 504,
+      "options": {
+        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "current_block_number",
+          "legendFormat": "Block Number",
+          "refId": "A"
+        }
+      ],
+      "title": "Block Height Over Time",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["blacklight", "heartbeat-manager", "blockchain"],
+  "templating": {
+    "list": [
+      {
+        "current": { "selected": false, "text": "Prometheus", "value": "Prometheus" },
+        "hide": 0,
+        "includeAll": false,
+        "label": "Data Source",
+        "multi": false,
+        "name": "datasource",
+        "options": [],
+        "query": "prometheus",
+        "queryValue": "",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "type": "datasource"
+      }
+    ]
+  },
+  "time": { "from": "now-1h", "to": "now" },
+  "timepicker": {},
+  "timezone": "",
+  "title": "HeartbeatManager Dashboard",
+  "uid": "heartbeat-manager",
+  "version": 2,
+  "weekStart": ""
+}

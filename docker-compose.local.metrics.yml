@@ -1,0 +1,75 @@
+# Docker Compose overlay for metrics monitoring stack
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.metrics.yml up
+
+services:
+  # Metrics Exporter - Prometheus metrics for HeartbeatManager
+  metrics-exporter:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: metrics_exporter
+    container_name: blacklight-metrics-exporter
+    depends_on:
+      anvil:
+        condition: service_healthy
+    environment:
+      - RPC_URL=http://anvil:8545
+      - TOKEN_CONTRACT_ADDRESS=0x5FbDB2315678afecb367f032d93F642f64180aa3
+      - STAKING_CONTRACT_ADDRESS=0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
+      - MANAGER_CONTRACT_ADDRESS=0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9
+      - METRICS_PORT=9090
+      - OPERATOR_POLL_INTERVAL_SECS=30
+      - LOOKBACK_BLOCKS=1000
+      - RUST_LOG=info
+    ports:
+      - "9090:9090"
+    networks:
+      - blacklight-network
+    restart: unless-stopped
+
+  # Prometheus - Time series database for metrics
+  prometheus:
+    image: prom/prometheus:v2.47.0
+    container_name: blacklight-prometheus
+    depends_on:
+      - metrics-exporter
+    volumes:
+      - ./docker/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    ports:
+      - "9091:9090"
+    networks:
+      - blacklight-network
+    restart: unless-stopped
+
+  # Grafana - Visualization and dashboards
+  grafana:
+    image: grafana/grafana:10.2.0
+    container_name: blacklight-grafana
+    depends_on:
+      - prometheus
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=blacklight
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=grafana-clock-panel,grafana-piechart-panel
+    volumes:
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    networks:
+      - blacklight-network
+    restart: unless-stopped
+
+volumes:
+  prometheus-data:
+    driver: local
+  grafana-data:
+    driver: local
