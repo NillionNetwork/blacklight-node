@@ -1,0 +1,25 @@
+[package]
+name = "blacklight-node"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+alloy = { version = "1.1", features = ["contract", "providers"] }
+anyhow = "1.0"
+async-trait = "0.1"
+attestation-verification = { git = "https://github.com/NillionNetwork/nilcc", rev = "a7545b8b4b620d97399a06619b9fbcb51d6b1f85", package = "attestation-verification" }
+dcap-qvl = "0.3.4"
+clap = { version = "4.5", features = ["derive", "env", "string"] }
+futures-util = "0.3"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde_json = "1.0"
+sha2 = "0.10"
+term-table = "1.4"
+tokio = { version = "1.49", features = ["macros", "rt-multi-thread", "signal"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+blacklight-contract-clients = { path = "../crates/blacklight-contract-clients" }
+chain-args = { path = "../crates/chain-args" }
+state-file = { path = "../crates/state-file" }
+

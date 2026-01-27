@@ -1,0 +1,15 @@
+[package]
+name = "blacklight-contract-clients"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0"
+alloy = { version = "1.1", features = ["contract", "providers", "pubsub"] }
+alloy-provider = { version = "1.1", features = ["ws"] }
+futures-util = "0.3"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_with = { version = "3.16", features = ["hex"] }
+tokio = { version = "1.49", features = ["sync"] }
+tracing = "0.1"

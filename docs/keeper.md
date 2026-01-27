@@ -49,7 +49,7 @@ export PRIVATE_KEY="0x..."
 # Optional: disable jailing if slashing/jailing is not active
 export DISABLE_JAILING=true
 
-RUST_LOG=info cargo run --bin keeper
+RUST_LOG=info cargo run -p keeper
 ```
 
 You can also run the built binary:

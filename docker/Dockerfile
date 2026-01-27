@@ -55,7 +55,11 @@ RUN mkdir -p ~/.cargo && \
 
 # Copy project files
 COPY Cargo.toml ./
-COPY src ./src
+COPY crates ./crates
+COPY nilcc-simulator ./nilcc-simulator
+COPY keeper ./keeper
+COPY blacklight-node ./blacklight-node
+COPY monitor ./monitor
 COPY data ./data
 
 WORKDIR /app
@@ -75,10 +79,10 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
         export OPENSSL_LIB_DIR=/usr/lib/aarch64-linux-gnu && \
         export OPENSSL_INCLUDE_DIR=/usr/include; \
     fi && \
-    cargo build --release --target $RUST_TARGET --bins && \
+    cargo build --release --target $RUST_TARGET && \
     mkdir -p /out/bin && \
-    cp target/$RUST_TARGET/release/blacklight_node /out/bin/ && \
-    cp target/$RUST_TARGET/release/nilcc_simulator /out/bin/ && \
+    cp target/$RUST_TARGET/release/blacklight-node /out/bin/ && \
+    cp target/$RUST_TARGET/release/nilcc-simulator /out/bin/ && \
     cp target/$RUST_TARGET/release/monitor /out/bin/ && \
     cp target/$RUST_TARGET/release/keeper /out/bin/
 
@@ -94,8 +98,8 @@ WORKDIR /app
 
 # Runtime stage for blacklight_node
 FROM base_release AS blacklight_node
-COPY --from=builder /out/bin/blacklight_node /usr/local/bin/blacklight_node
-ENTRYPOINT ["/usr/local/bin/blacklight_node"]
+COPY --from=builder /out/bin/blacklight-node /usr/local/bin/blacklight-node
+ENTRYPOINT ["/usr/local/bin/blacklight-node"]
 
 # Foundry (cast) stage (for deriving keys from mnemonics at runtime)
 FROM ghcr.io/foundry-rs/foundry:stable AS foundry
@@ -104,14 +108,14 @@ FROM ghcr.io/foundry-rs/foundry:stable AS foundry
 FROM blacklight_node AS blacklight_node_test
 COPY --from=foundry /usr/local/bin/cast /usr/local/bin/cast
 COPY --chmod=755 docker/entrypoints/derive_private_key.sh /usr/local/bin/derive_private_key.sh
-ENTRYPOINT ["/usr/local/bin/derive_private_key.sh", "/usr/local/bin/blacklight_node"]
+ENTRYPOINT ["/usr/local/bin/derive_private_key.sh", "/usr/local/bin/blacklight-node"]
 
 # Runtime stage for nilcc_simulator
 FROM base_release AS nilcc_simulator
-COPY --from=builder /out/bin/nilcc_simulator /usr/local/bin/nilcc_simulator
+COPY --from=builder /out/bin/nilcc-simulator /usr/local/bin/nilcc-simulator
 COPY --from=builder /app/data /app/data
 ENV HTXS_PATH=/app/data/htxs.json
-ENTRYPOINT ["/usr/local/bin/nilcc_simulator"]
+ENTRYPOINT ["/usr/local/bin/nilcc-simulator"]
 
 # Runtime stage for monitor
 FROM base_release AS monitor
