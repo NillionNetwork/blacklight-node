@@ -65,10 +65,10 @@ lazy_static! {
     // Operator Status Metrics (polled periodically)
     // ========================================================================
 
-    /// Gauge for operator stake in wei
+    /// Gauge for operator stake in NIL token base units
     /// Labels: operator address
     pub static ref OPERATOR_STAKE_WEI: GaugeVec = register_gauge_vec!(
-        opts!("operator_stake_wei", "Operator stake amount in wei"),
+        opts!("operator_stake_wei", "Operator stake amount in NIL token base units"),
         &["operator"]
     ).expect("Failed to create operator_stake_wei metric");
 
@@ -78,6 +78,17 @@ lazy_static! {
         opts!("operator_eth_balance_wei", "Operator ETH balance in wei"),
         &["operator"]
     ).expect("Failed to create operator_eth_balance_wei metric");
+
+    /// Gauge for operator NIL token balance in base units
+    /// Labels: operator address
+    pub static ref OPERATOR_NIL_BALANCE_BASE: GaugeVec = register_gauge_vec!(
+        opts!(
+            "operator_nil_balance_base",
+            "Operator NIL token balance in base units"
+        ),
+        &["operator"]
+    )
+    .expect("Failed to create operator_nil_balance_base metric");
 
     /// Gauge for operator active status (1 = active, 0 = inactive)
     /// Labels: operator address
@@ -92,10 +103,10 @@ lazy_static! {
         "Total number of registered operators"
     ).expect("Failed to create operators_total metric");
 
-    /// Gauge for total staked amount across all operators
+    /// Gauge for total staked amount across all operators in NIL token base units
     pub static ref TOTAL_STAKED_WEI: Gauge = Gauge::new(
         "total_staked_wei",
-        "Total amount staked across all operators in wei"
+        "Total amount staked across all operators in NIL token base units"
     ).expect("Failed to create total_staked_wei metric");
 
     // ========================================================================
@@ -142,6 +153,7 @@ pub fn register_metrics() -> prometheus::Result<()> {
     REGISTRY.register(Box::new(OPERATOR_VOTE_WEIGHT_TOTAL.clone()))?;
     REGISTRY.register(Box::new(OPERATOR_STAKE_WEI.clone()))?;
     REGISTRY.register(Box::new(OPERATOR_ETH_BALANCE_WEI.clone()))?;
+    REGISTRY.register(Box::new(OPERATOR_NIL_BALANCE_BASE.clone()))?;
     REGISTRY.register(Box::new(OPERATOR_IS_ACTIVE.clone()))?;
     REGISTRY.register(Box::new(OPERATORS_TOTAL.clone()))?;
     REGISTRY.register(Box::new(TOTAL_STAKED_WEI.clone()))?;

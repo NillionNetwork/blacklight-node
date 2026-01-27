@@ -9,11 +9,11 @@ use crate::contract_client::{BlacklightClient, ContractConfig, HeartbeatManagerC
 use crate::metrics::registry::{
     outcome_to_string, verdict_to_string, CURRENT_BLOCK_NUMBER, HTX_ACTIVE_COUNT,
     HTX_ENQUEUED_TOTAL, HTX_ROUNDS_FINALIZED_TOTAL, HTX_ROUNDS_STARTED_TOTAL, OPERATORS_TOTAL,
-    OPERATOR_ETH_BALANCE_WEI, OPERATOR_IS_ACTIVE, OPERATOR_STAKE_WEI, OPERATOR_VOTES_TOTAL,
-    OPERATOR_VOTE_WEIGHT_TOTAL, REWARDS_DISTRIBUTED_TOTAL, SLASHING_CALLBACK_FAILED_TOTAL,
-    TOTAL_STAKED_WEI, WEBSOCKET_RECONNECTS_TOTAL,
+    OPERATOR_ETH_BALANCE_WEI, OPERATOR_IS_ACTIVE, OPERATOR_NIL_BALANCE_BASE, OPERATOR_STAKE_WEI,
+    OPERATOR_VOTES_TOTAL, OPERATOR_VOTE_WEIGHT_TOTAL, REWARDS_DISTRIBUTED_TOTAL,
+    SLASHING_CALLBACK_FAILED_TOTAL, TOTAL_STAKED_WEI, WEBSOCKET_RECONNECTS_TOTAL,
 };
-use alloy::primitives::U256;
+use alloy::primitives::{Address, U256};
 use alloy::providers::DynProvider;
 use anyhow::Result;
 use std::collections::HashSet;
@@ -61,7 +61,7 @@ pub async fn load_historical_events(
         .await?;
     info!("Loaded {} HeartbeatEnqueued events", enqueued_events.len());
     for event in &enqueued_events {
-        let submitter = format!("{:?}", event.submitter);
+        let submitter = format_address(event.submitter);
         HTX_ENQUEUED_TOTAL.with_label_values(&[&submitter]).inc();
     }
 
@@ -90,7 +90,7 @@ pub async fn load_historical_events(
         .await?;
     info!("Loaded {} OperatorVoted events", voted_events.len());
     for event in &voted_events {
-        let operator = format!("{:?}", event.operator);
+        let operator = format_address(event.operator);
         let verdict = verdict_to_string(event.verdict).to_string();
         OPERATOR_VOTES_TOTAL
             .with_label_values(&[&operator, &verdict])
@@ -113,7 +113,7 @@ pub async fn collect_htx_enqueued(
     info!("Starting HeartbeatEnqueued event listener");
     manager
         .listen_htx_submitted_events(|event| async move {
-            let submitter = format!("{:?}", event.submitter);
+            let submitter = format_address(event.submitter);
             HTX_ENQUEUED_TOTAL.with_label_values(&[&submitter]).inc();
             debug!("HeartbeatEnqueued: submitter={}", submitter);
             Ok(())
@@ -161,7 +161,7 @@ pub async fn collect_operator_voted(
     info!("Starting OperatorVoted event listener");
     manager
         .listen_htx_responded_events(|event| async move {
-            let operator = format!("{:?}", event.operator);
+            let operator = format_address(event.operator);
             let verdict = verdict_to_string(event.verdict).to_string();
             OPERATOR_VOTES_TOTAL
                 .with_label_values(&[&operator, &verdict])
@@ -230,7 +230,7 @@ pub async fn poll_operator_data(
         let mut total_staked = U256::ZERO;
 
         for operator in &operators {
-            let operator_str = format!("{:?}", operator);
+            let operator_str = format_address(*operator);
 
             // Get stake
             match client.staking.stake_of(*operator).await {
@@ -256,6 +256,22 @@ pub async fn poll_operator_data(
                 }
                 Err(e) => {
                     warn!("Failed to get ETH balance for {}: {}", operator_str, e);
+                }
+            }
+
+            // Get NIL token balance
+            match client.token.balance_of(*operator).await {
+                Ok(balance) => {
+                    let balance_f64 = u256_to_f64(balance);
+                    OPERATOR_NIL_BALANCE_BASE
+                        .with_label_values(&[&operator_str])
+                        .set(balance_f64);
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to get NIL token balance for {}: {}",
+                        operator_str, e
+                    );
                 }
             }
 
@@ -291,6 +307,10 @@ fn u256_to_f64(value: U256) -> f64 {
     }
     // For larger values, convert via string and parse (lossy but better than overflow)
     value.to_string().parse::<f64>().unwrap_or(f64::MAX)
+}
+
+fn format_address(address: Address) -> String {
+    format!("{:#x}", address)
 }
 
 /// Record a RoundFinalized event

@@ -86,7 +86,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "sum(operator_votes_total{verdict=\"invalid\"})",
+          "expr": "sum(operator_votes_total{verdict=\"invalid\"}) OR on() vector(0)",
           "legendFormat": "",
           "refId": "A"
         }
@@ -118,7 +118,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "sum(operator_votes_total{verdict=\"error\"})",
+          "expr": "sum(operator_votes_total{verdict=\"error\"}) OR on() vector(0)",
           "legendFormat": "",
           "refId": "A"
         }
@@ -344,7 +344,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "sum by (operator) (operator_votes_total{verdict=\"valid\"})",
+          "expr": "sum by (operator) (label_replace(operator_votes_total{verdict=\"valid\"}, \"operator\", \"addr:$1\", \"operator\", \"(.*)\"))",
           "format": "table",
           "instant": true,
           "legendFormat": "valid",
@@ -352,7 +352,7 @@
         },
         {
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "sum by (operator) (operator_votes_total{verdict=\"invalid\"})",
+          "expr": "sum by (operator) (label_replace(operator_votes_total{verdict=\"invalid\"}, \"operator\", \"addr:$1\", \"operator\", \"(.*)\"))",
           "format": "table",
           "instant": true,
           "legendFormat": "invalid",
@@ -360,7 +360,7 @@
         },
         {
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "sum by (operator) (operator_votes_total{verdict=\"error\"})",
+          "expr": "sum by (operator) (label_replace(operator_votes_total{verdict=\"error\"}, \"operator\", \"addr:$1\", \"operator\", \"(.*)\"))",
           "format": "table",
           "instant": true,
           "legendFormat": "error",
@@ -407,7 +407,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "sum(htx_rounds_finalized_total{outcome=\"valid_threshold\"})",
+          "expr": "sum(htx_rounds_finalized_total{outcome=\"valid_threshold\"}) OR on() vector(0)",
           "legendFormat": "",
           "refId": "A"
         }
@@ -439,7 +439,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "sum(htx_rounds_finalized_total{outcome=\"invalid_threshold\"})",
+          "expr": "sum(htx_rounds_finalized_total{outcome=\"invalid_threshold\"}) OR on() vector(0)",
           "legendFormat": "",
           "refId": "A"
         }
@@ -471,7 +471,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "sum(htx_rounds_finalized_total{outcome=\"inconclusive\"})",
+          "expr": "sum(htx_rounds_finalized_total{outcome=\"inconclusive\"}) OR on() vector(0)",
           "legendFormat": "",
           "refId": "A"
         }
@@ -670,14 +670,14 @@
     },
     {
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "description": "Total staked amount converted to ETH (10^18 wei = 1 ETH)",
+      "description": "Total staked amount converted to NIL (10^6 base units = 1 NIL)",
       "fieldConfig": {
         "defaults": {
           "color": { "fixedColor": "purple", "mode": "fixed" },
           "decimals": 4,
           "mappings": [],
           "thresholds": { "mode": "absolute", "steps": [{ "color": "purple", "value": null }] },
-          "unit": "suffix: ETH"
+          "unit": "suffix: NIL"
         },
         "overrides": []
       },
@@ -694,7 +694,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "total_staked_wei / 1e18",
+          "expr": "total_staked_wei / 1e6",
           "legendFormat": "",
           "refId": "A"
         }
@@ -736,7 +736,7 @@
     },
     {
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "description": "Operator stakes converted to ETH",
+      "description": "Operator stakes converted to NIL",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "thresholds" },
@@ -748,8 +748,8 @@
         },
         "overrides": [
           { "matcher": { "id": "byName", "options": "Operator" }, "properties": [{ "id": "custom.width", "value": 380 }] },
-          { "matcher": { "id": "byName", "options": "Stake (ETH)" }, "properties": [{ "id": "custom.cellOptions", "value": { "mode": "gradient", "type": "gauge" } }, { "id": "color", "value": { "mode": "continuous-BlPu" } }] },
-          { "matcher": { "id": "byName", "options": "ETH Balance" }, "properties": [{ "id": "custom.cellOptions", "value": { "mode": "gradient", "type": "gauge" } }, { "id": "color", "value": { "mode": "continuous-GrYlRd" } }, { "id": "thresholds", "value": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "yellow", "value": 0.01 }, { "color": "green", "value": 0.1 }] } }] },
+          { "matcher": { "id": "byName", "options": "Stake (NIL)" }, "properties": [{ "id": "custom.cellOptions", "value": { "mode": "gradient", "type": "gauge" } }, { "id": "color", "value": { "mode": "continuous-BlPu" } }, { "id": "unit", "value": "suffix: NIL" }] },
+          { "matcher": { "id": "byName", "options": "ETH Balance" }, "properties": [{ "id": "custom.cellOptions", "value": { "mode": "gradient", "type": "gauge" } }, { "id": "color", "value": { "mode": "continuous-GrYlRd" } }, { "id": "thresholds", "value": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "yellow", "value": 0.01 }, { "color": "green", "value": 0.1 }] } }, { "id": "unit", "value": "suffix: ETH" }] },
           { "matcher": { "id": "byName", "options": "Active" }, "properties": [{ "id": "mappings", "value": [{ "options": { "0": { "color": "red", "index": 1, "text": "No" }, "1": { "color": "green", "index": 0, "text": "Yes" } }, "type": "value" }] }, { "id": "custom.cellOptions", "value": { "type": "color-text" } }] }
         ]
       },
@@ -759,12 +759,12 @@
         "cellHeight": "sm",
         "footer": { "countRows": false, "fields": "", "reducer": ["sum"], "show": false },
         "showHeader": true,
-        "sortBy": [{ "desc": true, "displayName": "Stake (ETH)" }]
+        "sortBy": [{ "desc": true, "displayName": "Stake (NIL)" }]
       },
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "operator_stake_wei / 1e18",
+          "expr": "label_replace(operator_stake_wei, \"operator\", \"addr:$1\", \"operator\", \"(.*)\") / 1e6",
           "format": "table",
           "instant": true,
           "legendFormat": "stake",
@@ -772,7 +772,7 @@
         },
         {
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "operator_eth_balance_wei / 1e18",
+          "expr": "label_replace(operator_eth_balance_wei, \"operator\", \"addr:$1\", \"operator\", \"(.*)\") / 1e18",
           "format": "table",
           "instant": true,
           "legendFormat": "balance",
@@ -780,7 +780,7 @@
         },
         {
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "operator_is_active",
+          "expr": "label_replace(operator_is_active, \"operator\", \"addr:$1\", \"operator\", \"(.*)\")",
           "format": "table",
           "instant": true,
           "legendFormat": "active",
@@ -790,7 +790,7 @@
       "title": "Operator Details",
       "transformations": [
         { "id": "merge", "options": {} },
-        { "id": "organize", "options": { "excludeByName": { "Time": true }, "indexByName": {}, "renameByName": { "Value #A": "Stake (ETH)", "Value #B": "ETH Balance", "Value #C": "Active", "operator": "Operator" } } }
+        { "id": "organize", "options": { "excludeByName": { "Time": true }, "indexByName": {}, "renameByName": { "Value #A": "Stake (NIL)", "Value #B": "ETH Balance", "Value #C": "Active", "operator": "Operator" } } }
       ],
       "type": "table"
     },
