@@ -5,6 +5,7 @@ FROM --platform=$BUILDPLATFORM rust:1.91-slim-trixie AS builder
 
 ARG TARGETPLATFORM
 ARG BUILDPLATFORM
+ARG BLACKLIGHT_VERSION
 
 WORKDIR /app
 
@@ -68,6 +69,7 @@ WORKDIR /app
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/app/target \
     RUST_TARGET=$(cat /rust-target.txt) && \
+    export BLACKLIGHT_VERSION="${BLACKLIGHT_VERSION}" && \
     if [ "$RUST_TARGET" = "aarch64-unknown-linux-gnu" ]; then \
         export PKG_CONFIG_ALLOW_CROSS=1 && \
         export PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig && \
