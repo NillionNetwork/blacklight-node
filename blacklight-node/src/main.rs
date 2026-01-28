@@ -440,6 +440,7 @@ async fn main() -> Result<()> {
     let filter = EnvFilter::builder()
         .with_default_directive(tracing::Level::ERROR.into())
         .with_default_directive("attestation_verification=warn".parse()?)
+        .with_default_directive("alloy_transport_ws=off".parse()?)
         .from_env_lossy()
         // Silence noisy attestation verification modules
         .add_directive("nilcc_artifacts=warn".parse()?)
