@@ -1,4 +1,7 @@
-use crate::{ContractConfig, HeartbeatManagerClient, NilTokenClient, StakingOperatorsClient};
+use crate::{
+    ContractConfig, HeartbeatManagerClient, NilTokenClient, ProtocolConfigClient,
+    StakingOperatorsClient,
+};
 use alloy::{
     network::{Ethereum, EthereumWallet, NetworkWallet},
     primitives::{Address, B256, TxKind, U256},
@@ -17,6 +20,7 @@ pub struct BlacklightClient {
     pub manager: HeartbeatManagerClient<DynProvider>,
     pub token: NilTokenClient<DynProvider>,
     pub staking: StakingOperatorsClient<DynProvider>,
+    pub protocol_config: ProtocolConfigClient<DynProvider>,
 }
 
 impl BlacklightClient {
@@ -48,12 +52,17 @@ impl BlacklightClient {
         let token = NilTokenClient::new(provider.clone(), config.clone(), tx_lock.clone());
         let staking = StakingOperatorsClient::new(provider.clone(), config, tx_lock.clone());
 
+        let protocol_config_address = staking.protocol_config().await?;
+        let protocol_config =
+            ProtocolConfigClient::new(provider.clone(), protocol_config_address, tx_lock.clone());
+
         Ok(Self {
             provider,
             wallet,
             manager,
             token,
             staking,
+            protocol_config,
         })
     }
 
