@@ -1,0 +1,12 @@
+services:
+  niluv_node:
+    image: blacklight_node:latest
+    restart: unless-stopped
+    volumes:
+      - ./blacklight_node:/app
+      - ./cache:/tmp/niluv-cache
+    environment:
+      - RPC_URL=https://rpc-nilav-shzvox09l5.t.conduit.xyz
+      - TOKEN_CONTRACT_ADDRESS=0x69AD6D3E17C99A3f66b5Ae410a5D1D4E14C7da35
+      - MANAGER_CONTRACT_ADDRESS=0x8d683fb2CC794E085E8366c4f28f8CC991107576
+      - STAKING_CONTRACT_ADDRESS=0x595A112FA10ED66Bc518b28781035BA50C9f2216
