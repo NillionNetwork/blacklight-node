@@ -179,19 +179,20 @@ pub async fn validate_node_requirements(
     // Return error if not ready
     match status {
         WalletStatus::Created => {
+            info!("Account created successfully.");
             anyhow::bail!(
-                "Account created successfully. Please fund the address with at least {} ETH to continue.",
+                "Please fund the address with at least {} ETH to continue.",
                 format_ether(MIN_ETH_BALANCE)
             )
         }
         WalletStatus::InsufficientEth => {
             anyhow::bail!(
-                "Insufficient funds. Please try again with at least {} ETH.",
+                "Insufficient node funding: Please try again with at least {} ETH.",
                 format_ether(MIN_ETH_BALANCE)
             )
         }
         WalletStatus::InsufficientNil => {
-            anyhow::bail!("Insufficient funds. Please stake NIL and try again.")
+            anyhow::bail!("Insufficient node stake: Please stake NIL tokens and try again.")
         }
         WalletStatus::Ready => Ok(()),
     }
