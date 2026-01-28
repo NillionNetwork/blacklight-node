@@ -9,7 +9,7 @@ use tokio::sync::{Mutex, Notify};
 use tracing::info;
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
-use crate::l1::run_l1_supervisor;
+use crate::l1::L1Supervisor;
 use crate::l2::run_l2_supervisor;
 
 mod args;
@@ -105,13 +105,13 @@ async fn main() -> Result<()> {
         state.clone(),
         shutdown_notify.clone(),
     ));
-    let l1_handle = tokio::spawn(run_l1_supervisor(config, shutdown_notify.clone()));
+    let l1 = L1Supervisor::new(config).await?;
+    l1.spawn();
 
     shutdown_notify.notified().await;
     info!("Shutdown requested, stopping keeper");
 
     let _ = l2_handle.await;
-    let _ = l1_handle.await;
 
     Ok(())
 }

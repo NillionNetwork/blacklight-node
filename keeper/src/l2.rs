@@ -134,7 +134,7 @@ pub async fn run_l2_supervisor(
         let loop_handle = tokio::spawn(run_l2_keeper_loop(
             l2_client.clone(),
             state.clone(),
-            config.tick_interval_secs,
+            config.tick_interval,
             shutdown_notify.clone(),
         ));
 
@@ -335,10 +335,10 @@ async fn load_historical_events(
 async fn run_l2_keeper_loop(
     l2_client: Arc<L2KeeperClient>,
     state: Arc<Mutex<KeeperState>>,
-    tick_interval_secs: u64,
+    tick_interval: Duration,
     shutdown_notify: Arc<Notify>,
 ) -> Result<()> {
-    let mut ticker = interval(Duration::from_secs(tick_interval_secs));
+    let mut ticker = interval(tick_interval);
     loop {
         tokio::select! {
             _ = ticker.tick() => {}
