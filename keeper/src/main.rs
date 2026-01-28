@@ -1,16 +1,18 @@
 use alloy::primitives::U256;
-use alloy::providers::Provider;
-use anyhow::{Context, Result};
+use alloy::primitives::utils::format_ether;
+use anyhow::{Context, Result, bail};
 use args::{CliArgs, KeeperConfig};
 use clap::Parser;
 use clients::{L1EmissionsClient, L2KeeperClient};
 use std::sync::Arc;
-use tokio::sync::{Mutex, Notify};
+use tokio::signal;
+use tokio::signal::unix::SignalKind;
+use tokio::sync::Mutex;
 use tracing::info;
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 use crate::l1::L1Supervisor;
-use crate::l2::run_l2_supervisor;
+use crate::l2::L2Supervisor;
 
 mod args;
 mod clients;
@@ -23,6 +25,30 @@ const MIN_ETH_BALANCE: U256 = eth_to_wei(0.00001);
 const fn eth_to_wei(eth: f64) -> U256 {
     let wei = (eth * 1_000_000_000_000_000_000.0) as u64;
     U256::from_limbs([wei, 0, 0, 0])
+}
+
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        signal::ctrl_c()
+            .await
+            .expect("failed to install ctrl-c handler");
+    };
+
+    let terminate = async {
+        signal::unix::signal(SignalKind::terminate())
+            .expect("failed to install signal handler")
+            .recv()
+            .await;
+    };
+
+    tokio::select! {
+        _ = ctrl_c => {
+            info!("Received ctrl-c");
+        },
+        _ = terminate => {
+            info!("Received SIGTERM");
+        },
+    }
 }
 
 #[tokio::main]
@@ -65,89 +91,39 @@ async fn main() -> Result<()> {
     );
 
     let address = l1_client.signer_address();
-    info!("Checking L1 balance for address: {address}");
+    info!("Checking balances for address: {address}");
+
     let l1_balance = l1_client
-        .provider()
-        .get_balance(address)
+        .get_balance()
         .await
         .context("Failed to get L1 balance")?;
-
-    info!("Checking L2 balance for address: {address}");
     let l2_balance = l2_client
-        .provider()
-        .get_balance(address)
+        .get_balance()
         .await
         .context("Failed to get L2 balance")?;
-
     if l2_balance < MIN_ETH_BALANCE || l1_balance < MIN_ETH_BALANCE {
-        anyhow::bail!(
+        bail!(
             "Insufficient funds. Keeper requires at least {} ETH on both L1 and L2.",
             alloy::primitives::utils::format_ether(MIN_ETH_BALANCE)
         );
     }
 
-    let l2_balance = l2_client.get_balance().await?;
-    let l1_balance = l1_client.get_balance().await?;
-    info!(l2_balance = ?l2_balance, l1_balance = ?l1_balance, "Keeper wallet {address} ready");
-
-    info!("Press Ctrl+C to gracefully shutdown");
-
-    let shutdown_notify = Arc::new(Notify::new());
-    let shutdown_clone = shutdown_notify.clone();
-    tokio::spawn(async move {
-        setup_shutdown_handler(shutdown_clone).await;
-    });
+    let l1_balance = format!("{} ETH", format_ether(l1_balance));
+    let l2_balance = format!("{} ETH", format_ether(l2_balance));
+    info!(
+        l2_balance = l2_balance,
+        l1_balance = l1_balance,
+        "Keeper wallet {address} ready"
+    );
 
     let state = Arc::new(Mutex::new(Default::default()));
-
-    let l2_handle = tokio::spawn(run_l2_supervisor(
-        config.clone(),
-        state.clone(),
-        shutdown_notify.clone(),
-    ));
-    let l1 = L1Supervisor::new(config).await?;
+    let l1 = L1Supervisor::new(config.clone()).await?;
+    let l2 = L2Supervisor::new(&config, state.clone()).await?;
+    l2.spawn(config).await?;
     l1.spawn();
 
-    shutdown_notify.notified().await;
-    info!("Shutdown requested, stopping keeper");
-
-    let _ = l2_handle.await;
+    info!("Press ctrl+c to gracefully shutdown");
+    shutdown_signal().await;
 
     Ok(())
-}
-
-async fn setup_shutdown_handler(shutdown_notify: Arc<Notify>) {
-    #[cfg(unix)]
-    {
-        use tokio::signal::unix::{SignalKind, signal};
-
-        let mut sigterm =
-            signal(SignalKind::terminate()).expect("Failed to register SIGTERM handler");
-        let mut sigint =
-            signal(SignalKind::interrupt()).expect("Failed to register SIGINT handler");
-
-        tokio::select! {
-            _ = sigterm.recv() => {
-                info!("Shutdown signal received (SIGTERM)");
-            }
-            _ = sigint.recv() => {
-                info!("Shutdown signal received (SIGINT/Ctrl+C)");
-            }
-        }
-
-        shutdown_notify.notify_waiters();
-    }
-
-    #[cfg(not(unix))]
-    {
-        match tokio::signal::ctrl_c().await {
-            Ok(()) => {
-                info!("Shutdown signal received (Ctrl+C)");
-                shutdown_notify.notify_waiters();
-            }
-            Err(err) => {
-                error!(error = %err, "Failed to listen for shutdown signal");
-            }
-        }
-    }
 }
