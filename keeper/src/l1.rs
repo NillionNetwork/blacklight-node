@@ -1,4 +1,4 @@
-use crate::{args::KeeperConfig, clients::L1EmissionsClient};
+use crate::{args::KeeperConfig, clients::L1EmissionsClient, metrics};
 use alloy::{
     eips::BlockNumberOrTag,
     primitives::{U256, utils::format_ether},
@@ -47,6 +47,9 @@ impl L1Supervisor {
         let emissions = self.client.emissions();
         let minted_epochs = emissions.mintedEpochs().call().await?;
         let total_epochs = emissions.epochs().call().await?;
+        metrics::get().l1.epochs.set_total(total_epochs);
+        metrics::get().l1.epochs.set_minted(minted_epochs);
+
         if minted_epochs >= total_epochs {
             return Ok(());
         }
@@ -82,7 +85,10 @@ impl L1Supervisor {
             Ok(pending) => {
                 let receipt = pending.get_receipt().await?;
                 let tx_hash = receipt.transaction_hash;
-                let balance = format_ether(self.client.get_balance().await?);
+                let balance = self.client.get_balance().await?;
+                metrics::get().l1.eth.set_funds(balance);
+
+                let balance = format_ether(balance);
                 info!("Emission minted and bridged on tx {tx_hash}, have {balance} ETH left");
                 Ok(())
             }

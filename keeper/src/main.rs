@@ -4,6 +4,11 @@ use anyhow::{Context, Result, bail};
 use args::{CliArgs, KeeperConfig};
 use clap::Parser;
 use clients::{L1EmissionsClient, L2KeeperClient};
+use opentelemetry::KeyValue;
+use opentelemetry_otlp::{MetricExporterBuilder, WithExportConfig};
+use opentelemetry_sdk::Resource;
+use opentelemetry_sdk::metrics::{PeriodicReader, SdkMeterProvider};
+use std::env;
 use std::sync::Arc;
 use tokio::signal;
 use tokio::signal::unix::SignalKind;
@@ -11,6 +16,7 @@ use tokio::sync::Mutex;
 use tracing::info;
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
+use crate::args::OtelConfig;
 use crate::l1::L1Supervisor;
 use crate::l2::L2Supervisor;
 
@@ -19,6 +25,7 @@ mod clients;
 mod contracts;
 mod l1;
 mod l2;
+mod metrics;
 
 const MIN_ETH_BALANCE: U256 = eth_to_wei(0.00001);
 
@@ -51,6 +58,32 @@ async fn shutdown_signal() {
     }
 }
 
+fn setup_otel(config: &OtelConfig) -> anyhow::Result<SdkMeterProvider> {
+    let service_name =
+        env::var("OTEL_SERVICE_NAME").unwrap_or_else(|_| env!("CARGO_PKG_NAME").to_string());
+    let attributes = vec![KeyValue::new("service.version", env!("CARGO_PKG_VERSION"))];
+    let resource = Resource::builder()
+        .with_service_name(service_name)
+        .with_attributes(attributes)
+        .build();
+    let exporter = MetricExporterBuilder::new()
+        .with_tonic()
+        .with_endpoint(config.endpoint.clone())
+        .with_timeout(config.export_timeout)
+        .build()
+        .context("Failed to build metrics exporter")?;
+
+    let reader = PeriodicReader::builder(exporter)
+        .with_interval(config.export_interval)
+        .build();
+    let provider = SdkMeterProvider::builder()
+        .with_resource(resource)
+        .with_reader(reader)
+        .build();
+    opentelemetry::global::set_meter_provider(provider.clone());
+    Ok(provider)
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::registry()
@@ -60,6 +93,18 @@ async fn main() -> Result<()> {
 
     let cli_args = CliArgs::parse();
     let config = KeeperConfig::load(cli_args).await?;
+
+    let metrics = match &config.otel {
+        Some(config) => {
+            info!("Exporting metrics to {}", config.endpoint);
+            let handle = setup_otel(config).context("Failed to configure metrics")?;
+            Some(handle)
+        }
+        None => {
+            info!("Metric exports disabled");
+            None
+        }
+    };
 
     if config.disable_jailing || config.l2_jailing_policy_address.is_none() {
         info!("Jailing disabled");
@@ -124,6 +169,11 @@ async fn main() -> Result<()> {
 
     info!("Press ctrl+c to gracefully shutdown");
     shutdown_signal().await;
+
+    if let Some(metrics) = metrics {
+        info!("Shutting down metrics exporter");
+        let _ = metrics.shutdown();
+    }
 
     Ok(())
 }

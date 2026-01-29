@@ -2,6 +2,7 @@ use alloy::primitives::{Address, U256};
 use alloy::signers::local::PrivateKeySigner;
 use anyhow::Result;
 use clap::Parser;
+use std::env;
 use std::time::Duration;
 use tracing::info;
 
@@ -56,6 +57,18 @@ pub struct CliArgs {
     /// Emissions check interval in seconds (L1)
     #[arg(long, env = "EMISSIONS_INTERVAL_SECS", default_value_t = 30)]
     pub emissions_interval_secs: u64,
+
+    /// The OTEL collector endpoint.
+    #[arg(long, env = "OTEL_ENDPOINT")]
+    pub otel_endpoint: Option<String>,
+
+    /// The OTEL export interval in seconds.
+    #[arg(long, env = "OTEL_EXPORT_INTERVAL_SECS", default_value_t = 15)]
+    pub otel_export_interval_secs: u64,
+
+    /// The OTEL export timeout in seconds.
+    #[arg(long, env = "OTEL_EXPORT_TIMEOUT_SECS", default_value_t = 30)]
+    pub otel_export_timeout_secs: u64,
 }
 
 /// Keeper configuration with all required values resolved
@@ -72,6 +85,7 @@ pub struct KeeperConfig {
     pub tick_interval: Duration,
     pub emissions_interval: Duration,
     pub disable_jailing: bool,
+    pub otel: Option<OtelConfig>,
 }
 
 impl KeeperConfig {
@@ -97,6 +111,18 @@ impl KeeperConfig {
 
         let wallet: PrivateKeySigner = private_key.parse()?;
         let address = wallet.address();
+        let otel = match (is_otel_disabled(), args.otel_endpoint) {
+            (true, _) => {
+                info!("OTEL export is disabled via environment variable");
+                None
+            }
+            (false, Some(endpoint)) => Some(OtelConfig {
+                endpoint,
+                export_timeout: Duration::from_secs(args.otel_export_timeout_secs),
+                export_interval: Duration::from_secs(args.otel_export_interval_secs),
+            }),
+            (false, None) => None,
+        };
 
         info!(
             "Loaded KeeperConfig: l2_rpc_url={l2_rpc_url}, l1_rpc_url={l1_rpc_url}, heartbeat_manager={l2_heartbeat_manager_address}, emissions_controller={l1_emissions_controller_address}, wallet_address={address}"
@@ -114,6 +140,18 @@ impl KeeperConfig {
             tick_interval,
             emissions_interval,
             disable_jailing,
+            otel,
         })
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct OtelConfig {
+    pub endpoint: String,
+    pub export_timeout: Duration,
+    pub export_interval: Duration,
+}
+
+fn is_otel_disabled() -> bool {
+    env::var("OTEL_SDK_DISABLED").as_deref() == Ok("true")
 }
