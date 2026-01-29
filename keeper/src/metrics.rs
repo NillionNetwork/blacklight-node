@@ -1,7 +1,7 @@
 use alloy::primitives::U256;
 use opentelemetry::{
-    global,
-    metrics::{Gauge, Meter},
+    KeyValue, global,
+    metrics::{Counter, Gauge, Meter},
 };
 use std::sync::LazyLock;
 
@@ -16,6 +16,7 @@ pub(crate) fn get() -> &'static Metrics {
 
 pub(crate) struct Metrics {
     pub(crate) l1: L1Metrics,
+    pub(crate) l2: L2Metrics,
     // A private guard to prevent this type from being constructed outside of this module.
     _private: (),
 }
@@ -23,7 +24,12 @@ pub(crate) struct Metrics {
 impl Metrics {
     fn new(meter: &Meter) -> Self {
         let l1 = L1Metrics::new(meter);
-        Self { l1, _private: () }
+        let l2 = L2Metrics::new(meter);
+        Self {
+            l1,
+            l2,
+            _private: (),
+        }
     }
 }
 
@@ -89,5 +95,99 @@ impl L1EpochsMetrics {
             return;
         };
         self.minted.record(amount, &[]);
+    }
+}
+
+pub(crate) struct L2Metrics {
+    pub(crate) events: L2EventMetrics,
+    pub(crate) rewards: L2RewardsMetrics,
+    pub(crate) escalations: L2EscalationsMetrics,
+}
+
+impl L2Metrics {
+    fn new(meter: &Meter) -> Self {
+        let events = L2EventMetrics::new(meter);
+        let rewards = L2RewardsMetrics::new(meter);
+        let escalations = L2EscalationsMetrics::new(meter);
+        Self {
+            events,
+            rewards,
+            escalations,
+        }
+    }
+}
+
+pub(crate) struct L2EventMetrics {
+    received: Counter<u64>,
+}
+
+impl L2EventMetrics {
+    fn new(meter: &Meter) -> Self {
+        let received = meter
+            .u64_counter("blacklight.keeper.l2.events.received")
+            .with_description("Total L2 events received")
+            .build();
+        Self { received }
+    }
+
+    pub(crate) fn inc_events_received(&self, name: &'static str) {
+        self.received.add(1, &[KeyValue::new("name", name)]);
+    }
+}
+
+pub(crate) struct L2RewardsMetrics {
+    distribution: Counter<u64>,
+    budget: Gauge<f64>,
+}
+
+impl L2RewardsMetrics {
+    fn new(meter: &Meter) -> Self {
+        let distribution = meter
+            .u64_counter("blacklight.keeper.l2.rewards.distributions")
+            .with_description("Number of times rewards were distributed")
+            .build();
+        let budget = meter
+            .f64_gauge("blacklight.keeper.l2.rewards.budget")
+            .with_description("The current spendable budget for rewards")
+            .build();
+        Self {
+            distribution,
+            budget,
+        }
+    }
+
+    pub(crate) fn inc_distributions(&self) {
+        self.distribution.add(1, &[]);
+    }
+
+    pub(crate) fn set_budget(&self, value: U256) {
+        self.budget.record(value.into(), &[]);
+    }
+}
+
+pub(crate) struct L2EscalationsMetrics {
+    total: Counter<u64>,
+    block: Gauge<u64>,
+}
+
+impl L2EscalationsMetrics {
+    fn new(meter: &Meter) -> Self {
+        let total = meter
+            .u64_counter("blacklight.keeper.l2.escalations.total")
+            .with_description("Total number of escalations")
+            .build();
+        let block = meter
+            .u64_gauge("blacklight.keeper.l2.escalations.block")
+            .with_description("The block used for escalations")
+            .build();
+        Self { total, block }
+    }
+
+    pub(crate) fn inc_escalations(&self) {
+        self.total.add(1, &[]);
+    }
+
+    pub(crate) fn set_block(&self, block: u64) {
+        self.block.record(block, &[]);
     }
 }

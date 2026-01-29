@@ -1,6 +1,7 @@
 use crate::{
     clients::{L2KeeperClient, RewardPolicyInstance},
     l2::{KeeperState, RewardPolicyCache, RoundInfoView, RoundKey},
+    metrics,
 };
 use alloy::primitives::{Address, U256};
 use anyhow::bail;
@@ -108,10 +109,11 @@ impl RewardsDistributor {
                 if let Some(round_state) = state.rounds.get_mut(&key) {
                     round_state.rewards_done = true;
                 }
+                metrics::get().l2.rewards.inc_distributions();
                 Ok(())
             }
             Err(e) => {
-                bail!("Failed to distribute rewareds: {e}");
+                bail!("Failed to distribute rewards: {e}");
             }
         }
     }
@@ -155,6 +157,7 @@ impl RewardsDistributor {
             cache.last_balance = None;
         }
         let budget = budget.unwrap_or(U256::ZERO);
+        metrics::get().l2.rewards.set_budget(budget);
         if budget > U256::ZERO {
             self.store_reward_cache(reward_address, cache).await;
             return Ok(true);

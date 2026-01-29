@@ -5,6 +5,7 @@ use crate::{
         KeeperState, escalator::RoundEscalator, events::EventListener, jailing::Jailer,
         rewards::RewardsDistributor,
     },
+    metrics,
 };
 use alloy::{eips::BlockId, providers::Provider};
 use anyhow::Context;
@@ -78,7 +79,10 @@ impl L2Supervisor {
             ticker.tick().await;
 
             let block_timestamp = match self.client.provider().get_block(BlockId::latest()).await {
-                Ok(Some(block)) => block.header.timestamp,
+                Ok(Some(block)) => {
+                    metrics::get().l2.escalations.set_block(block.header.number);
+                    block.header.timestamp
+                }
                 Ok(None) => {
                     error!("No latest block found (is the chain working?)");
                     continue;
