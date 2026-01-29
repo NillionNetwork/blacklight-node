@@ -1,6 +1,7 @@
 use crate::{
     clients::HeartbeatManagerInstance,
     l2::{KeeperState, RoundKey},
+    metrics,
 };
 use alloy::{primitives::B256, rpc::types::Log, sol_types::SolEvent};
 use anyhow::Context;
@@ -154,6 +155,11 @@ impl EventListener {
         &self,
         from_block: u64,
     ) -> anyhow::Result<impl Stream<Item = E> + 'static> {
+        // Pull the name out of the signature so we can expose a properly labelled metric
+        let event_name = E::SIGNATURE
+            .split_once('(')
+            .map(|(name, _)| name)
+            .unwrap_or(E::SIGNATURE);
         let stream = self
             .manager
             .event_filter::<E>()
@@ -162,13 +168,14 @@ impl EventListener {
             .await
             .context("Failed to subscribe to events")?
             .into_stream()
-            .filter_map(|e| async move {
-                match e {
-                    Ok((event, _)) => Some(event),
-                    Err(e) => {
-                        error!("Failed to receive {} event: {e}", E::SIGNATURE);
-                        None
-                    }
+            .filter_map(async move |e| match e {
+                Ok((event, _)) => {
+                    metrics::get().l2.events.inc_events_received(event_name);
+                    Some(event)
+                }
+                Err(e) => {
+                    error!("Failed to receive {} event: {e}", E::SIGNATURE);
+                    None
                 }
             });
         Ok(stream)
