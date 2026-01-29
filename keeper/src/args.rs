@@ -2,6 +2,7 @@ use alloy::primitives::{Address, U256};
 use alloy::signers::local::PrivateKeySigner;
 use anyhow::Result;
 use clap::Parser;
+use std::time::Duration;
 use tracing::info;
 
 /// CLI arguments for the keeper
@@ -68,8 +69,8 @@ pub struct KeeperConfig {
     pub private_key: String,
     pub l1_bridge_value: U256,
     pub lookback_blocks: u64,
-    pub tick_interval_secs: u64,
-    pub emissions_interval_secs: u64,
+    pub tick_interval: Duration,
+    pub emissions_interval: Duration,
     pub disable_jailing: bool,
 }
 
@@ -91,8 +92,8 @@ impl KeeperConfig {
         };
         let l1_bridge_value = args.l1_bridge_value_wei;
         let lookback_blocks = args.lookback_blocks;
-        let tick_interval_secs = args.tick_interval_secs;
-        let emissions_interval_secs = args.emissions_interval_secs;
+        let tick_interval = Duration::from_secs(args.tick_interval_secs);
+        let emissions_interval = Duration::from_secs(args.emissions_interval_secs);
 
         let wallet: PrivateKeySigner = private_key.parse()?;
         let address = wallet.address();
@@ -110,8 +111,8 @@ impl KeeperConfig {
             private_key,
             l1_bridge_value,
             lookback_blocks,
-            tick_interval_secs,
-            emissions_interval_secs,
+            tick_interval,
+            emissions_interval,
             disable_jailing,
         })
     }
