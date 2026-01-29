@@ -102,6 +102,16 @@ impl L2Supervisor {
             }
 
             self.process_rounds(block_timestamp).await;
+
+            match self
+                .client
+                .provider()
+                .get_balance(self.client.signer_address())
+                .await
+            {
+                Ok(balance) => metrics::get().l2.eth.set_funds(balance),
+                Err(e) => error!("Failed to get our balance: {e}"),
+            };
         }
     }
 

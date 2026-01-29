@@ -102,6 +102,7 @@ pub(crate) struct L2Metrics {
     pub(crate) events: L2EventMetrics,
     pub(crate) rewards: L2RewardsMetrics,
     pub(crate) escalations: L2EscalationsMetrics,
+    pub(crate) eth: L2EthMetrics,
 }
 
 impl L2Metrics {
@@ -109,10 +110,12 @@ impl L2Metrics {
         let events = L2EventMetrics::new(meter);
         let rewards = L2RewardsMetrics::new(meter);
         let escalations = L2EscalationsMetrics::new(meter);
+        let eth = L2EthMetrics::new(meter);
         Self {
             events,
             rewards,
             escalations,
+            eth,
         }
     }
 }
@@ -189,5 +192,24 @@ impl L2EscalationsMetrics {
 
     pub(crate) fn set_block(&self, block: u64) {
         self.block.record(block, &[]);
+    }
+}
+
+pub(crate) struct L2EthMetrics {
+    funds: Gauge<f64>,
+}
+
+impl L2EthMetrics {
+    fn new(meter: &Meter) -> Self {
+        let funds = meter
+            .f64_gauge("blacklight.keeper.l2.eth.total")
+            .with_description("Total amount of ETH available in L2 wallet")
+            .with_unit("ETH")
+            .build();
+        Self { funds }
+    }
+
+    pub(crate) fn set_funds(&self, amount: U256) {
+        self.funds.record(amount.into(), &[]);
     }
 }
