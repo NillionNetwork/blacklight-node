@@ -30,6 +30,7 @@ sol!(
         error NoStake();
         error NotActive();
 
+        function protocolConfig() external view returns (address);
         function stakingToken() external view override returns (address);
         function stakeOf(address operator) external view override returns (uint256);
         function totalStaked() external view override returns (uint256);
@@ -75,9 +76,13 @@ impl<P: Provider + Clone> StakingOperatorsClient<P> {
     // View Functions
     // ------------------------------------------------------------------------
 
+    /// Returns the address of the protocol config contract
+    pub async fn protocol_config(&self) -> Result<Address> {
+        Ok(self.contract.protocolConfig().call().await?)
+    }
+
     /// Returns the address of the staking token
     pub async fn staking_token(&self) -> Result<Address> {
-        // Solidity: function stakingToken() external view returns (address)
         Ok(self.contract.stakingToken().call().await?)
     }
 

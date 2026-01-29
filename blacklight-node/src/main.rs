@@ -25,7 +25,10 @@ const MAX_RECONNECT_DELAY: Duration = Duration::from_secs(60);
 
 mod args;
 mod verification;
+mod version;
 mod wallet;
+
+use version::{VERSION, validate_node_version};
 
 // ============================================================================
 // Signal Handling
@@ -156,6 +159,15 @@ async fn process_htx_assignment(
 
             if let Err(e) = print_status(&client, count).await {
                 warn!(error = %e, "Failed to fetch status information");
+            }
+
+            // Validate node version against protocol requirement and initiate shutdown if incompatible
+            if let Err(e) = validate_node_version(&client).await {
+                error!(error = %e, "Node version validation failed. Initiating shutdown...");
+                shutdown_notify.notify_waiters();
+                return Err(anyhow::anyhow!(
+                    "Node version is incompatible with protocol requirement"
+                ));
             }
 
             // Check if balance is below minimum threshold
@@ -466,7 +478,10 @@ async fn main() -> Result<()> {
     )
     .await?;
 
-    info!("Node initialized");
+    // Validate node version against protocol requirement
+    validate_node_version(&validation_client).await?;
+
+    info!(version = VERSION, "Node initialized");
     info!("Press Ctrl+C to gracefully shutdown and deactivate");
 
     // Setup graceful shutdown handler

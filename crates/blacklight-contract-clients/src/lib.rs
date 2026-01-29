@@ -5,6 +5,7 @@ pub mod common;
 pub mod heartbeat_manager;
 pub mod htx;
 pub mod nil_token;
+pub mod protocol_config;
 pub mod staking_operators;
 
 // ============================================================================
@@ -14,6 +15,7 @@ pub mod staking_operators;
 pub use blacklight_client::BlacklightClient;
 pub use heartbeat_manager::HeartbeatManagerClient;
 pub use nil_token::NilTokenClient;
+pub use protocol_config::ProtocolConfigClient;
 pub use staking_operators::StakingOperatorsClient;
 
 // ============================================================================
@@ -22,6 +24,9 @@ pub use staking_operators::StakingOperatorsClient;
 
 // Heartbeat manager events
 pub use heartbeat_manager::HearbeatManager;
+
+// ProtocolConfig events
+pub use protocol_config::ProtocolConfig;
 
 // StakingOperators events
 pub use staking_operators::StakingOperators;
