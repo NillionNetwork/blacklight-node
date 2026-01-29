@@ -11,7 +11,7 @@ use clap::Parser;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
-use tokio::sync::Notify;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 use verification::HtxVerifier;
@@ -32,7 +32,7 @@ mod wallet;
 // ============================================================================
 
 /// Setup shutdown signal handler (Ctrl+C / SIGTERM)
-async fn setup_shutdown_handler(shutdown_notify: Arc<Notify>) {
+async fn setup_shutdown_handler(shutdown_token: CancellationToken) {
     #[cfg(unix)]
     {
         use tokio::signal::unix::{SignalKind, signal};
@@ -51,7 +51,7 @@ async fn setup_shutdown_handler(shutdown_notify: Arc<Notify>) {
             }
         }
 
-        shutdown_notify.notify_waiters();
+        shutdown_token.cancel();
     }
 
     #[cfg(not(unix))]
@@ -59,7 +59,7 @@ async fn setup_shutdown_handler(shutdown_notify: Arc<Notify>) {
         match tokio::signal::ctrl_c().await {
             Ok(()) => {
                 info!("Shutdown signal received (Ctrl+C)");
-                shutdown_notify.notify_waiters();
+                shutdown_token.cancel();
             }
             Err(err) => {
                 error!(error = %err, "Failed to listen for shutdown signal");
@@ -98,7 +98,7 @@ async fn process_htx_assignment(
     event: RoundStartedEvent,
     verifier: &HtxVerifier,
     verified_counter: Arc<AtomicU64>,
-    shutdown_notify: Arc<Notify>,
+    shutdown_token: CancellationToken,
     node_address: Address,
 ) -> Result<()> {
     let htx_id = event.heartbeatKey;
@@ -167,7 +167,7 @@ async fn process_htx_assignment(
                             min_required = %format_ether(MIN_ETH_BALANCE),
                             "⚠️ ETH balance below minimum threshold. Initiating shutdown..."
                         );
-                        shutdown_notify.notify_waiters();
+                        shutdown_token.cancel();
                         return Err(anyhow::anyhow!("Insufficient ETH balance"));
                     }
                 }
@@ -191,7 +191,7 @@ async fn process_assignment_backlog(
     node_address: Address,
     verifier: &HtxVerifier,
     verified_counter: Arc<AtomicU64>,
-    shutdown_notify: Arc<Notify>,
+    shutdown_token: CancellationToken,
 ) -> Result<()> {
     info!("Checking for pending assignments from before connection");
 
@@ -224,7 +224,7 @@ async fn process_assignment_backlog(
                 let client_clone = client.clone();
                 let verifier = verifier.clone();
                 let counter = verified_counter.clone();
-                let shutdown_clone = shutdown_notify.clone();
+                let shutdown_clone = shutdown_token.clone();
                 tokio::spawn(async move {
                     if let Err(e) = process_htx_assignment(
                         client_clone,
@@ -279,7 +279,7 @@ async fn register_node_if_needed(client: &BlacklightClient, node_address: Addres
 /// Create a WebSocket client with exponential backoff retry logic
 async fn create_client_with_retry(
     config: &NodeConfig,
-    shutdown_notify: &Arc<Notify>,
+    shutdown_token: &CancellationToken,
 ) -> Result<BlacklightClient> {
     let mut reconnect_delay = INITIAL_RECONNECT_DELAY;
     let max_reconnect_delay = MAX_RECONNECT_DELAY;
@@ -309,7 +309,7 @@ async fn create_client_with_retry(
                     _ = tokio::time::sleep(reconnect_delay) => {
                         reconnect_delay = std::cmp::min(reconnect_delay * 2, max_reconnect_delay);
                     }
-                    _ = shutdown_notify.notified() => {
+                    _ = shutdown_token.cancelled() => {
                         return Err(anyhow::anyhow!("Shutdown signal received during connection retry"));
                     }
                 }
@@ -326,13 +326,13 @@ async fn create_client_with_retry(
 async fn run_event_listener(
     client: Arc<BlacklightClient>,
     node_address: Address,
-    shutdown_notify: Arc<Notify>,
+    shutdown_token: CancellationToken,
     verifier: &HtxVerifier,
     verified_counter: Arc<AtomicU64>,
 ) -> Result<()> {
     let client_for_callback = client.clone();
     let counter_for_callback = verified_counter.clone();
-    let shutdown_for_callback = shutdown_notify.clone();
+    let shutdown_for_callback = shutdown_token.clone();
 
     let manager = Arc::new(client.manager.clone());
     let listen_future = manager.listen_htx_assigned_for_node(node_address, move |event| {
@@ -379,7 +379,7 @@ async fn run_event_listener(
             result?;
             Ok(())
         },
-        _ = shutdown_notify.notified() => {
+        _ = shutdown_token.cancelled() => {
             info!("Shutdown signal received during event listening");
             Err(anyhow::anyhow!("Shutdown requested"))
         }
@@ -470,10 +470,10 @@ async fn main() -> Result<()> {
     info!("Press Ctrl+C to gracefully shutdown and deactivate");
 
     // Setup graceful shutdown handler
-    let shutdown_notify = Arc::new(Notify::new());
-    let shutdown_notify_clone = shutdown_notify.clone();
+    let shutdown_token = CancellationToken::new();
+    let shutdown_token_clone = shutdown_token.clone();
     tokio::spawn(async move {
-        setup_shutdown_handler(shutdown_notify_clone).await;
+        setup_shutdown_handler(shutdown_token_clone).await;
     });
 
     // Counter for verified HTXs (for status reporting)
@@ -488,7 +488,7 @@ async fn main() -> Result<()> {
         info!("Starting WebSocket event listener with auto-reconnection");
 
         // Create client with retry logic
-        let client = match create_client_with_retry(&config, &shutdown_notify).await {
+        let client = match create_client_with_retry(&config, &shutdown_token).await {
             Ok(client) => client,
             Err(_) => break, // Shutdown requested or unrecoverable error
         };
@@ -512,7 +512,7 @@ async fn main() -> Result<()> {
             current_address,
             &verifier,
             verified_counter.clone(),
-            shutdown_notify.clone(),
+            shutdown_token.clone(),
         )
         .await
         {
@@ -523,7 +523,7 @@ async fn main() -> Result<()> {
         match run_event_listener(
             client_arc,
             current_address,
-            shutdown_notify.clone(),
+            shutdown_token.clone(),
             &verifier,
             verified_counter.clone(),
         )
@@ -545,7 +545,7 @@ async fn main() -> Result<()> {
             _ = tokio::time::sleep(reconnect_delay) => {
                 reconnect_delay = std::cmp::min(reconnect_delay * 2, max_reconnect_delay);
             }
-            _ = shutdown_notify.notified() => {
+            _ = shutdown_token.cancelled() => {
                 break; // Shutdown requested
             }
         }
