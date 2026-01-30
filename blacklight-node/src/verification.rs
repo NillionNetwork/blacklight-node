@@ -12,7 +12,7 @@ use attestation_verification::{
 };
 use attestation_verification::{VerificationError as ExtVerificationError, VmType};
 use blacklight_contract_clients::heartbeat_manager::Verdict;
-use blacklight_contract_clients::htx::{NillionHtx, PhalaHtx};
+use blacklight_contract_clients::htx::{Erc8004Htx, NillionHtx, PhalaHtx};
 use dcap_qvl::collateral::get_collateral_and_verify;
 use reqwest::Client;
 use sha2::{Digest, Sha256};
@@ -31,6 +31,7 @@ pub enum VerificationError {
     PhalaEventLogParse(String),
     FetchCerts(String),
     DetectProcessor(String),
+    Erc8004EndpointUnreachable(String),
 
     // Malicious errors - cryptographic verification failures
     VerifyReport(String),
@@ -58,7 +59,8 @@ impl VerificationError {
             | PhalaEventLogParse(_)
             | FetchCerts(_)
             | InvalidCertificate(_)
-            | DetectProcessor(_) => Verdict::Inconclusive,
+            | DetectProcessor(_)
+            | Erc8004EndpointUnreachable(_) => Verdict::Inconclusive,
 
             // Failure - cryptographic verification failures (indicates potential tampering)
             VerifyReport(_)
@@ -92,6 +94,7 @@ impl VerificationError {
             FetchCerts(e) => format!("could not fetch AMD certificates: {e}"),
             DetectProcessor(e) => format!("could not detect processor type: {e}"),
             InvalidCertificate(e) => format!("invalid certificate obtained from AMD: {e}"),
+            Erc8004EndpointUnreachable(e) => format!("ERC-8004 endpoint unreachable or unhealthy: {e}"),
 
             // Malicious errors
             VerifyReport(e) => format!("attestation report verification failed: {e}"),
@@ -305,6 +308,39 @@ impl HtxVerifier {
 
         Ok(())
     }
+
+    /// Verify an ERC8004 HTX by performing a health check on the endpoint.
+    ///
+    /// Validation step: HTTP GET the endpoint URL. Success if response is 2xx.
+    ///
+    /// Returns Ok(()) if the endpoint is alive and healthy, Err(VerificationError) otherwise.
+    pub async fn verify_erc8004_htx(&self, htx: &Erc8004Htx) -> Result<(), VerificationError> {
+        let Erc8004Htx::V1(htx) = htx;
+
+        let client = Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .connect_timeout(std::time::Duration::from_secs(5))
+            .build()
+            .expect("Failed to build HTTP client");
+
+        let resp = client
+            .get(&htx.endpoint)
+            .send()
+            .await
+            .map_err(|e| {
+                VerificationError::Erc8004EndpointUnreachable(format!("request failed: {e}"))
+            })?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            return Err(VerificationError::Erc8004EndpointUnreachable(format!(
+                "endpoint returned {}",
+                status.as_u16()
+            )));
+        }
+
+        Ok(())
+    }
 }
 
 #[derive(Default)]
@@ -344,6 +380,9 @@ mod tests {
 
         let err = VerificationError::PhalaQuoteVerify("quote error".to_string());
         assert!(err.message().contains("quote verification failed"));
+
+        let err = VerificationError::Erc8004EndpointUnreachable("timeout".to_string());
+        assert!(err.message().contains("ERC-8004 endpoint unreachable"));
     }
 
     #[test]
@@ -356,6 +395,7 @@ mod tests {
             VerificationError::PhalaEventLogParse("missing field".to_string()),
             VerificationError::FetchCerts("AMD server unreachable".to_string()),
             VerificationError::DetectProcessor("unknown CPU".to_string()),
+            VerificationError::Erc8004EndpointUnreachable("connection refused".to_string()),
         ];
 
         for err in inconclusive_errors {

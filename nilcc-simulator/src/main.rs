@@ -129,6 +129,10 @@ async fn submit_next_htx(
                 Htx::Phala(PhalaHtx::V1(htx)) => {
                     htx.app_compose = format!("{}-{:x}", htx.app_compose, nonce);
                 }
+                Htx::Erc8004(_) => {
+                    // ERC8004: endpoint is fixed (health URL), no per-submission uniquification
+                    // TODO: add a nonce to the agent_id
+                }
             }
             htx
         };

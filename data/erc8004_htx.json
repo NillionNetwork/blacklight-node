@@ -1,0 +1,6 @@
+{
+  "provider": "ERC-8004",
+  "version": "v1",
+  "endpoint": "https://api.nilai.nillion.network/v1/health",
+  "nilcc_url": null
+}
