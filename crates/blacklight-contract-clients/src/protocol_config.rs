@@ -27,6 +27,7 @@ sol!(
 
         function nodeVersion() external view returns (string memory);
         function setNodeVersion(string calldata newVersion) external;
+        function rewardPolicy() external view override returns (address);
     }
 );
 
@@ -62,6 +63,11 @@ impl<P: Provider + Clone> ProtocolConfigClient<P> {
     /// Returns the current node version string
     pub async fn node_version(&self) -> Result<String> {
         Ok(self.contract.nodeVersion().call().await?)
+    }
+
+    /// Returns the rewards policy address.
+    pub async fn rewards_policy_address(&self) -> Result<Address> {
+        Ok(self.contract.rewardPolicy().call().await?)
     }
 
     // ------------------------------------------------------------------------

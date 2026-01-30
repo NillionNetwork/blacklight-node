@@ -38,6 +38,10 @@ pub struct CliArgs {
     #[arg(long, env = "L1_EMISSIONS_CONTROLLER_ADDRESS")]
     pub l1_emissions_controller_address: Address,
 
+    /// L2 staking operators contract address.
+    #[arg(long, env = "L2_STAKING_OPERATORS_ADDRESS")]
+    pub l2_staking_operators_address: Address,
+
     /// Private key for contract interactions
     #[arg(long, env = "PRIVATE_KEY")]
     pub private_key: String,
@@ -79,6 +83,7 @@ pub struct KeeperConfig {
     pub l2_heartbeat_manager_address: Address,
     pub l2_jailing_policy_address: Option<Address>,
     pub l1_emissions_controller_address: Address,
+    pub l2_staking_operators_address: Address,
     pub private_key: String,
     pub l1_bridge_value: U256,
     pub lookback_blocks: u64,
@@ -96,6 +101,7 @@ impl KeeperConfig {
         let l1_rpc_url = args.l1_rpc_url;
         let l2_heartbeat_manager_address = args.l2_heartbeat_manager_address;
         let l1_emissions_controller_address = args.l1_emissions_controller_address;
+        let l2_staking_operators_address = args.l2_staking_operators_address;
         let l2_jailing_policy_address = args.l2_jailing_policy_address;
         let disable_jailing = args.disable_jailing;
         let private_key = args.private_key;
@@ -134,6 +140,7 @@ impl KeeperConfig {
             l2_heartbeat_manager_address,
             l2_jailing_policy_address,
             l1_emissions_controller_address,
+            l2_staking_operators_address,
             private_key,
             l1_bridge_value,
             lookback_blocks,

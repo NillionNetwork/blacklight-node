@@ -5,9 +5,10 @@ use alloy::{
     providers::{DynProvider, Provider, ProviderBuilder, WsConnect},
     signers::local::PrivateKeySigner,
 };
-use blacklight_contract_clients::HearbeatManager;
+use blacklight_contract_clients::{HearbeatManager, StakingOperators};
 
 pub type HeartbeatManagerInstance = HearbeatManager::HearbeatManagerInstance<DynProvider>;
+pub type StakingOperatorsInstance = StakingOperators::StakingOperatorsInstance<DynProvider>;
 pub type JailingPolicyInstance = JailingPolicy::JailingPolicyInstance<DynProvider>;
 pub type EmissionsControllerInstance =
     EmissionsController::EmissionsControllerInstance<DynProvider>;
@@ -39,6 +40,7 @@ async fn connect_ws(
 /// WebSocket-based client for L2 keeper duties (heartbeat rounds + jailing)
 pub struct L2KeeperClient {
     heartbeat_manager: HeartbeatManagerInstance,
+    staking_operators: StakingOperatorsInstance,
     jailing_policy: Option<JailingPolicyInstance>,
     provider: DynProvider,
     wallet: EthereumWallet,
@@ -48,17 +50,21 @@ impl L2KeeperClient {
     pub async fn new(
         rpc_url: String,
         heartbeat_manager_address: Address,
+        staking_operators_address: Address,
         jailing_policy_address: Option<Address>,
         private_key: String,
     ) -> anyhow::Result<Self> {
         let (provider, wallet) = connect_ws(&rpc_url, &private_key).await?;
         let heartbeat_manager =
             HeartbeatManagerInstance::new(heartbeat_manager_address, provider.clone());
+        let staking_operators =
+            StakingOperatorsInstance::new(staking_operators_address, provider.clone());
         let jailing_policy =
             jailing_policy_address.map(|addr| JailingPolicyInstance::new(addr, provider.clone()));
 
         Ok(Self {
             heartbeat_manager,
+            staking_operators,
             jailing_policy,
             provider,
             wallet,
@@ -67,6 +73,10 @@ impl L2KeeperClient {
 
     pub fn heartbeat_manager(&self) -> &HeartbeatManagerInstance {
         &self.heartbeat_manager
+    }
+
+    pub fn staking_operators(&self) -> &StakingOperatorsInstance {
+        &self.staking_operators
     }
 
     pub fn jailing_policy(&self) -> Option<&JailingPolicyInstance> {

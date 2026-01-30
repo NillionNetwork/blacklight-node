@@ -23,18 +23,9 @@ pub struct L2Supervisor {
 
 impl L2Supervisor {
     pub async fn new(
-        config: &KeeperConfig,
+        client: Arc<L2KeeperClient>,
         state: Arc<Mutex<KeeperState>>,
     ) -> anyhow::Result<Self> {
-        let client = L2KeeperClient::new(
-            config.l2_rpc_url.clone(),
-            config.l2_heartbeat_manager_address,
-            config.l2_jailing_policy_address,
-            config.private_key.clone(),
-        )
-        .await
-        .context("Failed to connect to L2")?;
-        let client = Arc::new(client);
         let jailer = Jailer::new(client.clone(), state.clone());
         let rewards_distributor = RewardsDistributor::new(client.clone(), state.clone());
         let round_escalator = RoundEscalator::new(client.clone(), state.clone());
