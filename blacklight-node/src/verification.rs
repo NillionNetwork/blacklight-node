@@ -94,7 +94,9 @@ impl VerificationError {
             FetchCerts(e) => format!("could not fetch AMD certificates: {e}"),
             DetectProcessor(e) => format!("could not detect processor type: {e}"),
             InvalidCertificate(e) => format!("invalid certificate obtained from AMD: {e}"),
-            Erc8004EndpointUnreachable(e) => format!("ERC-8004 endpoint unreachable or unhealthy: {e}"),
+            Erc8004EndpointUnreachable(e) => {
+                format!("ERC-8004 endpoint unreachable or unhealthy: {e}")
+            }
 
             // Malicious errors
             VerifyReport(e) => format!("attestation report verification failed: {e}"),
@@ -323,13 +325,9 @@ impl HtxVerifier {
             .build()
             .expect("Failed to build HTTP client");
 
-        let resp = client
-            .get(&htx.endpoint)
-            .send()
-            .await
-            .map_err(|e| {
-                VerificationError::Erc8004EndpointUnreachable(format!("request failed: {e}"))
-            })?;
+        let resp = client.get(&htx.endpoint).send().await.map_err(|e| {
+            VerificationError::Erc8004EndpointUnreachable(format!("request failed: {e}"))
+        })?;
 
         let status = resp.status();
         if !status.is_success() {
