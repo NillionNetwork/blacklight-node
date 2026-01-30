@@ -79,12 +79,30 @@ pub enum PhalaHtx {
     V1(PhalaHtxV1),
 }
 
-// Unified HTX type that can represent both nilCC and Phala HTXs
+// ERC8004 HTX types (endpoint health-check validation)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Erc8004HtxV1 {
+    pub endpoint: String,
+    /// nilCC URL if needed for validation (defaults to null)
+    #[serde(rename = "nilcc_url")]
+    pub nilcc_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "version", rename_all = "camelCase")]
+pub enum Erc8004Htx {
+    /// The first ERC8004 HTX format version.
+    V1(Erc8004HtxV1),
+}
+
+// Unified HTX type that can represent nilCC, Phala, and ERC8004 HTXs
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "provider", rename_all = "camelCase")]
 pub enum Htx {
     Nillion(NillionHtx),
     Phala(PhalaHtx),
+    #[serde(rename = "ERC-8004")]
+    Erc8004(Erc8004Htx),
 }
 
 impl From<NillionHtx> for Htx {
@@ -242,5 +260,22 @@ mod tests {
 
         let htx: Htx = serde_json::from_str(nilcc_json).unwrap();
         assert!(matches!(htx, Htx::Nillion(_)), "not a nillion HTX");
+    }
+
+    #[test]
+    fn test_deserialize_erc8004() {
+        let erc8004_json = r#"{
+            "provider": "ERC-8004",
+            "version": "v1",
+            "endpoint": "https://api.nilai.nillion.network/v1/health",
+            "nilcc_url": null
+        }"#;
+
+        let htx: Htx = serde_json::from_str(erc8004_json).unwrap();
+        let Htx::Erc8004(Erc8004Htx::V1(htx)) = htx else {
+            panic!("not an ERC-8004 HTX");
+        };
+        assert_eq!(htx.endpoint, "https://api.nilai.nillion.network/v1/health");
+        assert_eq!(htx.nilcc_url, None);
     }
 }

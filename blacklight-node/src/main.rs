@@ -116,6 +116,10 @@ async fn process_htx_assignment(
                 info!(htx_id = ?htx_id, "Detected Phala HTX");
                 verifier.verify_phala_htx(&htx).await
             }
+            Htx::Erc8004(htx) => {
+                info!(htx_id = ?htx_id, "Detected ERC8004 HTX");
+                verifier.verify_erc8004_htx(&htx).await
+            }
         },
         Err(e) => {
             error!(htx_id = ?htx_id, error = %e, "Failed to parse HTX data");
