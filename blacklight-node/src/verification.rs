@@ -12,7 +12,7 @@ use attestation_verification::{
 };
 use attestation_verification::{VerificationError as ExtVerificationError, VmType};
 use blacklight_contract_clients::heartbeat_manager::Verdict;
-use blacklight_contract_clients::htx::{NillionHtx, PhalaHtx};
+use blacklight_contract_clients::htx::{Erc8004Htx, NillionHtx, PhalaHtx};
 use dcap_qvl::collateral::get_collateral_and_verify;
 use reqwest::Client;
 use sha2::{Digest, Sha256};
@@ -31,6 +31,7 @@ pub enum VerificationError {
     PhalaEventLogParse(String),
     FetchCerts(String),
     DetectProcessor(String),
+    Erc8004FetchUri(String),
 
     // Malicious errors - cryptographic verification failures
     VerifyReport(String),
@@ -39,6 +40,7 @@ pub enum VerificationError {
     PhalaComposeHashMismatch,
     PhalaQuoteVerify(String),
     InvalidCertificate(String),
+    Erc8004InvalidUri(String),
 }
 
 impl VerificationError {
@@ -58,14 +60,16 @@ impl VerificationError {
             | PhalaEventLogParse(_)
             | FetchCerts(_)
             | InvalidCertificate(_)
-            | DetectProcessor(_) => Verdict::Inconclusive,
+            | DetectProcessor(_)
+            | Erc8004FetchUri(_) => Verdict::Inconclusive,
 
             // Failure - cryptographic verification failures (indicates potential tampering)
             VerifyReport(_)
             | MeasurementHash(_)
             | NotInBuilderIndex
             | PhalaComposeHashMismatch
-            | PhalaQuoteVerify(_) => Verdict::Failure,
+            | PhalaQuoteVerify(_)
+            | Erc8004InvalidUri(_) => Verdict::Failure,
         }
     }
 
@@ -92,6 +96,7 @@ impl VerificationError {
             FetchCerts(e) => format!("could not fetch AMD certificates: {e}"),
             DetectProcessor(e) => format!("could not detect processor type: {e}"),
             InvalidCertificate(e) => format!("invalid certificate obtained from AMD: {e}"),
+            Erc8004FetchUri(e) => format!("could not fetch ERC-8004 request URI: {e}"),
 
             // Malicious errors
             VerifyReport(e) => format!("attestation report verification failed: {e}"),
@@ -99,6 +104,7 @@ impl VerificationError {
             NotInBuilderIndex => "measurement not found in builder index".to_string(),
             PhalaComposeHashMismatch => "compose-hash mismatch".to_string(),
             PhalaQuoteVerify(e) => format!("quote verification failed: {e}"),
+            Erc8004InvalidUri(e) => format!("invalid ERC-8004 request URI: {e}"),
         }
     }
 }
@@ -252,6 +258,44 @@ impl HtxVerifier {
                 }
             })?;
         Ok(bundle.report)
+    }
+
+    /// Verify an ERC-8004 validation HTX by checking the request URI is accessible.
+    ///
+    /// Steps:
+    /// 1. Validate the request_uri is a valid URL
+    /// 2. Fetch the URL and check it returns a successful response
+    ///
+    /// Returns Ok(()) if verification succeeds, Err(VerificationError) otherwise.
+    pub async fn verify_erc8004_htx(&self, htx: &Erc8004Htx) -> Result<(), VerificationError> {
+        // Validate the URI is a proper URL
+        let url = reqwest::Url::parse(&htx.request_uri)
+            .map_err(|e| VerificationError::Erc8004InvalidUri(e.to_string()))?;
+
+        // Only allow http/https schemes
+        if url.scheme() != "http" && url.scheme() != "https" {
+            return Err(VerificationError::Erc8004InvalidUri(format!(
+                "unsupported scheme: {}",
+                url.scheme()
+            )));
+        }
+
+        // Fetch the URL to verify it's accessible
+        let client = Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .connect_timeout(std::time::Duration::from_secs(5))
+            .build()
+            .expect("Failed to build HTTP client");
+
+        client
+            .get(url)
+            .send()
+            .await
+            .map_err(|e| VerificationError::Erc8004FetchUri(e.to_string()))?
+            .error_for_status()
+            .map_err(|e| VerificationError::Erc8004FetchUri(e.to_string()))?;
+
+        Ok(())
     }
 
     /// Verify a Phala HTX by checking compose hash and quote.

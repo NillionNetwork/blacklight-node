@@ -1,7 +1,7 @@
 services:
   # Anvil - Local Ethereum testnet
   anvil:
-    image: ghcr.io/nillionnetwork/blacklight-contracts/anvil:sha-64cd680
+    image: nilanvil:latest
     container_name: blacklight-anvil
     ports:
       - "8545:8545"
@@ -14,6 +14,27 @@ services:
       timeout: 5s
       retries: 20
       start_period: 10s
+
+  
+  keeper:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: keeper
+    container_name: blacklight-keeper
+    depends_on:
+      anvil:
+        condition: service_healthy
+    networks:
+      - blacklight-network
+    restart: unless-stopped
+    environment:
+      - L2_RPC_URL=http://anvil:8545
+      - L1_RPC_URL=http://anvil:8545
+      - PRIVATE_KEY=0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6
+      - L2_HEARTBEAT_MANAGER_ADDRESS=0x5FC8d32690cc91D4c39d9d3abcBD16989F875707
+      - L2_JAILING_POLICY_ADDRESS=0x2279B7A0a67DB372996a5FaB50D91eAA73d2eBe6
+      - L1_EMISSIONS_CONTROLLER_ADDRESS=0x0165878A594ca255338adfa4d48449f69242Eb8F
 
   # NilCC Simulator - Submits HTXs to the contract
   simulator:
@@ -32,7 +53,7 @@ services:
       - HTXS_PATH=/app/data/htxs.json
       - TOKEN_CONTRACT_ADDRESS=0x5FbDB2315678afecb367f032d93F642f64180aa3
       - STAKING_CONTRACT_ADDRESS=0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
-      - MANAGER_CONTRACT_ADDRESS=0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9
+      - MANAGER_CONTRACT_ADDRESS=0x5FC8d32690cc91D4c39d9d3abcBD16989F875707
       - RUST_LOG=info
     networks:
       - blacklight-network
@@ -50,12 +71,34 @@ services:
         condition: service_healthy
     environment:
       - RPC_URL=http://anvil:8545
-      - PRIVATE_KEY=0x2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6
+      - PRIVATE_KEY=0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a
       - PUBLIC_KEY=0xa0Ee7A142d267C1f36714E4a8F75612F20a79720
       - HTXS_PATH=/app/data/htxs.json
       - TOKEN_CONTRACT_ADDRESS=0x5FbDB2315678afecb367f032d93F642f64180aa3
       - STAKING_CONTRACT_ADDRESS=0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
-      - MANAGER_CONTRACT_ADDRESS=0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9
+      - MANAGER_CONTRACT_ADDRESS=0x5FC8d32690cc91D4c39d9d3abcBD16989F875707
+      - RUST_LOG=info
+    networks:
+      - blacklight-network
+    restart: unless-stopped
+
+  # ERC-8004 Simulator - Registers agents and submits validation requests
+  erc-8004-simulator:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: erc_8004_simulator
+    container_name: erc-8004-simulator
+    depends_on:
+      anvil:
+        condition: service_healthy
+    environment:
+      - RPC_URL=http://anvil:8545
+      - PRIVATE_KEY=0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a
+      - IDENTITY_REGISTRY_CONTRACT_ADDRESS=0x959922bE3CAee4b8Cd9a407cc3ac1C251C2007B1
+      - VALIDATION_REGISTRY_CONTRACT_ADDRESS=0x3Aa5ebB10DC797CAC828524e59A333d0A371443c
+      - HEARTBEAT_MANAGER_ADDRESS=0x5FC8d32690cc91D4c39d9d3abcBD16989F875707
+      - AGENT_URI=https://api.nilai.nillion.network/v1/health/
       - RUST_LOG=info
     networks:
       - blacklight-network
@@ -84,10 +127,11 @@ services:
     deploy:
       replicas: 10 # IMPORTANT: Define the number of accounts to create in the anvil container as 1 for the deployer, 2 for the simulators, X for the nodes
     environment:
+      - RUST_LOG=debug
       - RPC_URL=http://anvil:8545
       - TOKEN_CONTRACT_ADDRESS=0x5FbDB2315678afecb367f032d93F642f64180aa3
       - STAKING_CONTRACT_ADDRESS=0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
-      - MANAGER_CONTRACT_ADDRESS=0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9
+      - MANAGER_CONTRACT_ADDRESS=0x5FC8d32690cc91D4c39d9d3abcBD16989F875707
       # Provide a single mnemonic and scale this service (see docker/README.md)
       - MNEMONIC=test test test test test test test test test test test junk
       # Shift indices if you want to skip accounts (e.g., keep deployer/simulators on low indices)

@@ -1,7 +1,7 @@
 use anyhow::Result;
 use args::{CliArgs, SimulatorConfig};
 use blacklight_contract_clients::{
-    htx::{Htx, NillionHtx, PhalaHtx},
+    htx::{Htx, JsonHtx, NillionHtx, PhalaHtx},
     {BlacklightClient, ContractConfig},
 };
 use clap::Parser;
@@ -60,7 +60,8 @@ async fn setup_client(config: &SimulatorConfig) -> Result<BlacklightClient> {
 
 fn load_htxs(path: &str) -> Vec<Htx> {
     let htxs_json = std::fs::read_to_string(path).unwrap_or_else(|_| "[]".to_string());
-    let htxs: Vec<Htx> = serde_json::from_str(&htxs_json).unwrap_or_default();
+    let json_htxs: Vec<JsonHtx> = serde_json::from_str(&htxs_json).unwrap_or_default();
+    let htxs: Vec<Htx> = json_htxs.into_iter().map(Htx::from).collect();
 
     if htxs.is_empty() {
         warn!(path = %path, "No HTXs loaded");
@@ -128,6 +129,10 @@ async fn submit_next_htx(
                 }
                 Htx::Phala(PhalaHtx::V1(htx)) => {
                     htx.app_compose = format!("{}-{:x}", htx.app_compose, nonce);
+                }
+                Htx::Erc8004(_) => {
+                    // ERC-8004 HTXs are not loaded from JSON files, skip
+                    unreachable!("ERC-8004 HTXs should not be loaded from JSON files");
                 }
             }
             htx
