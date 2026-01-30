@@ -105,8 +105,16 @@ async fn process_htx_assignment(
     node_address: Address,
 ) -> Result<()> {
     let htx_id = event.heartbeatKey;
-    // Parse the HTX data - UnifiedHtx automatically detects provider field
-    let verification_result = match serde_json::from_slice::<Htx>(&event.rawHTX) {
+    // Debug: log the raw HTX bytes
+    let raw_bytes: &[u8] = &event.rawHTX;
+    tracing::debug!(
+        htx_id = ?htx_id,
+        raw_len = raw_bytes.len(),
+        raw_hex = %alloy::hex::encode(raw_bytes),
+        "Raw HTX bytes"
+    );
+    // Parse the HTX data - tries JSON first (nilCC/Phala), then ABI decoding (ERC-8004)
+    let verification_result = match Htx::try_parse(&event.rawHTX) {
         Ok(htx) => match htx {
             Htx::Nillion(htx) => {
                 info!(htx_id = ?htx_id, "Detected nilCC HTX");
@@ -115,6 +123,15 @@ async fn process_htx_assignment(
             Htx::Phala(htx) => {
                 info!(htx_id = ?htx_id, "Detected Phala HTX");
                 verifier.verify_phala_htx(&htx).await
+            }
+            Htx::Erc8004(htx) => {
+                info!(
+                    htx_id = ?htx_id,
+                    agent_id = %htx.agent_id,
+                    request_uri = %htx.request_uri,
+                    "Detected ERC-8004 validation HTX"
+                );
+                verifier.verify_erc8004_htx(&htx).await
             }
         },
         Err(e) => {

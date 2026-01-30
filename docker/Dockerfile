@@ -58,6 +58,7 @@ RUN mkdir -p ~/.cargo && \
 COPY Cargo.toml ./
 COPY crates ./crates
 COPY nilcc-simulator ./nilcc-simulator
+COPY erc-8004-simulator ./erc-8004-simulator
 COPY keeper ./keeper
 COPY blacklight-node ./blacklight-node
 COPY monitor ./monitor
@@ -85,6 +86,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     mkdir -p /out/bin && \
     cp target/$RUST_TARGET/release/blacklight-node /out/bin/ && \
     cp target/$RUST_TARGET/release/nilcc-simulator /out/bin/ && \
+    cp target/$RUST_TARGET/release/erc-8004-simulator /out/bin/ && \
     cp target/$RUST_TARGET/release/monitor /out/bin/ && \
     cp target/$RUST_TARGET/release/keeper /out/bin/
 
@@ -118,6 +120,11 @@ COPY --from=builder /out/bin/nilcc-simulator /usr/local/bin/nilcc-simulator
 COPY --from=builder /app/data /app/data
 ENV HTXS_PATH=/app/data/htxs.json
 ENTRYPOINT ["/usr/local/bin/nilcc-simulator"]
+
+# Runtime stage for erc_8004_simulator
+FROM base_release AS erc_8004_simulator
+COPY --from=builder /out/bin/erc-8004-simulator /usr/local/bin/erc-8004-simulator
+ENTRYPOINT ["/usr/local/bin/erc-8004-simulator"]
 
 # Runtime stage for monitor
 FROM base_release AS monitor
