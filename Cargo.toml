@@ -5,7 +5,9 @@ members = [
   "blacklight-node",
   "crates/blacklight-contract-clients",
   "crates/chain-args",
+  "crates/erc-8004-contract-clients",
   "crates/state-file",
+  "erc-8004-simulator",
   "keeper",
   "monitor",
   "nilcc-simulator"

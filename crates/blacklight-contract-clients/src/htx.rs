@@ -1,4 +1,6 @@
-use alloy::primitives::Bytes;
+use alloy::dyn_abi::{DynSolType, DynSolValue};
+use alloy::primitives::{Address, B256, Bytes, U256};
+use alloy::sol_types::SolValue;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use serde_with::{hex::Hex, serde_as};
@@ -79,12 +81,148 @@ pub enum PhalaHtx {
     V1(PhalaHtxV1),
 }
 
-// Unified HTX type that can represent both nilCC and Phala HTXs
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "provider", rename_all = "camelCase")]
+// ERC-8004 Validation HTX - ABI encoded from ValidationRegistry
+// Solidity: abi.encode(validatorAddress, agentId, requestURI, requestHash)
+
+/// ERC-8004 Validation HTX data parsed from ABI-encoded bytes
+#[derive(Debug, Clone)]
+pub struct Erc8004Htx {
+    pub validator_address: Address,
+    pub agent_id: U256,
+    pub request_uri: String,
+    pub request_hash: B256,
+}
+
+impl Erc8004Htx {
+    /// Try to decode ABI-encoded ERC-8004 validation data
+    /// Format: abi.encode(validatorAddress, agentId, requestURI, requestHash)
+    pub fn try_decode(data: &[u8]) -> Result<Self, Erc8004DecodeError> {
+        // Use DynSolType::Tuple for proper ABI decoding of abi.encode() output
+        // abi.encode() produces parameter encoding, so we use abi_decode_params on a tuple
+        let tuple_type = DynSolType::Tuple(vec![
+            DynSolType::Address,
+            DynSolType::Uint(256),
+            DynSolType::String,
+            DynSolType::FixedBytes(32),
+        ]);
+
+        let decoded = tuple_type
+            .abi_decode_params(data)
+            .map_err(|e| Erc8004DecodeError(e.to_string()))?;
+
+        // Extract values from the decoded tuple
+        let values = match decoded {
+            DynSolValue::Tuple(values) => values,
+            _ => return Err(Erc8004DecodeError("Expected tuple".to_string())),
+        };
+
+        if values.len() != 4 {
+            return Err(Erc8004DecodeError(format!(
+                "Expected 4 values, got {}",
+                values.len()
+            )));
+        }
+
+        let validator_address = match &values[0] {
+            DynSolValue::Address(addr) => *addr,
+            _ => return Err(Erc8004DecodeError("Expected address".to_string())),
+        };
+
+        let agent_id = match &values[1] {
+            DynSolValue::Uint(val, _) => *val,
+            _ => return Err(Erc8004DecodeError("Expected uint256".to_string())),
+        };
+
+        let request_uri = match &values[2] {
+            DynSolValue::String(s) => s.clone(),
+            _ => return Err(Erc8004DecodeError("Expected string".to_string())),
+        };
+
+        let request_hash = match &values[3] {
+            DynSolValue::FixedBytes(word, 32) => B256::from_slice(word.as_slice()),
+            _ => return Err(Erc8004DecodeError("Expected bytes32".to_string())),
+        };
+
+        Ok(Self {
+            validator_address,
+            agent_id,
+            request_uri,
+            request_hash,
+        })
+    }
+}
+
+#[derive(Debug)]
+pub struct Erc8004DecodeError(pub String);
+
+impl std::fmt::Display for Erc8004DecodeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "ERC-8004 decode error: {}", self.0)
+    }
+}
+
+impl std::error::Error for Erc8004DecodeError {}
+
+// Unified HTX type that can represent nilCC, Phala, and ERC-8004 HTXs
+#[derive(Debug, Clone)]
 pub enum Htx {
     Nillion(NillionHtx),
     Phala(PhalaHtx),
+    Erc8004(Erc8004Htx),
+}
+
+/// JSON-serializable HTX types (Nillion and Phala only, not ERC-8004)
+/// Use this for loading HTXs from JSON files.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "provider", rename_all = "camelCase")]
+pub enum JsonHtx {
+    Nillion(NillionHtx),
+    Phala(PhalaHtx),
+}
+
+impl From<JsonHtx> for Htx {
+    fn from(htx: JsonHtx) -> Self {
+        match htx {
+            JsonHtx::Nillion(htx) => Htx::Nillion(htx),
+            JsonHtx::Phala(htx) => Htx::Phala(htx),
+        }
+    }
+}
+
+impl Htx {
+    /// Parse HTX from raw bytes, trying JSON first then ABI decoding
+    pub fn try_parse(data: &[u8]) -> Result<Self, HtxParseError> {
+        // First try JSON parsing (nilCC and Phala)
+        match serde_json::from_slice::<JsonHtx>(data) {
+            Ok(json_htx) => {
+                return Ok(match json_htx {
+                    JsonHtx::Nillion(htx) => Htx::Nillion(htx),
+                    JsonHtx::Phala(htx) => Htx::Phala(htx),
+                });
+            }
+            Err(json_err) => {
+                tracing::debug!(error = %json_err, "JSON parsing failed, trying ABI decode");
+            }
+        }
+
+        // Then try ABI decoding (ERC-8004)
+        match Erc8004Htx::try_decode(data) {
+            Ok(erc8004_htx) => {
+                return Ok(Htx::Erc8004(erc8004_htx));
+            }
+            Err(abi_err) => {
+                tracing::debug!(error = %abi_err, data_len = data.len(), "ABI decoding failed");
+            }
+        }
+
+        Err(HtxParseError::UnknownFormat)
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum HtxParseError {
+    #[error("Unknown HTX format: not valid JSON or ABI-encoded ERC-8004")]
+    UnknownFormat,
 }
 
 impl From<NillionHtx> for Htx {
@@ -93,13 +231,45 @@ impl From<NillionHtx> for Htx {
     }
 }
 
+impl From<PhalaHtx> for Htx {
+    fn from(htx: PhalaHtx) -> Self {
+        Htx::Phala(htx)
+    }
+}
+
+impl From<Erc8004Htx> for Htx {
+    fn from(htx: Erc8004Htx) -> Self {
+        Htx::Erc8004(htx)
+    }
+}
+
 impl TryFrom<&Htx> for Bytes {
     type Error = anyhow::Error;
 
     fn try_from(htx: &Htx) -> Result<Self, Self::Error> {
-        let json = canonicalize_json(&serde_json::to_value(htx)?);
-        let json = serde_json::to_string(&json)?;
-        Ok(Bytes::from(json.into_bytes()))
+        match htx {
+            Htx::Nillion(htx) => {
+                let json_htx = JsonHtx::Nillion(htx.clone());
+                let json = canonicalize_json(&serde_json::to_value(json_htx)?);
+                let json = serde_json::to_string(&json)?;
+                Ok(Bytes::from(json.into_bytes()))
+            }
+            Htx::Phala(htx) => {
+                let json_htx = JsonHtx::Phala(htx.clone());
+                let json = canonicalize_json(&serde_json::to_value(json_htx)?);
+                let json = serde_json::to_string(&json)?;
+                Ok(Bytes::from(json.into_bytes()))
+            }
+            Htx::Erc8004(htx) => {
+                let tuple = (
+                    htx.validator_address,
+                    htx.agent_id,
+                    htx.request_uri.clone(),
+                    htx.request_hash,
+                );
+                Ok(Bytes::from(tuple.abi_encode()))
+            }
+        }
     }
 }
 
@@ -212,8 +382,8 @@ mod tests {
             }
         }"#;
 
-        let htx: Htx = serde_json::from_str(phala_json).unwrap();
-        let Htx::Phala(PhalaHtx::V1(htx)) = htx else {
+        let htx: JsonHtx = serde_json::from_str(phala_json).unwrap();
+        let JsonHtx::Phala(PhalaHtx::V1(htx)) = htx else {
             panic!("not a phala HTX");
         };
         assert_eq!(htx.app_compose, "test-compose");
@@ -240,7 +410,24 @@ mod tests {
             }
         }"#;
 
-        let htx: Htx = serde_json::from_str(nilcc_json).unwrap();
-        assert!(matches!(htx, Htx::Nillion(_)), "not a nillion HTX");
+        let htx: JsonHtx = serde_json::from_str(nilcc_json).unwrap();
+        assert!(matches!(htx, JsonHtx::Nillion(_)), "not a nillion HTX");
+    }
+
+    #[test]
+    fn test_erc8004_decode() {
+        // Test data: abi.encode(0x5fc8d32690cc91d4c39d9d3abcbd16989f875707, 0, "https://api.nilai.nillion.network/", 0xa6719a2ea05fac172c1b20e16beea2a9739b715499a3a9ad488e6ce81602ffac)
+        let raw_hex = "0000000000000000000000005fc8d32690cc91d4c39d9d3abcbd16989f87570700000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000080a6719a2ea05fac172c1b20e16beea2a9739b715499a3a9ad488e6ce81602ffac000000000000000000000000000000000000000000000000000000000000002268747470733a2f2f6170692e6e696c61692e6e696c6c696f6e2e6e6574776f726b2f000000000000000000000000000000000000000000000000000000000000";
+        let data = alloy::hex::decode(raw_hex).unwrap();
+
+        let htx = Erc8004Htx::try_decode(&data).expect("should decode ERC-8004 HTX");
+        assert_eq!(
+            htx.validator_address,
+            "0x5fc8d32690cc91d4c39d9d3abcbd16989f875707"
+                .parse::<Address>()
+                .unwrap()
+        );
+        assert_eq!(htx.agent_id, U256::ZERO);
+        assert_eq!(htx.request_uri, "https://api.nilai.nillion.network/");
     }
 }
