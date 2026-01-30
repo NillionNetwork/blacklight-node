@@ -36,26 +36,18 @@ struct RoundInfoView {
 
 #[derive(Debug, Clone)]
 struct RewardPolicyCache {
-    token_address: Option<Address>,
-    token_decimals: Option<u8>,
     last_checked_at: Option<u64>,
     last_budget: Option<U256>,
     last_remaining: Option<U256>,
-    last_accounted: Option<U256>,
-    last_balance: Option<U256>,
     last_sync_attempt_at: Option<u64>,
 }
 
 impl RewardPolicyCache {
     fn new() -> Self {
         Self {
-            token_address: None,
-            token_decimals: None,
             last_checked_at: None,
             last_budget: None,
             last_remaining: None,
-            last_accounted: None,
-            last_balance: None,
             last_sync_attempt_at: None,
         }
     }

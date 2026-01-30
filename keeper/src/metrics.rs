@@ -68,6 +68,7 @@ impl L1EthMetrics {
 pub(crate) struct L1EpochsMetrics {
     minted: Gauge<u64>,
     total: Gauge<u64>,
+    blocked: Gauge<u64>,
 }
 
 impl L1EpochsMetrics {
@@ -80,7 +81,17 @@ impl L1EpochsMetrics {
             .u64_gauge("blacklight.keeper.l1.epochs.total")
             .with_description("Total epochs")
             .build();
-        Self { minted, total }
+        let blocked = meter
+            .u64_gauge("blacklight.keeper.l1.epochs.blocked")
+            .with_description(
+                "Whether epochs are blocked due to the spendable budget not being depleted",
+            )
+            .build();
+        Self {
+            minted,
+            total,
+            blocked,
+        }
     }
 
     pub(crate) fn set_total(&self, amount: U256) {
@@ -95,6 +106,11 @@ impl L1EpochsMetrics {
             return;
         };
         self.minted.record(amount, &[]);
+    }
+
+    pub(crate) fn set_blocked(&self, value: bool) {
+        let value = if value { 1 } else { 0 };
+        self.blocked.record(value, &[]);
     }
 }
 

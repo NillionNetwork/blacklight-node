@@ -23,18 +23,9 @@ pub struct L2Supervisor {
 
 impl L2Supervisor {
     pub async fn new(
-        config: &KeeperConfig,
+        client: Arc<L2KeeperClient>,
         state: Arc<Mutex<KeeperState>>,
     ) -> anyhow::Result<Self> {
-        let client = L2KeeperClient::new(
-            config.l2_rpc_url.clone(),
-            config.l2_heartbeat_manager_address,
-            config.l2_jailing_policy_address,
-            config.private_key.clone(),
-        )
-        .await
-        .context("Failed to connect to L2")?;
-        let client = Arc::new(client);
         let jailer = Jailer::new(client.clone(), state.clone());
         let rewards_distributor = RewardsDistributor::new(client.clone(), state.clone());
         let round_escalator = RoundEscalator::new(client.clone(), state.clone());
@@ -73,7 +64,7 @@ impl L2Supervisor {
         Ok(())
     }
 
-    async fn run(self, config: KeeperConfig) {
+    async fn run(mut self, config: KeeperConfig) {
         let mut ticker = interval(config.tick_interval);
         loop {
             ticker.tick().await;
@@ -92,6 +83,10 @@ impl L2Supervisor {
                     continue;
                 }
             };
+
+            if let Err(e) = self.rewards_distributor.sync_state().await {
+                error!("Error syncing state: {e}");
+            }
 
             if let Err(e) = self
                 .round_escalator
@@ -115,7 +110,7 @@ impl L2Supervisor {
         }
     }
 
-    async fn process_rounds(&self, block_timestamp: u64) {
+    async fn process_rounds(&mut self, block_timestamp: u64) {
         let mut reward_jobs = Vec::new();
         let mut jail_jobs = Vec::new();
         let has_jailing_policy = self.client.jailing_policy().is_some();

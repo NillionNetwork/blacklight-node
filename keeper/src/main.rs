@@ -17,7 +17,7 @@ use tracing::info;
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 use crate::args::OtelConfig;
-use crate::l1::L1Supervisor;
+use crate::l1::EmissionsSupervisor;
 use crate::l2::L2Supervisor;
 
 mod args;
@@ -121,6 +121,7 @@ async fn main() -> Result<()> {
         L2KeeperClient::new(
             config.l2_rpc_url.clone(),
             config.l2_heartbeat_manager_address,
+            config.l2_staking_operators_address,
             config.l2_jailing_policy_address,
             config.private_key.clone(),
         )
@@ -162,8 +163,8 @@ async fn main() -> Result<()> {
     );
 
     let state = Arc::new(Mutex::new(Default::default()));
-    let l1 = L1Supervisor::new(config.clone()).await?;
-    let l2 = L2Supervisor::new(&config, state.clone()).await?;
+    let l1 = EmissionsSupervisor::new(config.clone(), l2_client.clone()).await?;
+    let l2 = L2Supervisor::new(l2_client, state.clone()).await?;
     l2.spawn(config).await?;
     l1.spawn();
 
