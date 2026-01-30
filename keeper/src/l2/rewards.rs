@@ -3,29 +3,83 @@ use crate::{
     l2::{KeeperState, RewardPolicyCache, RoundInfoView, RoundKey},
     metrics,
 };
-use alloy::primitives::{Address, U256};
-use anyhow::bail;
-use blacklight_contract_clients::common::{errors::decode_any_error, overestimate_gas};
+use alloy::primitives::{Address, U256, map::HashMap, utils::format_units};
+use anyhow::{Context, bail};
+use blacklight_contract_clients::{
+    ProtocolConfig::ProtocolConfigInstance,
+    common::{errors::decode_any_error, overestimate_gas},
+};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 
+const MIN_NIL_SYNC_THRESHOLD: u64 = 100;
 const RESPONDED_BIT: u64 = 1 << 2;
 const VERDICT_MASK: u64 = 0x3;
 const WEIGHT_SHIFT: u32 = 3;
 
+#[derive(Clone, Copy)]
+struct TokenContext {
+    decimals: u8,
+    address: Address,
+}
+
 pub(crate) struct RewardsDistributor {
     client: Arc<L2KeeperClient>,
     state: Arc<Mutex<KeeperState>>,
+    token_context: HashMap<Address, TokenContext>,
 }
 
 impl RewardsDistributor {
     pub(crate) fn new(client: Arc<L2KeeperClient>, state: Arc<Mutex<KeeperState>>) -> Self {
-        Self { client, state }
+        Self {
+            client,
+            state,
+            token_context: Default::default(),
+        }
+    }
+
+    pub(crate) async fn sync_state(&mut self) -> anyhow::Result<()> {
+        let protocol_config_address = self
+            .client
+            .staking_operators()
+            .protocolConfig()
+            .call()
+            .await
+            .context("Failed to get protocol config address")?;
+        let protocol_config =
+            ProtocolConfigInstance::new(protocol_config_address, self.client.provider());
+        let reward_policy_address = protocol_config
+            .rewardPolicy()
+            .call()
+            .await
+            .context("Failed to get reward policy contract address")?;
+        let token = self.fetch_token_context(reward_policy_address).await?;
+
+        let reward_policy = self.client.reward_policy(reward_policy_address);
+        let erc20 = self.client.erc20(token.address);
+        let spendable = reward_policy.accountedBalance().call().await?;
+        let balance = erc20.balanceOf(reward_policy_address).call().await?;
+        let limit_nils = U256::try_from(MIN_NIL_SYNC_THRESHOLD)? * pow10_u256(token.decimals);
+        let sync_limit = spendable.saturating_add(limit_nils);
+        if balance > sync_limit {
+            let balance = format_units(balance, token.decimals)?;
+            let sync_limit = format_units(sync_limit, token.decimals)?;
+            info!("Need to sync balance because balance ({balance}) > sync limit ({sync_limit})");
+            let receipt = reward_policy
+                .sync()
+                .send()
+                .await
+                .context("Failed to sync")?
+                .get_receipt()
+                .await?;
+            info!(tx_hash = ?receipt.transaction_hash, "Reward policy synced");
+        }
+        Ok(())
     }
 
     pub(crate) async fn distribute_rewards(
-        &self,
+        &mut self,
         block_timestamp: u64,
         key: RoundKey,
         outcome: u8,
@@ -119,7 +173,7 @@ impl RewardsDistributor {
     }
 
     async fn ensure_reward_budget(
-        &self,
+        &mut self,
         block_timestamp: u64,
         reward_address: Address,
         key: RoundKey,
@@ -153,8 +207,6 @@ impl RewardsDistributor {
             cache.last_checked_at = Some(block_timestamp);
             cache.last_budget = Some(fetched);
             cache.last_remaining = None;
-            cache.last_accounted = None;
-            cache.last_balance = None;
         }
         let budget = budget.unwrap_or(U256::ZERO);
         metrics::get().l2.rewards.set_budget(budget);
@@ -170,67 +222,25 @@ impl RewardsDistributor {
             cache.last_remaining = Some(value);
             value
         };
-        let accounted = if let Some(value) = cache.last_accounted {
-            value
-        } else {
-            let value = reward_policy.accountedBalance().call().await?;
-            cache.last_accounted = Some(value);
-            value
-        };
-        let token_address = match cache.token_address {
-            Some(value) => value,
-            None => {
-                let value = reward_policy.rewardToken().call().await?;
-                cache.token_address = Some(value);
-                value
-            }
-        };
-        let token = self.client.erc20(token_address);
-        let balance = if let Some(value) = cache.last_balance {
-            value
-        } else {
-            let value = token.balanceOf(reward_address).call().await?;
-            cache.last_balance = Some(value);
-            value
-        };
-        let has_new_deposit = balance > accounted;
-
+        let token_ctx = self.fetch_token_context(reward_address).await?;
         let should_unlock = if remaining > U256::ZERO {
-            let decimals = match cache.token_decimals {
-                Some(value) => value,
-                None => {
-                    let value = match token.decimals().call().await {
-                        Ok(value) => value,
-                        Err(e) => {
-                            warn!(
-                                reward_token = ?token_address,
-                                error = %decode_any_error(&e),
-                                "Failed to read token decimals, defaulting to 18"
-                            );
-                            18
-                        }
-                    };
-                    cache.token_decimals = Some(value);
-                    value
-                }
-            };
-            self.can_unlock_budget(&reward_policy, remaining, block_timestamp, decimals)
-                .await?
+            self.can_unlock_budget(
+                &reward_policy,
+                remaining,
+                block_timestamp,
+                token_ctx.decimals,
+            )
+            .await?
         } else {
             false
         };
 
-        if !has_new_deposit && !should_unlock {
-            let msg = if remaining > U256::ZERO {
-                "Reward budget still unlocking, skipping"
-            } else {
-                "Reward budget empty, skipping"
-            };
+        if !should_unlock {
             info!(
                 heartbeat_key = ?key.heartbeat_key,
                 round = key.round,
                 reward = ?reward_address,
-                "{}", msg
+                "Reward budget still unlocking, skipping"
             );
             self.store_reward_cache(reward_address, cache).await;
             return Ok(false);
@@ -269,16 +279,11 @@ impl RewardsDistributor {
         }
         cache.last_sync_attempt_at = Some(block_timestamp);
 
-        let sync_reason = if has_new_deposit {
-            "Reward policy has new deposit, syncing"
-        } else {
-            "Reward budget unlocking, syncing policy"
-        };
         info!(
             heartbeat_key = ?key.heartbeat_key,
             round = key.round,
             reward = ?reward_address,
-            "{}", sync_reason
+            "Reward budget unlocking, syncing policy",
         );
 
         match reward_policy.sync().send().await {
@@ -396,6 +401,24 @@ impl RewardsDistributor {
         }
 
         Ok((voters, total_weight))
+    }
+
+    async fn fetch_token_context(&mut self, address: Address) -> anyhow::Result<TokenContext> {
+        if let Some(context) = self.token_context.get(&address) {
+            return Ok(*context);
+        }
+        info!("Fetching token context for rewards policy address {address}");
+        let reward_policy = RewardPolicyInstance::new(address, self.client.provider());
+        let token_address = reward_policy.rewardToken().call().await?;
+        let erc20 = self.client.erc20(token_address);
+        let decimals = erc20.decimals().call().await?;
+
+        let context = TokenContext {
+            decimals,
+            address: token_address,
+        };
+        self.token_context.insert(address, context);
+        Ok(context)
     }
 }
 

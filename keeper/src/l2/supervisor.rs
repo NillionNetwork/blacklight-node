@@ -64,7 +64,7 @@ impl L2Supervisor {
         Ok(())
     }
 
-    async fn run(self, config: KeeperConfig) {
+    async fn run(mut self, config: KeeperConfig) {
         let mut ticker = interval(config.tick_interval);
         loop {
             ticker.tick().await;
@@ -83,6 +83,10 @@ impl L2Supervisor {
                     continue;
                 }
             };
+
+            if let Err(e) = self.rewards_distributor.sync_state().await {
+                error!("Error syncing state: {e}");
+            }
 
             if let Err(e) = self
                 .round_escalator
@@ -106,7 +110,7 @@ impl L2Supervisor {
         }
     }
 
-    async fn process_rounds(&self, block_timestamp: u64) {
+    async fn process_rounds(&mut self, block_timestamp: u64) {
         let mut reward_jobs = Vec::new();
         let mut jail_jobs = Vec::new();
         let has_jailing_policy = self.client.jailing_policy().is_some();
