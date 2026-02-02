@@ -1,10 +1,10 @@
 use anyhow::Result;
 use clap::Parser;
-use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
+mod common;
 mod erc8004;
 mod nilcc;
-mod common;
 
 #[derive(Parser, Debug)]
 #[command(name = "simulator")]

@@ -1,4 +1,4 @@
-use alloy::primitives::{keccak256, Address, B256, U256};
+use alloy::primitives::{Address, B256, U256, keccak256};
 use anyhow::Result;
 use clap::Args;
 use erc_8004_contract_clients::{ContractConfig, Erc8004Client};
@@ -6,7 +6,7 @@ use state_file::StateFile;
 use std::sync::Arc;
 use tracing::{info, warn};
 
-use crate::common::{retry_submit, Simulator, DEFAULT_SLOT_MS};
+use crate::common::{DEFAULT_SLOT_MS, Simulator, retry_submit};
 
 const STATE_FILE_SIMULATOR: &str = "erc_8004_simulator.env";
 

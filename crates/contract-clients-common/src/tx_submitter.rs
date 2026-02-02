@@ -1,12 +1,7 @@
-use crate::common::overestimate_gas;
+use crate::overestimate_gas;
 use alloy::{
-    consensus::Transaction,
-    contract::CallBuilder,
-    eips::BlockId,
-    primitives::B256,
-    providers::Provider,
-    rpc::types::TransactionReceipt,
-    sol_types::SolInterface,
+    consensus::Transaction, contract::CallBuilder, primitives::B256, providers::Provider,
+    rpc::types::TransactionReceipt, sol_types::SolInterface,
 };
 use anyhow::{Result, anyhow};
 use std::fmt::Debug;
@@ -14,8 +9,6 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{info, warn};
-
-use crate::errors::decode_any_error;
 
 #[derive(Clone)]
 pub struct TransactionSubmitter<S> {
@@ -95,50 +88,13 @@ impl<S: SolInterface + Debug + Clone> TransactionSubmitter<S> {
                 }
             }
 
-            // Try to get the revert reason by replaying the call at the block it was included
-            let revert_reason = self
-                .get_revert_reason(&call, receipt.block_number)
-                .await
-                .unwrap_or_else(|| "unknown reason".to_string());
-
-            return Err(anyhow!(
-                "{method} reverted on-chain: {revert_reason}. Tx hash: {tx_hash:?}"
-            ));
+            return Err(anyhow!("{method} reverted on-chain. Tx hash: {tx_hash:?}"));
         }
 
         Ok(tx_hash)
     }
 
-    /// Attempt to get the revert reason by replaying the call at a specific block.
-    ///
-    /// When a transaction reverts on-chain (after passing simulation), we can replay
-    /// the call at the exact block it was included in to capture the revert data.
-    async fn get_revert_reason<P, D>(
-        &self,
-        call: &CallBuilder<P, D>,
-        block_number: Option<u64>,
-    ) -> Option<String>
-    where
-        P: Provider + Clone,
-        D: alloy::contract::CallDecoder + Clone,
-    {
-        let block_id = block_number.map(BlockId::number)?;
-
-        // Replay the call at the specific block to get the revert data
-        match call.clone().block(block_id).call().await {
-            Ok(_) => {
-                // Unexpectedly succeeded - state must have changed
-                Some("transaction reverted but replay succeeded (state changed)".to_string())
-            }
-            Err(e) => {
-                // Decode the error to get the revert reason
-                let decoded = self.decode_error(e);
-                Some(decoded)
-            }
-        }
-    }
-
-    pub fn with_gas_limit(&self, limit: u64) -> Self {
+    pub fn with_gas_buffer(&self) -> Self {
         let mut this = self.clone();
         this.gas_buffer = true;
         this
@@ -147,7 +103,7 @@ impl<S: SolInterface + Debug + Clone> TransactionSubmitter<S> {
     fn decode_error(&self, error: alloy::contract::Error) -> String {
         match error.try_decode_into_interface_error::<S>() {
             Ok(error) => format!("{error:?}"),
-            Err(error) => decode_any_error(&error).to_string(),
+            Err(error) => super::errors::decode_any_error(&error).to_string(),
         }
     }
 
@@ -193,7 +149,7 @@ impl<S: SolInterface + Debug + Clone> TransactionSubmitter<S> {
                 tx_max_priority_fee = ?tx_max_priority_fee,
                 actual_priority_fee = ?actual_priority_fee,
                 estimated_priority_fee = ?estimated_priority_fee,
-                "transaction gas details (priority fee may be too low)"
+                "💰 transaction gas details (priority fee may be too low)"
             );
         } else {
             info!(
@@ -207,7 +163,7 @@ impl<S: SolInterface + Debug + Clone> TransactionSubmitter<S> {
                 tx_max_priority_fee = ?tx_max_priority_fee,
                 actual_priority_fee = ?actual_priority_fee,
                 estimated_priority_fee = ?estimated_priority_fee,
-                "transaction gas details"
+                "💰 transaction gas details"
             );
         }
     }

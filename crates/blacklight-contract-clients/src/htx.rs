@@ -81,10 +81,8 @@ pub enum PhalaHtx {
     V1(PhalaHtxV1),
 }
 
-// ERC-8004 Validation HTX - ABI encoded from ValidationRegistry
-// Solidity: abi.encode(validatorAddress, agentId, requestURI, requestHash)
-
-/// ERC-8004 Validation HTX data parsed from ABI-encoded bytes
+/// ERC-8004 Validation HTX data parsed from ABI-encoded bytes.
+/// Format: `abi.encode(validatorAddress, agentId, requestURI, requestHash)`
 #[derive(Debug, Clone)]
 pub struct Erc8004Htx {
     pub validator_address: Address,
@@ -94,11 +92,8 @@ pub struct Erc8004Htx {
 }
 
 impl Erc8004Htx {
-    /// Try to decode ABI-encoded ERC-8004 validation data
-    /// Format: abi.encode(validatorAddress, agentId, requestURI, requestHash)
+    /// Try to decode ABI-encoded ERC-8004 validation data.
     pub fn try_decode(data: &[u8]) -> Result<Self, Erc8004DecodeError> {
-        // Use DynSolType::Tuple for proper ABI decoding of abi.encode() output
-        // abi.encode() produces parameter encoding, so we use abi_decode_params on a tuple
         let tuple_type = DynSolType::Tuple(vec![
             DynSolType::Address,
             DynSolType::Uint(256),
@@ -110,7 +105,6 @@ impl Erc8004Htx {
             .abi_decode_params(data)
             .map_err(|e| Erc8004DecodeError(e.to_string()))?;
 
-        // Extract values from the decoded tuple
         let values = match decoded {
             DynSolValue::Tuple(values) => values,
             _ => return Err(Erc8004DecodeError("Expected tuple".to_string())),
@@ -163,7 +157,7 @@ impl std::fmt::Display for Erc8004DecodeError {
 
 impl std::error::Error for Erc8004DecodeError {}
 
-// Unified HTX type that can represent nilCC, Phala, and ERC-8004 HTXs
+/// Unified HTX type that can represent nilCC, Phala, and ERC-8004 HTXs.
 #[derive(Debug, Clone)]
 pub enum Htx {
     Nillion(NillionHtx),
@@ -171,8 +165,8 @@ pub enum Htx {
     Erc8004(Erc8004Htx),
 }
 
-/// JSON-serializable HTX types (Nillion and Phala only, not ERC-8004)
-/// Use this for loading HTXs from JSON files.
+/// JSON-serializable HTX types (Nillion and Phala only, not ERC-8004).
+/// Used for loading HTXs from JSON files.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "provider", rename_all = "camelCase")]
 pub enum JsonHtx {
@@ -190,29 +184,14 @@ impl From<JsonHtx> for Htx {
 }
 
 impl Htx {
-    /// Parse HTX from raw bytes, trying JSON first then ABI decoding
+    /// Parse HTX from raw bytes, trying JSON first then ABI decoding.
     pub fn try_parse(data: &[u8]) -> Result<Self, HtxParseError> {
-        // First try JSON parsing (nilCC and Phala)
-        match serde_json::from_slice::<JsonHtx>(data) {
-            Ok(json_htx) => {
-                return Ok(match json_htx {
-                    JsonHtx::Nillion(htx) => Htx::Nillion(htx),
-                    JsonHtx::Phala(htx) => Htx::Phala(htx),
-                });
-            }
-            Err(json_err) => {
-                tracing::debug!(error = %json_err, "JSON parsing failed, trying ABI decode");
-            }
+        if let Ok(json_htx) = serde_json::from_slice::<JsonHtx>(data) {
+            return Ok(json_htx.into());
         }
 
-        // Then try ABI decoding (ERC-8004)
-        match Erc8004Htx::try_decode(data) {
-            Ok(erc8004_htx) => {
-                return Ok(Htx::Erc8004(erc8004_htx));
-            }
-            Err(abi_err) => {
-                tracing::debug!(error = %abi_err, data_len = data.len(), "ABI decoding failed");
-            }
+        if let Ok(erc8004_htx) = Erc8004Htx::try_decode(data) {
+            return Ok(erc8004_htx.into());
         }
 
         Err(HtxParseError::UnknownFormat)
@@ -248,18 +227,8 @@ impl TryFrom<&Htx> for Bytes {
 
     fn try_from(htx: &Htx) -> Result<Self, Self::Error> {
         match htx {
-            Htx::Nillion(htx) => {
-                let json_htx = JsonHtx::Nillion(htx.clone());
-                let json = canonicalize_json(&serde_json::to_value(json_htx)?);
-                let json = serde_json::to_string(&json)?;
-                Ok(Bytes::from(json.into_bytes()))
-            }
-            Htx::Phala(htx) => {
-                let json_htx = JsonHtx::Phala(htx.clone());
-                let json = canonicalize_json(&serde_json::to_value(json_htx)?);
-                let json = serde_json::to_string(&json)?;
-                Ok(Bytes::from(json.into_bytes()))
-            }
+            Htx::Nillion(htx) => json_htx_to_bytes(JsonHtx::Nillion(htx.clone())),
+            Htx::Phala(htx) => json_htx_to_bytes(JsonHtx::Phala(htx.clone())),
             Htx::Erc8004(htx) => {
                 let tuple = (
                     htx.validator_address,
@@ -271,6 +240,12 @@ impl TryFrom<&Htx> for Bytes {
             }
         }
     }
+}
+
+fn json_htx_to_bytes(htx: JsonHtx) -> Result<Bytes, anyhow::Error> {
+    let json = canonicalize_json(&serde_json::to_value(htx)?);
+    let json = serde_json::to_string(&json)?;
+    Ok(Bytes::from(json.into_bytes()))
 }
 
 fn canonicalize_json(value: &Value) -> Value {
