@@ -268,6 +268,7 @@ impl RewardsDistributor {
         let stream_rate = reward_policy.streamRatePerSecondWad().call().await?;
         let last_update = reward_policy.lastUpdate().call().await?;
         let stream_end = reward_policy.streamEnd().call().await?;
+        metrics::get().l2.rewards.set_end(stream_end);
 
         if block_timestamp >= stream_end {
             return Ok(true);

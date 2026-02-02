@@ -158,6 +158,7 @@ pub(crate) struct L2RewardsMetrics {
     distribution: Counter<u64>,
     spendable: Gauge<f64>,
     remaining: Gauge<f64>,
+    end: Gauge<u64>,
 }
 
 impl L2RewardsMetrics {
@@ -174,10 +175,15 @@ impl L2RewardsMetrics {
             .f64_gauge("blacklight.keeper.l2.rewards.remaining")
             .with_description("The remaining budget to be unlocked for rewards")
             .build();
+        let end = meter
+            .u64_gauge("blacklight.keeper.l2.rewards.end")
+            .with_description("The UNIX epoch timestamp when the current budget runs out")
+            .build();
         Self {
             distribution,
             spendable,
             remaining,
+            end,
         }
     }
 
@@ -191,6 +197,10 @@ impl L2RewardsMetrics {
 
     pub(crate) fn set_remaining(&self, value: U256) {
         self.remaining.record(value.into(), &[]);
+    }
+
+    pub(crate) fn set_end(&self, value: u64) {
+        self.end.record(value, &[]);
     }
 }
 
