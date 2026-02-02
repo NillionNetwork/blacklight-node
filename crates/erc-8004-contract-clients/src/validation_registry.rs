@@ -19,10 +19,39 @@ sol! {
             bytes32 requestHash,
             uint64 snapshotId
         ) external;
+
+        function validationResponse(
+            bytes32 requestHash,
+            uint8 response,
+            string calldata responseURI,
+            bytes32 responseHash,
+            string calldata tag
+        ) external;
+
+        event ValidationRequest(
+            address indexed validatorAddress,
+            uint256 indexed agentId,
+            string requestURI,
+            bytes32 indexed requestHash
+        );
+
+        event ValidationResponse(
+            address indexed validatorAddress,
+            uint256 indexed agentId,
+            bytes32 indexed requestHash,
+            uint8 response,
+            string responseURI,
+            bytes32 responseHash,
+            string tag
+        );
     }
 }
 
 use ValidationRegistryUpgradeable::ValidationRegistryUpgradeableInstance;
+
+// Event type re-exports
+pub type ValidationRequestEvent = ValidationRegistryUpgradeable::ValidationRequest;
+pub type ValidationResponseEvent = ValidationRegistryUpgradeable::ValidationResponse;
 
 /// Client for interacting with the ValidationRegistryUpgradeable contract.
 #[derive(Clone)]
@@ -81,5 +110,31 @@ impl<P: Provider + Clone> ValidationRegistryClient<P> {
             snapshot_id,
         );
         self.submitter.invoke("validationRequest", call).await
+    }
+
+    /// Submit a validation response.
+    ///
+    /// # Arguments
+    /// * `request_hash` - The request hash identifying the validation request
+    /// * `response` - Response value 0-100 (0=invalid, 100=valid)
+    /// * `response_uri` - Optional URI pointing to response details
+    /// * `response_hash` - Hash of the response data (can be zero)
+    /// * `tag` - Tag identifying the response source (e.g., "heartbeat")
+    pub async fn validation_response(
+        &self,
+        request_hash: B256,
+        response: u8,
+        response_uri: String,
+        response_hash: B256,
+        tag: String,
+    ) -> Result<B256> {
+        let call = self.contract.validationResponse(
+            request_hash,
+            response,
+            response_uri,
+            response_hash,
+            tag,
+        );
+        self.submitter.invoke("validationResponse", call).await
     }
 }

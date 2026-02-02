@@ -23,6 +23,7 @@ use crate::l2::L2Supervisor;
 mod args;
 mod clients;
 mod contracts;
+mod erc8004;
 mod l1;
 mod l2;
 mod metrics;
@@ -115,6 +116,16 @@ async fn main() -> Result<()> {
         );
     }
 
+    if config.enable_erc8004 {
+        if let Some(addr) = config.l2_validation_registry_address {
+            info!(validation_registry = ?addr, "ERC-8004 keeper enabled");
+        } else {
+            info!("ERC-8004 keeper enabled but no ValidationRegistry address configured");
+        }
+    } else {
+        info!("ERC-8004 keeper disabled");
+    }
+
     info!("Keeper initialized");
 
     let l2_client = Arc::new(
@@ -122,6 +133,7 @@ async fn main() -> Result<()> {
             config.l2_rpc_url.clone(),
             config.l2_heartbeat_manager_address,
             config.l2_jailing_policy_address,
+            config.l2_validation_registry_address,
             config.private_key.clone(),
         )
         .await?,
