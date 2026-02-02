@@ -11,7 +11,7 @@ use blacklight_contract_clients::{
 };
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::{debug, info, warn};
+use tracing::{debug, info, instrument, warn};
 
 const MIN_NIL_SYNC_THRESHOLD: u64 = 100;
 const RESPONDED_BIT: u64 = 1 << 2;
@@ -87,6 +87,7 @@ impl RewardsDistributor {
         Ok(())
     }
 
+    #[instrument(skip_all, fields(key = ?key.heartbeat_key, round = key.round))]
     pub(crate) async fn distribute_rewards(
         &mut self,
         block_timestamp: u64,
@@ -120,7 +121,7 @@ impl RewardsDistributor {
             }
         };
         if !self
-            .ensure_reward_budget(block_timestamp, round_info.reward, key)
+            .ensure_reward_budget(block_timestamp, round_info.reward)
             .await?
         {
             return Ok(());
@@ -138,8 +139,6 @@ impl RewardsDistributor {
 
         if sum_weights != expected_stake {
             warn!(
-                heartbeat_key = ?key.heartbeat_key,
-                round = key.round,
                 sum_weights = ?sum_weights,
                 expected_stake = ?expected_stake,
                 "Reward weights mismatch, skipping"
@@ -147,12 +146,7 @@ impl RewardsDistributor {
             return Ok(());
         }
 
-        info!(
-            heartbeat_key = ?key.heartbeat_key,
-            round = key.round,
-            voters = voters.len(),
-            "Distributing rewards"
-        );
+        info!(voters = voters.len(), "Distributing rewards");
 
         let call =
             self.client
@@ -163,8 +157,6 @@ impl RewardsDistributor {
             Ok(pending) => {
                 let receipt = pending.get_receipt().await?;
                 info!(
-                    heartbeat_key = ?key.heartbeat_key,
-                    round = key.round,
                     tx_hash = ?receipt.transaction_hash,
                     "Rewards distributed"
                 );
@@ -181,18 +173,14 @@ impl RewardsDistributor {
         }
     }
 
+    #[instrument(skip_all, fields(reward = ?reward_address))]
     async fn ensure_reward_budget(
         &mut self,
         block_timestamp: u64,
         reward_address: Address,
-        key: RoundKey,
     ) -> anyhow::Result<bool> {
         if reward_address == Address::ZERO {
-            warn!(
-                heartbeat_key = ?key.heartbeat_key,
-                round = key.round,
-                "Reward policy address is zero, skipping"
-            );
+            warn!("Reward policy address is zero, skipping");
             return Ok(false);
         }
 
@@ -231,52 +219,28 @@ impl RewardsDistributor {
         .await?;
 
         if !should_unlock {
-            info!(
-                heartbeat_key = ?key.heartbeat_key,
-                round = key.round,
-                reward = ?reward_address,
-                "Reward budget still unlocking, skipping"
-            );
+            info!("Reward budget still unlocking, skipping");
             return Ok(false);
         }
 
         if ctx.last_sync_attempt_at == Some(block_timestamp) {
-            debug!(
-                heartbeat_key = ?key.heartbeat_key,
-                round = key.round,
-                reward = ?reward_address,
-                "Reward sync already attempted for reward policy in this tick"
-            );
+            debug!("Reward sync already attempted for reward policy in this tick");
             return Ok(false);
         }
         ctx.last_sync_attempt_at = Some(block_timestamp);
 
-        info!(
-            heartbeat_key = ?key.heartbeat_key,
-            round = key.round,
-            reward = ?reward_address,
-            "Reward budget unlocking, syncing policy",
-        );
+        info!("Reward budget unlocking, syncing policy",);
 
         match reward_policy.sync().send().await {
             Ok(pending) => {
                 let receipt = pending.get_receipt().await?;
                 info!(
-                    heartbeat_key = ?key.heartbeat_key,
-                    round = key.round,
-                    reward = ?reward_address,
                     tx_hash = ?receipt.transaction_hash,
                     "Reward policy synced"
                 );
             }
             Err(e) => {
-                warn!(
-                    heartbeat_key = ?key.heartbeat_key,
-                    round = key.round,
-                    reward = ?reward_address,
-                    error = %decode_any_error(&e),
-                    "Reward policy sync failed"
-                );
+                warn!("Reward policy sync failed: {}", decode_any_error(&e));
                 return Ok(false);
             }
         }
@@ -284,17 +248,11 @@ impl RewardsDistributor {
         let budget_after = reward_policy.spendableBudget().call().await?;
         if budget_after == U256::ZERO {
             let remaining_after = reward_policy.streamRemaining().call().await?;
-            let skip_msg = if remaining_after > U256::ZERO {
-                "Reward budget still unlocking after sync, skipping"
+            if remaining_after > U256::ZERO {
+                info!("Reward budget still unlocking after sync, skipping");
             } else {
-                "Reward budget still empty after sync, skipping"
-            };
-            info!(
-                heartbeat_key = ?key.heartbeat_key,
-                round = key.round,
-                reward = ?reward_address,
-                "{}", skip_msg
-            );
+                info!("Reward budget still empty after sync, skipping");
+            }
             ctx.last_budget = Some(budget_after);
             return Ok(false);
         }
