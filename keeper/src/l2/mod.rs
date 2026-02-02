@@ -23,7 +23,6 @@ struct RoundState {
     outcome: Option<u8>,
     round_info: Option<RoundInfoView>,
     rewards_done: bool,
-    reward_sync_attempted: bool,
     jailing_done: bool,
 }
 
@@ -34,28 +33,8 @@ struct RoundInfoView {
     invalid_stake: U256,
 }
 
-#[derive(Debug, Clone)]
-struct RewardPolicyCache {
-    last_checked_at: Option<u64>,
-    last_budget: Option<U256>,
-    last_remaining: Option<U256>,
-    last_sync_attempt_at: Option<u64>,
-}
-
-impl RewardPolicyCache {
-    fn new() -> Self {
-        Self {
-            last_checked_at: None,
-            last_budget: None,
-            last_remaining: None,
-            last_sync_attempt_at: None,
-        }
-    }
-}
-
 #[derive(Default)]
 pub struct KeeperState {
     raw_htx_by_heartbeat: HashMap<B256, Bytes>,
     rounds: HashMap<RoundKey, RoundState>,
-    reward_policies: HashMap<Address, RewardPolicyCache>,
 }

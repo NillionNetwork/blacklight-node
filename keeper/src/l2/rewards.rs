@@ -1,10 +1,10 @@
 use crate::{
     clients::{L2KeeperClient, RewardPolicyInstance},
-    l2::{KeeperState, RewardPolicyCache, RoundInfoView, RoundKey},
+    l2::{KeeperState, RoundInfoView, RoundKey},
     metrics,
 };
 use alloy::primitives::{Address, U256, map::HashMap, utils::format_units};
-use anyhow::{Context, bail};
+use anyhow::{Context, anyhow, bail};
 use blacklight_contract_clients::{
     ProtocolConfig::ProtocolConfigInstance,
     common::{errors::decode_any_error, overestimate_gas},
@@ -24,10 +24,19 @@ struct TokenContext {
     address: Address,
 }
 
+#[derive(Clone, Copy)]
+struct RewardsContext {
+    token: TokenContext,
+    last_checked_at: Option<u64>,
+    last_budget: Option<U256>,
+    last_remaining: Option<U256>,
+    last_sync_attempt_at: Option<u64>,
+}
+
 pub(crate) struct RewardsDistributor {
     client: Arc<L2KeeperClient>,
     state: Arc<Mutex<KeeperState>>,
-    token_context: HashMap<Address, TokenContext>,
+    rewards_context: HashMap<Address, RewardsContext>,
 }
 
 impl RewardsDistributor {
@@ -35,7 +44,7 @@ impl RewardsDistributor {
         Self {
             client,
             state,
-            token_context: Default::default(),
+            rewards_context: Default::default(),
         }
     }
 
@@ -54,7 +63,7 @@ impl RewardsDistributor {
             .call()
             .await
             .context("Failed to get reward policy contract address")?;
-        let token = self.fetch_token_context(reward_policy_address).await?;
+        let token = self.fetch_token_context(reward_policy_address).await?.token;
 
         let reward_policy = self.client.reward_policy(reward_policy_address);
         let erc20 = self.client.erc20(token.address);
@@ -187,53 +196,39 @@ impl RewardsDistributor {
             return Ok(false);
         }
 
-        let mut cache = {
-            let state = self.state.lock().await;
-            state
-                .reward_policies
-                .get(&reward_address)
-                .cloned()
-                .unwrap_or_else(RewardPolicyCache::new)
-        };
-
         let reward_policy = self.client.reward_policy(reward_address);
+        let ctx = self.fetch_token_context(reward_address).await?;
         let mut budget = None;
-        if cache.last_checked_at == Some(block_timestamp) {
-            budget = cache.last_budget;
+        if ctx.last_checked_at == Some(block_timestamp) {
+            budget = ctx.last_budget;
         }
         if budget.is_none() {
             let fetched = reward_policy.spendableBudget().call().await?;
             budget = Some(fetched);
-            cache.last_checked_at = Some(block_timestamp);
-            cache.last_budget = Some(fetched);
-            cache.last_remaining = None;
+            ctx.last_checked_at = Some(block_timestamp);
+            ctx.last_budget = Some(fetched);
+            ctx.last_remaining = None;
         }
         let budget = budget.unwrap_or(U256::ZERO);
         metrics::get().l2.rewards.set_budget(budget);
         if budget > U256::ZERO {
-            self.store_reward_cache(reward_address, cache).await;
             return Ok(true);
         }
 
-        let remaining = if let Some(value) = cache.last_remaining {
+        let remaining = if let Some(value) = ctx.last_remaining {
             value
         } else {
             let value = reward_policy.streamRemaining().call().await?;
-            cache.last_remaining = Some(value);
+            ctx.last_remaining = Some(value);
             value
         };
-        let token_ctx = self.fetch_token_context(reward_address).await?;
-        let should_unlock = if remaining > U256::ZERO {
-            self.can_unlock_budget(
-                &reward_policy,
-                remaining,
-                block_timestamp,
-                token_ctx.decimals,
-            )
-            .await?
-        } else {
-            false
-        };
+        let should_unlock = Self::can_unlock_budget(
+            &reward_policy,
+            remaining,
+            block_timestamp,
+            ctx.token.decimals,
+        )
+        .await?;
 
         if !should_unlock {
             info!(
@@ -242,42 +237,19 @@ impl RewardsDistributor {
                 reward = ?reward_address,
                 "Reward budget still unlocking, skipping"
             );
-            self.store_reward_cache(reward_address, cache).await;
             return Ok(false);
         }
 
-        let already_attempted = {
-            let mut state = self.state.lock().await;
-            let entry = state.rounds.entry(key).or_default();
-            if entry.reward_sync_attempted {
-                true
-            } else {
-                entry.reward_sync_attempted = true;
-                false
-            }
-        };
-        if already_attempted {
-            debug!(
-                heartbeat_key = ?key.heartbeat_key,
-                round = key.round,
-                reward = ?reward_address,
-                "Reward sync already attempted for round, skipping"
-            );
-            self.store_reward_cache(reward_address, cache).await;
-            return Ok(false);
-        }
-
-        if cache.last_sync_attempt_at == Some(block_timestamp) {
+        if ctx.last_sync_attempt_at == Some(block_timestamp) {
             debug!(
                 heartbeat_key = ?key.heartbeat_key,
                 round = key.round,
                 reward = ?reward_address,
                 "Reward sync already attempted for reward policy in this tick"
             );
-            self.store_reward_cache(reward_address, cache).await;
             return Ok(false);
         }
-        cache.last_sync_attempt_at = Some(block_timestamp);
+        ctx.last_sync_attempt_at = Some(block_timestamp);
 
         info!(
             heartbeat_key = ?key.heartbeat_key,
@@ -305,7 +277,6 @@ impl RewardsDistributor {
                     error = %decode_any_error(&e),
                     "Reward policy sync failed"
                 );
-                self.store_reward_cache(reward_address, cache).await;
                 return Ok(false);
             }
         }
@@ -324,18 +295,15 @@ impl RewardsDistributor {
                 reward = ?reward_address,
                 "{}", skip_msg
             );
-            cache.last_budget = Some(budget_after);
-            self.store_reward_cache(reward_address, cache).await;
+            ctx.last_budget = Some(budget_after);
             return Ok(false);
         }
 
-        cache.last_budget = Some(budget_after);
-        self.store_reward_cache(reward_address, cache).await;
+        ctx.last_budget = Some(budget_after);
         Ok(true)
     }
 
     async fn can_unlock_budget(
-        &self,
         reward_policy: &RewardPolicyInstance,
         remaining: U256,
         block_timestamp: u64,
@@ -370,11 +338,6 @@ impl RewardsDistributor {
         Ok(unlocked >= threshold)
     }
 
-    async fn store_reward_cache(&self, reward_address: Address, cache: RewardPolicyCache) {
-        let mut state = self.state.lock().await;
-        state.reward_policies.insert(reward_address, cache);
-    }
-
     async fn build_voter_list(
         &self,
         key: RoundKey,
@@ -403,22 +366,33 @@ impl RewardsDistributor {
         Ok((voters, total_weight))
     }
 
-    async fn fetch_token_context(&mut self, address: Address) -> anyhow::Result<TokenContext> {
-        if let Some(context) = self.token_context.get(&address) {
-            return Ok(*context);
-        }
-        info!("Fetching token context for rewards policy address {address}");
-        let reward_policy = RewardPolicyInstance::new(address, self.client.provider());
-        let token_address = reward_policy.rewardToken().call().await?;
-        let erc20 = self.client.erc20(token_address);
-        let decimals = erc20.decimals().call().await?;
+    async fn fetch_token_context(
+        &mut self,
+        address: Address,
+    ) -> anyhow::Result<&mut RewardsContext> {
+        if !self.rewards_context.contains_key(&address) {
+            info!("Fetching token context for rewards policy address {address}");
+            let reward_policy = RewardPolicyInstance::new(address, self.client.provider());
+            let token_address = reward_policy.rewardToken().call().await?;
+            let erc20 = self.client.erc20(token_address);
+            let decimals = erc20.decimals().call().await?;
 
-        let context = TokenContext {
-            decimals,
-            address: token_address,
-        };
-        self.token_context.insert(address, context);
-        Ok(context)
+            let token = TokenContext {
+                decimals,
+                address: token_address,
+            };
+            let context = RewardsContext {
+                token,
+                last_checked_at: None,
+                last_budget: None,
+                last_remaining: None,
+                last_sync_attempt_at: None,
+            };
+            self.rewards_context.insert(address, context);
+        }
+        self.rewards_context
+            .get_mut(&address)
+            .ok_or_else(|| anyhow!("insertion gone"))
     }
 }
 
