@@ -14,9 +14,9 @@
 //!    - Selector: `0x4e487b71`
 //!    - Includes overflow, division by zero, array bounds, etc.
 //!
-//! 3. **Custom Contract Errors** - Gas-efficient custom errors from contract ABIs
-//!    - Add support here when custom errors are introduced in registry contracts
+//! 3. **Custom Contract Errors** - Extensible via [`decode_revert_with_custom`]
 //!    - Each error has a unique 4-byte selector derived from its signature
+//!    - Consumers can provide their own custom error decoders
 //!
 //! ## Usage Flow
 //!
@@ -26,23 +26,12 @@
 //!         → "contract: request already exists" (human-readable!)
 //! ```
 //!
-//! ## Example
-//!
-//! Instead of seeing:
-//! ```text
-//! error: execution reverted: 0x08c379a0000000...
-//! ```
-//!
-//! You now see:
-//! ```text
-//! error: contract: request already exists
-//! ```
-//!
 //! ## Main Entry Points
 //!
 //! - [`decode_any_error`] - Generic entry point for any error type
 //! - [`extract_revert_from_contract_error`] - For Alloy's `ContractError` type
 //! - [`decode_revert`] - For raw `Bytes` revert data
+//! - [`decode_revert_with_custom`] - For raw `Bytes` with custom error decoder
 
 use alloy::{
     contract::Error as ContractError, hex, primitives::Bytes, sol, sol_types::SolInterface,
@@ -73,23 +62,6 @@ sol! {
 }
 
 // ============================================================================
-// Contract-specific Errors - Extracted from ABIs
-// ============================================================================
-//
-// Custom Solidity errors are more gas-efficient than `require()` with strings.
-// The `sol!` macro in the contract binding modules automatically generates
-// Rust types for all custom errors defined in the contract ABI.
-//
-// To add support for a new contract's errors:
-// 1. Ensure the contract module uses `sol!` to generate bindings
-// 2. Re-export the errors enum here: `pub use super::module::Contract::ContractErrors;`
-// 3. Add a case in `decode_revert()` to try decoding with the new error type
-// 4. Add a `format_X_error()` function to provide human-readable messages
-
-// Note: If custom errors are added to the registry contracts, re-export them here
-// and extend `decode_revert` with the appropriate decoding.
-
-// ============================================================================
 // DecodedRevert Enum - The Result of Decoding
 // ============================================================================
 
@@ -101,6 +73,7 @@ sol! {
 /// |---------|----------------|
 /// | `ErrorString` | `require()` failed with a message |
 /// | `Panic` | `assert()` failed or arithmetic error |
+/// | `CustomError` | Custom error decoded by consumer-provided decoder |
 /// | `RawRevert` | We got hex data but couldn't decode it |
 /// | `NoRevertData` | No revert data at all (unusual) |
 #[derive(Debug, Clone)]
@@ -113,6 +86,10 @@ pub enum DecodedRevert {
     /// Produced by `assert()` failures, arithmetic overflow, division by zero, etc.
     /// See [`panic_reason`] for code meanings.
     Panic(u64),
+
+    /// Custom error decoded by a consumer-provided decoder.
+    /// The string contains a human-readable description of the error.
+    CustomError(String),
 
     /// Raw revert data that couldn't be decoded by any known error type.
     /// Contains the hex bytes so the user can manually debug.
@@ -128,6 +105,7 @@ impl std::fmt::Display for DecodedRevert {
         match self {
             DecodedRevert::ErrorString(msg) => write!(f, "{}", msg),
             DecodedRevert::Panic(code) => write!(f, "Panic({}): {}", code, panic_reason(*code)),
+            DecodedRevert::CustomError(msg) => write!(f, "{}", msg),
             DecodedRevert::RawRevert(data) => write!(f, "Raw revert data: {}", data),
             DecodedRevert::NoRevertData(details) => write!(f, "No revert data ({})", details),
         }
@@ -157,7 +135,7 @@ impl std::fmt::Display for DecodedRevert {
 /// | 0x32 | Array index out of bounds |
 /// | 0x41 | Memory allocation overflow |
 /// | 0x51 | Zero-initialized function pointer call |
-fn panic_reason(code: u64) -> &'static str {
+pub fn panic_reason(code: u64) -> &'static str {
     match code {
         0x00 => "generic compiler panic",
         0x01 => "assertion failed",
@@ -182,8 +160,9 @@ fn panic_reason(code: u64) -> &'static str {
 /// This function attempts to decode the raw bytes in the following order:
 /// 1. **Standard `Error(string)`** - Most common from `require()`
 /// 2. **Standard `Panic(uint256)`** - From `assert()` or overflow
-/// 3. **Custom `StakingOperatorsErrors`** - Contract-specific errors
-/// 4. **Fallback** - Return the raw hex so user can debug
+/// 3. **Fallback** - Return the raw hex so user can debug
+///
+/// For custom error decoding, use [`decode_revert_with_custom`] instead.
 ///
 /// # Arguments
 ///
@@ -192,15 +171,45 @@ fn panic_reason(code: u64) -> &'static str {
 /// # Returns
 ///
 /// A [`DecodedRevert`] variant representing the decoded error.
+pub fn decode_revert(data: &Bytes) -> DecodedRevert {
+    decode_revert_with_custom(data, |_| None)
+}
+
+/// Decode raw revert data bytes with a custom error decoder.
+///
+/// This function attempts to decode the raw bytes in the following order:
+/// 1. **Standard `Error(string)`** - Most common from `require()`
+/// 2. **Standard `Panic(uint256)`** - From `assert()` or overflow
+/// 3. **Custom errors** - Via the provided `custom_decoder`
+/// 4. **Fallback** - Return the raw hex so user can debug
+///
+/// # Arguments
+///
+/// * `data` - Raw ABI-encoded revert data from the EVM
+/// * `custom_decoder` - A function that attempts to decode custom contract errors.
+///   Returns `Some(DecodedRevert)` if the error was recognized, `None` otherwise.
+///
+/// # Returns
+///
+/// A [`DecodedRevert`] variant representing the decoded error.
 ///
 /// # Example
 ///
 /// ```ignore
-/// let revert_data = Bytes::from(hex::decode("08c379a0...").unwrap());
-/// let decoded = decode_revert(&revert_data);
-/// println!("Error: {}", decoded); // "contract: request already exists"
+/// use contract_clients_common::errors::{decode_revert_with_custom, DecodedRevert};
+///
+/// let decoded = decode_revert_with_custom(&data, |bytes| {
+///     if let Ok(err) = MyContractErrors::abi_decode(bytes) {
+///         Some(DecodedRevert::CustomError(format!("{:?}", err)))
+///     } else {
+///         None
+///     }
+/// });
 /// ```
-pub fn decode_revert(data: &Bytes) -> DecodedRevert {
+pub fn decode_revert_with_custom<F>(data: &Bytes, custom_decoder: F) -> DecodedRevert
+where
+    F: FnOnce(&Bytes) -> Option<DecodedRevert>,
+{
     // Empty revert data is unusual - contracts normally include some data
     if data.is_empty() {
         return DecodedRevert::NoRevertData("empty revert data".to_string());
@@ -220,7 +229,12 @@ pub fn decode_revert(data: &Bytes) -> DecodedRevert {
         }
     }
 
-    // Step 2: Unknown error - return raw bytes so user can debug
+    // Step 2: Try custom error decoder
+    if let Some(decoded) = custom_decoder(data) {
+        return decoded;
+    }
+
+    // Step 3: Unknown error - return raw bytes so user can debug
     // This allows users to manually decode or report the unknown error type
     DecodedRevert::RawRevert(data.clone())
 }
@@ -252,10 +266,24 @@ pub fn decode_revert(data: &Bytes) -> DecodedRevert {
 ///
 /// A [`DecodedRevert`] with the decoded error or context about why decoding failed.
 pub fn extract_revert_from_contract_error(error: &ContractError) -> DecodedRevert {
+    extract_revert_from_contract_error_with_custom(error, |_| None)
+}
+
+/// Extract and decode revert data from an Alloy [`ContractError`] with custom decoder.
+///
+/// Same as [`extract_revert_from_contract_error`] but allows providing a custom
+/// error decoder for contract-specific errors.
+pub fn extract_revert_from_contract_error_with_custom<F>(
+    error: &ContractError,
+    custom_decoder: F,
+) -> DecodedRevert
+where
+    F: Fn(&Bytes) -> Option<DecodedRevert>,
+{
     match error {
         // TransportError is the most common - it wraps RPC error responses
         ContractError::TransportError(transport_err) => {
-            extract_revert_from_transport_error(transport_err)
+            extract_revert_from_transport_error_with_custom(transport_err, custom_decoder)
         }
         // ABI errors happen when encoding/decoding fails (rare)
         ContractError::AbiError(abi_err) => {
@@ -265,7 +293,8 @@ pub fn extract_revert_from_contract_error(error: &ContractError) -> DecodedRever
         // This is a fallback - ideally we'd handle all variants explicitly
         _ => {
             let debug_str = format!("{:?}", error);
-            if let Some(decoded) = try_extract_from_string(&debug_str) {
+            if let Some(decoded) = try_extract_from_string_with_custom(&debug_str, &custom_decoder)
+            {
                 decoded
             } else {
                 DecodedRevert::NoRevertData(format!("Unknown error type: {}", error))
@@ -287,7 +316,13 @@ pub fn extract_revert_from_contract_error(error: &ContractError) -> DecodedRever
 /// # Returns
 ///
 /// A [`DecodedRevert`] with the decoded error data.
-fn extract_revert_from_transport_error(error: &TransportError) -> DecodedRevert {
+fn extract_revert_from_transport_error_with_custom<F>(
+    error: &TransportError,
+    custom_decoder: F,
+) -> DecodedRevert
+where
+    F: Fn(&Bytes) -> Option<DecodedRevert>,
+{
     match error {
         TransportError::ErrorResp(err_resp) => {
             // The error response may contain revert data in the `data` field
@@ -301,7 +336,7 @@ fn extract_revert_from_transport_error(error: &TransportError) -> DecodedRevert 
                 if let Some(hex_data) = data_str.strip_prefix("0x")
                     && let Ok(bytes) = hex::decode(hex_data)
                 {
-                    return decode_revert(&Bytes::from(bytes));
+                    return decode_revert_with_custom(&Bytes::from(bytes), |b| custom_decoder(b));
                 }
                 // If not hex, include the raw data for debugging
                 return DecodedRevert::NoRevertData(format!("Error data: {}", data_str));
@@ -312,7 +347,7 @@ fn extract_revert_from_transport_error(error: &TransportError) -> DecodedRevert 
         // For other transport errors (timeout, connection, etc.), try string extraction
         _ => {
             let err_str = error.to_string();
-            if let Some(decoded) = try_extract_from_string(&err_str) {
+            if let Some(decoded) = try_extract_from_string_with_custom(&err_str, &custom_decoder) {
                 decoded
             } else {
                 DecodedRevert::NoRevertData(format!("Transport error: {}", err_str))
@@ -345,7 +380,18 @@ fn extract_revert_from_transport_error(error: &TransportError) -> DecodedRevert 
 /// # Returns
 ///
 /// `Some(DecodedRevert)` if hex data was found and decoded, `None` otherwise.
-fn try_extract_from_string(error_str: &str) -> Option<DecodedRevert> {
+pub fn try_extract_from_string(error_str: &str) -> Option<DecodedRevert> {
+    try_extract_from_string_with_custom(error_str, &|_| None)
+}
+
+/// Try to extract revert data from an error string with a custom decoder.
+fn try_extract_from_string_with_custom<F>(
+    error_str: &str,
+    custom_decoder: &F,
+) -> Option<DecodedRevert>
+where
+    F: Fn(&Bytes) -> Option<DecodedRevert>,
+{
     // Patterns that indicate hex revert data follows
     const PATTERNS: &[&str] = &[
         "execution reverted: 0x",
@@ -387,7 +433,9 @@ fn try_extract_from_string(error_str: &str) -> Option<DecodedRevert> {
             if hex_str.len() >= 10 {
                 let without_prefix = hex_str.strip_prefix("0x").unwrap_or(hex_str);
                 if let Ok(bytes) = hex::decode(without_prefix) {
-                    return Some(decode_revert(&Bytes::from(bytes)));
+                    return Some(decode_revert_with_custom(&Bytes::from(bytes), |b| {
+                        custom_decoder(b)
+                    }));
                 }
             }
         }
@@ -439,16 +487,27 @@ fn try_extract_from_string(error_str: &str) -> Option<DecodedRevert> {
 /// log::error!("Transaction failed: {}", decoded);
 /// ```
 pub fn decode_any_error<E: std::fmt::Display + std::fmt::Debug>(error: &E) -> DecodedRevert {
+    decode_any_error_with_custom(error, |_| None)
+}
+
+/// Decode ANY error with a custom error decoder.
+///
+/// Same as [`decode_any_error`] but allows providing a custom error decoder.
+pub fn decode_any_error_with_custom<E, F>(error: &E, custom_decoder: F) -> DecodedRevert
+where
+    E: std::fmt::Display + std::fmt::Debug,
+    F: Fn(&Bytes) -> Option<DecodedRevert>,
+{
     let error_str = error.to_string();
     let debug_str = format!("{:?}", error);
 
     // First try the Display representation
-    if let Some(decoded) = try_extract_from_string(&error_str) {
+    if let Some(decoded) = try_extract_from_string_with_custom(&error_str, &custom_decoder) {
         return decoded;
     }
 
     // Then try the Debug representation (often has more details like struct fields)
-    if let Some(decoded) = try_extract_from_string(&debug_str) {
+    if let Some(decoded) = try_extract_from_string_with_custom(&debug_str, &custom_decoder) {
         return decoded;
     }
 
@@ -533,6 +592,9 @@ mod tests {
 
         let panic = DecodedRevert::Panic(1);
         assert_eq!(format!("{}", panic), "Panic(1): assertion failed");
+
+        let custom = DecodedRevert::CustomError("Custom error".to_string());
+        assert_eq!(format!("{}", custom), "Custom error");
     }
 
     /// Test extracting revert data from various error string formats.
@@ -558,5 +620,26 @@ mod tests {
         assert_eq!(panic_reason(0x01), "assertion failed");
         assert_eq!(panic_reason(0x11), "arithmetic overflow/underflow");
         assert_eq!(panic_reason(0x12), "division by zero");
+    }
+
+    /// Test custom error decoder.
+    #[test]
+    fn test_custom_decoder() {
+        // Some unknown error selector
+        let data = hex::decode("deadbeef").unwrap();
+
+        // Without custom decoder - should return RawRevert
+        let decoded = decode_revert(&Bytes::from(data.clone()));
+        assert!(matches!(decoded, DecodedRevert::RawRevert(_)));
+
+        // With custom decoder that recognizes this selector
+        let decoded = decode_revert_with_custom(&Bytes::from(data), |bytes| {
+            if bytes.starts_with(&[0xde, 0xad, 0xbe, 0xef]) {
+                Some(DecodedRevert::CustomError("Known custom error".to_string()))
+            } else {
+                None
+            }
+        });
+        assert!(matches!(decoded, DecodedRevert::CustomError(msg) if msg == "Known custom error"));
     }
 }

@@ -1,22 +1,9 @@
-use crate::common::errors::decode_any_error;
-use alloy::{
-    contract::{CallBuilder, CallDecoder},
-    providers::Provider,
-};
-use anyhow::anyhow;
+//! Common utilities for ERC-8004 contract clients.
+//!
+//! This module re-exports shared utilities from `contract-clients-common`.
 
-pub mod errors;
-pub mod event_helper;
-pub mod tx_submitter;
-
-pub async fn overestimate_gas<P: Provider, D: CallDecoder>(
-    call: &CallBuilder<&P, D>,
-) -> anyhow::Result<u64> {
-    // Estimate gas and add a 50% buffer
-    let estimated_gas = call.estimate_gas().await.map_err(|e| {
-        let decoded = decode_any_error(&e);
-        anyhow!("failed to estimate gas: {decoded}")
-    })?;
-    let gas_with_buffer = estimated_gas.saturating_add(estimated_gas / 2);
-    Ok(gas_with_buffer)
-}
+// Re-export everything from the shared crate
+pub use contract_clients_common::errors;
+pub use contract_clients_common::event_helper;
+pub use contract_clients_common::overestimate_gas;
+pub use contract_clients_common::tx_submitter;
