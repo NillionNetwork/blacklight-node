@@ -6,7 +6,7 @@
 //! ## Usage
 //!
 //! ```ignore
-//! use crate::contract_client::event_helper::BlockRange;
+//! use contract_clients_common::event_helper::BlockRange;
 //!
 //! // Query with block range
 //! let range = BlockRange::last_n_blocks(1000);

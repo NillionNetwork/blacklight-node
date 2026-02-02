@@ -1,14 +1,26 @@
-use crate::common::errors::decode_any_error;
+//! Common utilities for blacklight contract clients.
+//!
+//! This module re-exports shared utilities from `contract-clients-common`
+//! and provides blacklight-specific extensions for error decoding.
+
+// Re-export shared modules
+pub use contract_clients_common::event_helper;
+pub use contract_clients_common::tx_submitter;
+
+// Provide blacklight-specific errors module with StakingOperators error support
+pub mod errors;
+
 use alloy::{
     contract::{CallBuilder, CallDecoder},
     providers::Provider,
 };
 use anyhow::anyhow;
 
-pub mod errors;
-pub mod event_helper;
-pub mod tx_submitter;
+use crate::common::errors::decode_any_error;
 
+/// Estimate gas for a contract call with a 50% buffer.
+///
+/// Uses blacklight-specific error decoding for better error messages.
 pub async fn overestimate_gas<P: Provider, D: CallDecoder>(
     call: &CallBuilder<&P, D>,
 ) -> anyhow::Result<u64> {
