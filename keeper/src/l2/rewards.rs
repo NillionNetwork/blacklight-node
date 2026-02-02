@@ -27,10 +27,10 @@ struct TokenContext {
 #[derive(Clone, Copy)]
 struct RewardsContext {
     token: TokenContext,
-    last_checked_at: Option<u64>,
-    last_budget: Option<U256>,
-    last_remaining: Option<U256>,
-    last_sync_attempt_at: Option<u64>,
+    checked_at: u64,
+    synced_at: u64,
+    spendable: U256,
+    remaining: U256,
 }
 
 pub(crate) struct RewardsDistributor {
@@ -186,33 +186,29 @@ impl RewardsDistributor {
 
         let reward_policy = self.client.reward_policy(reward_address);
         let ctx = self.fetch_token_context(reward_address).await?;
-        let mut budget = None;
-        if ctx.last_checked_at == Some(block_timestamp) {
-            budget = ctx.last_budget;
+        if ctx.checked_at != block_timestamp {
+            // Fetch the current spendable/remaining budgets
+            ctx.spendable = reward_policy.spendableBudget().call().await?;
+            ctx.remaining = reward_policy.streamRemaining().call().await?;
+            ctx.checked_at = block_timestamp;
+            metrics::get().l2.rewards.set_spendable(ctx.spendable);
+            metrics::get().l2.rewards.set_remaining(ctx.remaining);
+
+            let spendable = format_units(ctx.spendable, ctx.token.decimals)?;
+            let remaining = format_units(ctx.remaining, ctx.token.decimals)?;
+            info!(
+                spendable = spendable,
+                remaining = remaining,
+                "Fetched contract context"
+            );
         }
-        if budget.is_none() {
-            let fetched = reward_policy.spendableBudget().call().await?;
-            budget = Some(fetched);
-            ctx.last_checked_at = Some(block_timestamp);
-            ctx.last_budget = Some(fetched);
-            ctx.last_remaining = None;
-        }
-        let budget = budget.unwrap_or(U256::ZERO);
-        metrics::get().l2.rewards.set_budget(budget);
-        if budget > U256::ZERO {
+        if ctx.spendable > U256::ZERO {
             return Ok(true);
         }
 
-        let remaining = if let Some(value) = ctx.last_remaining {
-            value
-        } else {
-            let value = reward_policy.streamRemaining().call().await?;
-            ctx.last_remaining = Some(value);
-            value
-        };
         let should_unlock = Self::can_unlock_budget(
             &reward_policy,
-            remaining,
+            ctx.remaining,
             block_timestamp,
             ctx.token.decimals,
         )
@@ -223,14 +219,13 @@ impl RewardsDistributor {
             return Ok(false);
         }
 
-        if ctx.last_sync_attempt_at == Some(block_timestamp) {
+        if ctx.synced_at == block_timestamp {
             debug!("Reward sync already attempted for reward policy in this tick");
             return Ok(false);
         }
-        ctx.last_sync_attempt_at = Some(block_timestamp);
+        ctx.synced_at = block_timestamp;
 
         info!("Reward budget unlocking, syncing policy",);
-
         match reward_policy.sync().send().await {
             Ok(pending) => {
                 let receipt = pending.get_receipt().await?;
@@ -245,20 +240,19 @@ impl RewardsDistributor {
             }
         }
 
-        let budget_after = reward_policy.spendableBudget().call().await?;
-        if budget_after == U256::ZERO {
-            let remaining_after = reward_policy.streamRemaining().call().await?;
-            if remaining_after > U256::ZERO {
+        // Update our state after syncing
+        ctx.spendable = reward_policy.spendableBudget().call().await?;
+        ctx.remaining = reward_policy.streamRemaining().call().await?;
+        if ctx.spendable == U256::ZERO {
+            if ctx.remaining > U256::ZERO {
                 info!("Reward budget still unlocking after sync, skipping");
             } else {
                 info!("Reward budget still empty after sync, skipping");
             }
-            ctx.last_budget = Some(budget_after);
-            return Ok(false);
+            Ok(false)
+        } else {
+            Ok(true)
         }
-
-        ctx.last_budget = Some(budget_after);
-        Ok(true)
     }
 
     async fn can_unlock_budget(
@@ -341,10 +335,10 @@ impl RewardsDistributor {
             };
             let context = RewardsContext {
                 token,
-                last_checked_at: None,
-                last_budget: None,
-                last_remaining: None,
-                last_sync_attempt_at: None,
+                checked_at: 0,
+                synced_at: 0,
+                spendable: U256::ZERO,
+                remaining: U256::ZERO,
             };
             self.rewards_context.insert(address, context);
         }

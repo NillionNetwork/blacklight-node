@@ -156,7 +156,8 @@ impl L2EventMetrics {
 
 pub(crate) struct L2RewardsMetrics {
     distribution: Counter<u64>,
-    budget: Gauge<f64>,
+    spendable: Gauge<f64>,
+    remaining: Gauge<f64>,
 }
 
 impl L2RewardsMetrics {
@@ -165,13 +166,18 @@ impl L2RewardsMetrics {
             .u64_counter("blacklight.keeper.l2.rewards.distributions")
             .with_description("Number of times rewards were distributed")
             .build();
-        let budget = meter
-            .f64_gauge("blacklight.keeper.l2.rewards.budget")
-            .with_description("The current spendable budget for rewards")
+        let spendable = meter
+            .f64_gauge("blacklight.keeper.l2.rewards.spendadble")
+            .with_description("The spendable budget for rewards")
+            .build();
+        let remaining = meter
+            .f64_gauge("blacklight.keeper.l2.rewards.remaining")
+            .with_description("The remaining budget to be unlocked for rewards")
             .build();
         Self {
             distribution,
-            budget,
+            spendable,
+            remaining,
         }
     }
 
@@ -179,8 +185,12 @@ impl L2RewardsMetrics {
         self.distribution.add(1, &[]);
     }
 
-    pub(crate) fn set_budget(&self, value: U256) {
-        self.budget.record(value.into(), &[]);
+    pub(crate) fn set_spendable(&self, value: U256) {
+        self.spendable.record(value.into(), &[]);
+    }
+
+    pub(crate) fn set_remaining(&self, value: U256) {
+        self.remaining.record(value.into(), &[]);
     }
 }
 
