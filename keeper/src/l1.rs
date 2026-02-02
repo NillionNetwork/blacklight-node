@@ -3,8 +3,12 @@ use crate::{
     clients::{L1EmissionsClient, L2KeeperClient, RewardPolicyInstance},
     metrics,
 };
-use alloy::{eips::BlockNumberOrTag, primitives::U256, providers::Provider};
-use anyhow::{Context, Result, bail};
+use alloy::{
+    eips::{BlockId, BlockNumberOrTag},
+    primitives::U256,
+    providers::Provider,
+};
+use anyhow::{Context, Result, anyhow, bail};
 use blacklight_contract_clients::ProtocolConfig::ProtocolConfigInstance;
 use std::{sync::Arc, time::Duration};
 use tokio::time::interval;
@@ -141,18 +145,19 @@ impl EmissionsSupervisor {
             .context("Failed to get reward policy contract address")?;
         let reward_policy =
             RewardPolicyInstance::new(reward_policy_address, self.l2_client.provider());
-        let spendable_budget = reward_policy
-            .spendableBudget()
+        let ends_at = reward_policy
+            .streamEnd()
             .call()
             .await
             .context("Failed to get spendable budget")?;
-        let remaining = reward_policy
-            .streamRemaining()
-            .call()
-            .await
-            .context("Failed to get stream remaining")?;
-        let budget = spendable_budget.saturating_add(remaining);
-        Ok(budget == U256::ZERO)
+        let latest_block = self
+            .l2_client
+            .provider()
+            .get_block(BlockId::latest())
+            .await?
+            .ok_or_else(|| anyhow!("no latest block"))?;
+        // We can top it up if the L2 budget already ended
+        Ok(ends_at <= latest_block.header.timestamp)
     }
 
     async fn publish_balance_metric(&self) {
