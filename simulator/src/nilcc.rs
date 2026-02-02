@@ -1,8 +1,8 @@
 use alloy::primitives::Address;
 use anyhow::Result;
 use blacklight_contract_clients::{
-    htx::{Htx, JsonHtx, NillionHtx, PhalaHtx},
     BlacklightClient, ContractConfig,
+    htx::{Htx, JsonHtx, NillionHtx, PhalaHtx},
 };
 use chain_args::{ChainArgs, ChainConfig};
 use clap::Args;
@@ -11,7 +11,7 @@ use state_file::StateFile;
 use std::sync::Arc;
 use tracing::{info, warn};
 
-use crate::common::{retry_submit, Simulator, DEFAULT_SLOT_MS};
+use crate::common::{DEFAULT_SLOT_MS, Simulator, retry_submit};
 
 const STATE_FILE_SIMULATOR: &str = "nilcc_simulator.env";
 
@@ -129,7 +129,8 @@ impl NilccSimulator {
                         let mut htx = htxs[idx].clone();
                         match &mut htx {
                             Htx::Nillion(NillionHtx::V1(htx)) => {
-                                htx.workload_id.current = format!("{}-{:x}", htx.workload_id.current, nonce);
+                                htx.workload_id.current =
+                                    format!("{}-{:x}", htx.workload_id.current, nonce);
                             }
                             Htx::Phala(PhalaHtx::V1(htx)) => {
                                 htx.app_compose = format!("{}-{:x}", htx.app_compose, nonce);

@@ -1,11 +1,6 @@
 use alloy::{
-    consensus::Transaction,
-    contract::CallBuilder,
-    eips::BlockId,
-    primitives::B256,
-    providers::Provider,
-    rpc::types::TransactionReceipt,
-    sol_types::SolInterface,
+    consensus::Transaction, contract::CallBuilder, eips::BlockId, primitives::B256,
+    providers::Provider, rpc::types::TransactionReceipt, sol_types::SolInterface,
 };
 use anyhow::{Result, anyhow};
 use std::fmt::Debug;
