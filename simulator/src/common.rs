@@ -8,10 +8,10 @@ use tracing::error;
 
 /// Default slot interval in milliseconds.
 #[cfg(debug_assertions)]
-pub const DEFAULT_SLOT_MS: u64 = 3000;
+pub const DEFAULT_SLOT_MS: u64 = 15000;
 
 #[cfg(not(debug_assertions))]
-pub const DEFAULT_SLOT_MS: u64 = 5000;
+pub const DEFAULT_SLOT_MS: u64 = 15000;
 
 pub const MAX_RETRIES: u32 = 3;
 pub const RETRY_DELAY_MS: u64 = 500;

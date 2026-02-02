@@ -6,6 +6,7 @@ use alloy::{
     signers::local::PrivateKeySigner,
 };
 use blacklight_contract_clients::{HeartbeatManager, StakingOperators};
+use erc_8004_contract_clients::validation_registry::ValidationRegistryUpgradeable;
 
 pub type HeartbeatManagerInstance = HeartbeatManager::HeartbeatManagerInstance<DynProvider>;
 pub type StakingOperatorsInstance = StakingOperators::StakingOperatorsInstance<DynProvider>;
@@ -14,6 +15,8 @@ pub type EmissionsControllerInstance =
     EmissionsController::EmissionsControllerInstance<DynProvider>;
 pub type RewardPolicyInstance = RewardPolicy::RewardPolicyInstance<DynProvider>;
 pub type ERC20Instance = Erc20::Erc20Instance<DynProvider>;
+pub type ValidationRegistryInstance =
+    ValidationRegistryUpgradeable::ValidationRegistryUpgradeableInstance<DynProvider>;
 
 async fn connect_ws(
     rpc_url: &str,
@@ -42,6 +45,7 @@ pub struct L2KeeperClient {
     heartbeat_manager: HeartbeatManagerInstance,
     staking_operators: StakingOperatorsInstance,
     jailing_policy: Option<JailingPolicyInstance>,
+    validation_registry: Option<ValidationRegistryInstance>,
     provider: DynProvider,
     wallet: EthereumWallet,
 }
@@ -52,6 +56,7 @@ impl L2KeeperClient {
         heartbeat_manager_address: Address,
         staking_operators_address: Address,
         jailing_policy_address: Option<Address>,
+        validation_registry_address: Option<Address>,
         private_key: String,
     ) -> anyhow::Result<Self> {
         let (provider, wallet) = connect_ws(&rpc_url, &private_key).await?;
@@ -61,11 +66,14 @@ impl L2KeeperClient {
             StakingOperatorsInstance::new(staking_operators_address, provider.clone());
         let jailing_policy =
             jailing_policy_address.map(|addr| JailingPolicyInstance::new(addr, provider.clone()));
+        let validation_registry = validation_registry_address
+            .map(|addr| ValidationRegistryInstance::new(addr, provider.clone()));
 
         Ok(Self {
             heartbeat_manager,
             staking_operators,
             jailing_policy,
+            validation_registry,
             provider,
             wallet,
         })
@@ -81,6 +89,10 @@ impl L2KeeperClient {
 
     pub fn jailing_policy(&self) -> Option<&JailingPolicyInstance> {
         self.jailing_policy.as_ref()
+    }
+
+    pub fn validation_registry(&self) -> Option<&ValidationRegistryInstance> {
+        self.validation_registry.as_ref()
     }
 
     pub fn reward_policy(&self, address: Address) -> RewardPolicyInstance {

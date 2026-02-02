@@ -1,6 +1,7 @@
 use crate::{
     args::KeeperConfig,
     clients::L2KeeperClient,
+    erc8004::{Erc8004State, events::Erc8004EventListener, responder::ValidationResponder},
     l2::{
         KeeperState, escalator::RoundEscalator, events::EventListener, jailing::Jailer,
         rewards::RewardsDistributor,
@@ -11,30 +12,38 @@ use alloy::{eips::BlockId, providers::Provider};
 use anyhow::Context;
 use std::sync::Arc;
 use tokio::{sync::Mutex, time::interval};
-use tracing::error;
+use tracing::{error, info, trace};
 
 pub struct L2Supervisor {
     client: Arc<L2KeeperClient>,
     state: Arc<Mutex<KeeperState>>,
+    erc8004_state: Arc<Mutex<Erc8004State>>,
     jailer: Jailer,
     rewards_distributor: RewardsDistributor,
     round_escalator: RoundEscalator,
+    erc8004_enabled: bool,
 }
 
 impl L2Supervisor {
     pub async fn new(
         client: Arc<L2KeeperClient>,
         state: Arc<Mutex<KeeperState>>,
+        config: &KeeperConfig,
     ) -> anyhow::Result<Self> {
         let jailer = Jailer::new(client.clone(), state.clone());
         let rewards_distributor = RewardsDistributor::new(client.clone(), state.clone());
         let round_escalator = RoundEscalator::new(client.clone(), state.clone());
+        let erc8004_state = Arc::new(Mutex::new(Erc8004State::default()));
+        let erc8004_enabled =
+            config.enable_erc8004 && config.l2_validation_registry_address.is_some();
         Ok(Self {
             client,
             state,
+            erc8004_state,
             jailer,
             rewards_distributor,
             round_escalator,
+            erc8004_enabled,
         })
     }
 
@@ -56,15 +65,50 @@ impl L2Supervisor {
 
         // Now spawn to process any new blocks after latest_block
         event_listener
-            .spawn(latest_block.saturating_add(1), self.state.clone())
+            .spawn(
+                latest_block.saturating_add(1),
+                self.state.clone(),
+                self.erc8004_state.clone(),
+            )
             .await
-            .context("Failed tp spawn event listener")?;
+            .context("Failed to spawn event listener")?;
+
+        // Spawn ERC-8004 event listener if enabled
+        if self.erc8004_enabled {
+            if let Some(registry) = self.client.validation_registry() {
+                let erc8004_listener = Erc8004EventListener::new(registry.clone());
+                erc8004_listener
+                    .process_historical_events(
+                        from_block,
+                        latest_block,
+                        &mut *self.erc8004_state.lock().await,
+                    )
+                    .await
+                    .context("Failed to process historical ERC-8004 events")?;
+
+                erc8004_listener
+                    .spawn(latest_block.saturating_add(1), self.erc8004_state.clone())
+                    .await
+                    .context("Failed to spawn ERC-8004 event listener")?;
+
+                info!("ERC-8004 event listener spawned");
+            }
+        }
 
         tokio::spawn(self.run(config));
         Ok(())
     }
 
     async fn run(mut self, config: KeeperConfig) {
+        // Create ERC-8004 responder if enabled
+        let erc8004_responder = if self.erc8004_enabled {
+            self.client.validation_registry().map(|registry| {
+                ValidationResponder::new(registry.clone(), self.erc8004_state.clone())
+            })
+        } else {
+            None
+        };
+
         let mut ticker = interval(config.tick_interval);
         loop {
             ticker.tick().await;
@@ -97,6 +141,14 @@ impl L2Supervisor {
             }
 
             self.process_rounds(block_timestamp).await;
+
+            // Process ERC-8004 validation responses
+            if let Some(ref responder) = erc8004_responder {
+                trace!("Tick: processing ERC-8004 validation responses");
+                if let Err(e) = responder.process_responses().await {
+                    error!("Failed to process ERC-8004 validation responses: {e}");
+                }
+            }
 
             match self
                 .client

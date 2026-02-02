@@ -33,9 +33,10 @@ pub struct Erc8004Args {
     #[arg(long, env = "AGENT_URI")]
     pub agent_uri: Option<String>,
 
-    /// HeartbeatManager contract address to submit validation requests to
-    #[arg(long, env = "HEARTBEAT_MANAGER_ADDRESS")]
-    pub heartbeat_manager_address: Option<String>,
+    /// Validator address that will be authorized to submit validation responses.
+    /// This should be the address of the keeper or responder service.
+    #[arg(long, env = "VALIDATOR_ADDRESS")]
+    pub validator_address: Option<String>,
 }
 
 #[derive(Debug)]
@@ -45,7 +46,8 @@ pub struct Erc8004Config {
     pub validation_registry_contract_address: Address,
     pub private_key: String,
     pub agent_uri: String,
-    pub heartbeat_manager_address: Address,
+    /// The validator address authorized to submit responses (typically the keeper)
+    pub validator_address: Address,
     pub slot_ms: u64,
 }
 
@@ -82,14 +84,14 @@ impl Erc8004Config {
             .or_else(|| state_file.load_value("AGENT_URI"))
             .unwrap_or_else(|| "https://example.com/agent".to_string());
 
-        let heartbeat_manager_address = args
-            .heartbeat_manager_address
-            .or_else(|| state_file.load_value("HEARTBEAT_MANAGER_ADDRESS"))
-            .unwrap_or_else(|| "0x5FC8d32690cc91D4c39d9d3abcBD16989F875707".to_string())
+        let validator_address = args
+            .validator_address
+            .or_else(|| state_file.load_value("VALIDATOR_ADDRESS"))
+            .unwrap_or_else(|| "0x90F79bf6EB2c4f870365E785982E1f101E93b906".to_string())
             .parse::<Address>()?;
 
         info!(
-            "Loaded Erc8004Config: rpc_url={rpc_url}, identity_registry={identity_registry_contract_address}, validation_registry={validation_registry_contract_address}"
+            "Loaded Erc8004Config: rpc_url={rpc_url}, identity_registry={identity_registry_contract_address}, validation_registry={validation_registry_contract_address}, validator={validator_address}"
         );
 
         Ok(Self {
@@ -98,7 +100,7 @@ impl Erc8004Config {
             validation_registry_contract_address,
             private_key,
             agent_uri,
-            heartbeat_manager_address,
+            validator_address,
             slot_ms: DEFAULT_SLOT_MS,
         })
     }
@@ -177,7 +179,7 @@ impl Erc8004Simulator {
                         info!(
                             slot,
                             agent_id = %agent_id,
-                            heartbeat_manager = %config.heartbeat_manager_address,
+                            validator = %config.validator_address,
                             snapshot_id = snapshot_id,
                             request_uri = %request_uri,
                             "Submitting validation request"
@@ -189,7 +191,7 @@ impl Erc8004Simulator {
                     let tx_hash = client
                         .validation_registry
                         .validation_request(
-                            config.heartbeat_manager_address,
+                            config.validator_address,
                             agent_id,
                             request_uri,
                             request_hash,
