@@ -1,4 +1,4 @@
-use alloy::primitives::{Address, B256, Bytes, U256};
+use alloy::primitives::{Address, B256, Bytes};
 use std::collections::HashMap;
 
 mod escalator;
@@ -21,16 +21,8 @@ struct RoundState {
     raw_htx: Option<Bytes>,
     deadline: Option<u64>,
     outcome: Option<u8>,
-    round_info: Option<RoundInfoView>,
     rewards_done: bool,
     jailing_done: bool,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct RoundInfoView {
-    reward: Address,
-    valid_stake: U256,
-    invalid_stake: U256,
 }
 
 #[derive(Default)]

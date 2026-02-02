@@ -1,6 +1,6 @@
 use crate::{
     clients::{L2KeeperClient, RewardPolicyInstance},
-    l2::{KeeperState, RoundInfoView, RoundKey},
+    l2::{KeeperState, RoundKey},
     metrics,
 };
 use alloy::primitives::{Address, U256, map::HashMap, utils::format_units};
@@ -95,33 +95,14 @@ impl RewardsDistributor {
         outcome: u8,
         members: Vec<Address>,
     ) -> anyhow::Result<()> {
-        let cached_info = {
-            let state = self.state.lock().await;
-            state.rounds.get(&key).and_then(|round| round.round_info)
-        };
-        let round_info = match cached_info {
-            Some(info) => info,
-            None => {
-                let info = self
-                    .client
-                    .heartbeat_manager()
-                    .rounds(key.heartbeat_key, key.round)
-                    .call()
-                    .await?;
-                let view = RoundInfoView {
-                    reward: info.reward,
-                    valid_stake: info.validStake,
-                    invalid_stake: info.invalidStake,
-                };
-                let mut state = self.state.lock().await;
-                if let Some(round_state) = state.rounds.get_mut(&key) {
-                    round_state.round_info = Some(view);
-                }
-                view
-            }
-        };
+        let info = self
+            .client
+            .heartbeat_manager()
+            .rounds(key.heartbeat_key, key.round)
+            .call()
+            .await?;
         if !self
-            .ensure_reward_budget(block_timestamp, round_info.reward)
+            .ensure_reward_budget(block_timestamp, info.reward)
             .await?
         {
             return Ok(());
@@ -132,9 +113,9 @@ impl RewardsDistributor {
             .build_voter_list(key, &members, expected_verdict)
             .await?;
         let expected_stake = if outcome == 1 {
-            round_info.valid_stake
+            info.validStake
         } else {
-            round_info.invalid_stake
+            info.invalidStake
         };
 
         if sum_weights != expected_stake {
