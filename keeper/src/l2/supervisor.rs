@@ -138,7 +138,7 @@ impl L2Supervisor {
                 .distribute_rewards(block_timestamp, key, outcome, members)
                 .await
             {
-                error!("Failed to process jailing: {e}");
+                error!("Failed to process reward distribution: {e}");
             }
         }
 

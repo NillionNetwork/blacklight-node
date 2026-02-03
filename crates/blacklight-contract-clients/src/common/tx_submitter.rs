@@ -1,3 +1,4 @@
+use crate::common::overestimate_gas;
 use alloy::{
     consensus::Transaction, contract::CallBuilder, primitives::B256, providers::Provider,
     rpc::types::TransactionReceipt, sol_types::SolInterface,
@@ -10,22 +11,22 @@ use tokio::sync::Mutex;
 use tracing::{info, warn};
 
 #[derive(Clone)]
-pub(crate) struct TransactionSubmitter<S> {
+pub struct TransactionSubmitter<S> {
     tx_lock: Arc<Mutex<()>>,
-    gas_limit: Option<u64>,
+    gas_buffer: bool,
     _decoder: PhantomData<S>,
 }
 
 impl<S: SolInterface + Debug + Clone> TransactionSubmitter<S> {
-    pub(crate) fn new(tx_lock: Arc<Mutex<()>>) -> Self {
+    pub fn new(tx_lock: Arc<Mutex<()>>) -> Self {
         Self {
             tx_lock,
-            gas_limit: None,
+            gas_buffer: false,
             _decoder: PhantomData,
         }
     }
 
-    pub(crate) async fn invoke<P, D>(&self, method: &str, call: CallBuilder<P, D>) -> Result<B256>
+    pub async fn invoke<P, D>(&self, method: &str, call: CallBuilder<P, D>) -> Result<B256>
     where
         P: Provider + Clone,
         D: alloy::contract::CallDecoder + Clone,
@@ -36,9 +37,12 @@ impl<S: SolInterface + Debug + Clone> TransactionSubmitter<S> {
             return Err(anyhow!("{method} reverted: {e}"));
         }
 
-        let call = match self.gas_limit {
-            Some(gas) => call.gas(gas),
-            None => call,
+        let (call, gas_limit) = match self.gas_buffer {
+            true => {
+                let gas = overestimate_gas(&call).await?;
+                (call.gas(gas), Some(gas))
+            }
+            false => (call, None),
         };
 
         let provider = call.provider.clone();
@@ -75,11 +79,11 @@ impl<S: SolInterface + Debug + Clone> TransactionSubmitter<S> {
 
         // Validate success
         if !receipt.status() {
-            if let Some(limit) = self.gas_limit {
+            if let Some(gas_limit) = gas_limit {
                 let used = receipt.gas_used;
-                if used >= limit {
+                if used >= gas_limit {
                     return Err(anyhow!(
-                        "{method} ran out of gas (used {used} of {limit} limit). Tx: {tx_hash:?}"
+                        "{method} ran out of gas (used {used} of {gas_limit} limit). Tx: {tx_hash:?}"
                     ));
                 }
             }
@@ -90,9 +94,9 @@ impl<S: SolInterface + Debug + Clone> TransactionSubmitter<S> {
         Ok(tx_hash)
     }
 
-    pub(crate) fn with_gas_limit(&self, limit: u64) -> Self {
+    pub fn with_gas_buffer(&self) -> Self {
         let mut this = self.clone();
-        this.gas_limit = Some(limit);
+        this.gas_buffer = true;
         this
     }
 

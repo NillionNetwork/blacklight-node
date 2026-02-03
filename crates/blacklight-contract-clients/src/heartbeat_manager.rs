@@ -1,8 +1,8 @@
 use crate::common::event_helper::{BlockRange, listen_events, listen_events_filtered};
 use crate::htx::Htx;
 use crate::{
-    common::{overestimate_gas, tx_submitter::TransactionSubmitter},
-    heartbeat_manager::HearbeatManager::HearbeatManagerInstance,
+    common::tx_submitter::TransactionSubmitter,
+    heartbeat_manager::HeartbeatManager::HeartbeatManagerInstance,
 };
 use alloy::{
     primitives::{Address, B256, U256, keccak256},
@@ -23,7 +23,7 @@ sol! {
 
     #[sol(rpc)]
     #[derive(Debug)]
-    contract HearbeatManager {
+    contract HeartbeatManager {
         error ZeroAddress();
         error NotPending();
         error RoundClosed();
@@ -90,21 +90,22 @@ sol! {
     }
 }
 
-pub type RoundStartedEvent = HearbeatManager::RoundStarted;
-pub type OperatorVotedEvent = HearbeatManager::OperatorVoted;
-pub type HeartbeatEnqueuedEvent = HearbeatManager::HeartbeatEnqueued;
-pub type RoundFinalizedEvent = HearbeatManager::RoundFinalized;
-pub type RewardsDistributedEvent = HearbeatManager::RewardsDistributed;
-pub type RewardDistributionAbandonedEvent = HearbeatManager::RewardDistributionAbandoned;
-pub type SlashingCallbackFailedEvent = HearbeatManager::SlashingCallbackFailed;
+pub type RoundStartedEvent = HeartbeatManager::RoundStarted;
+pub type OperatorVotedEvent = HeartbeatManager::OperatorVoted;
+pub type HeartbeatEnqueuedEvent = HeartbeatManager::HeartbeatEnqueued;
+pub type RoundFinalizedEvent = HeartbeatManager::RoundFinalized;
+pub type RewardsDistributedEvent = HeartbeatManager::RewardsDistributed;
+pub type RewardDistributionAbandonedEvent = HeartbeatManager::RewardDistributionAbandoned;
+pub type SlashingCallbackFailedEvent = HeartbeatManager::SlashingCallbackFailed;
+pub type HeartbeatManagerErrors = HeartbeatManager::HeartbeatManagerErrors;
 
 /// WebSocket-based client for real-time event streaming and contract interaction with
 /// HeartbeatManager
 #[derive(Clone)]
 pub struct HeartbeatManagerClient<P: Provider + Clone> {
     provider: P,
-    contract: HearbeatManagerInstance<P>,
-    submitter: TransactionSubmitter<HearbeatManager::HearbeatManagerErrors>,
+    contract: HeartbeatManagerInstance<P>,
+    submitter: TransactionSubmitter<HeartbeatManager::HeartbeatManagerErrors>,
     block_lookback: u64,
 }
 
@@ -112,7 +113,7 @@ impl<P: Provider + Clone> HeartbeatManagerClient<P> {
     /// Create a new WebSocket client from ContractConfig
     pub fn new(provider: P, config: super::ContractConfig, tx_lock: Arc<Mutex<()>>) -> Self {
         let contract =
-            HearbeatManagerInstance::new(config.manager_contract_address, provider.clone());
+            HeartbeatManagerInstance::new(config.manager_contract_address, provider.clone());
         let submitter = TransactionSubmitter::new(tx_lock);
         Self {
             provider,
@@ -166,9 +167,8 @@ impl<P: Provider + Clone> HeartbeatManagerClient<P> {
         let snapshot_id = snapshot_id.saturating_sub(1);
         let raw_htx = alloy::primitives::Bytes::try_from(htx)?;
         let call = self.contract.submitHeartbeat(raw_htx, snapshot_id);
-        let gas_with_buffer = overestimate_gas(&call).await?;
         self.submitter
-            .with_gas_limit(gas_with_buffer)
+            .with_gas_buffer()
             .invoke("submitHeartbeat", call)
             .await
     }
@@ -190,9 +190,8 @@ impl<P: Provider + Clone> HeartbeatManagerClient<P> {
         let call = self
             .contract
             .submitVerdict(event.heartbeatKey, verdict, proofs);
-        let gas_with_buffer = overestimate_gas(&call).await?;
         self.submitter
-            .with_gas_limit(gas_with_buffer)
+            .with_gas_buffer()
             .invoke("submitVerdict", call)
             .await
     }

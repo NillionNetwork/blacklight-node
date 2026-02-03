@@ -5,9 +5,9 @@ use alloy::{
     providers::{DynProvider, Provider, ProviderBuilder, WsConnect},
     signers::local::PrivateKeySigner,
 };
-use blacklight_contract_clients::{HearbeatManager, StakingOperators};
+use blacklight_contract_clients::{HeartbeatManager, StakingOperators};
 
-pub type HeartbeatManagerInstance = HearbeatManager::HearbeatManagerInstance<DynProvider>;
+pub type HeartbeatManagerInstance = HeartbeatManager::HeartbeatManagerInstance<DynProvider>;
 pub type StakingOperatorsInstance = StakingOperators::StakingOperatorsInstance<DynProvider>;
 pub type JailingPolicyInstance = JailingPolicy::JailingPolicyInstance<DynProvider>;
 pub type EmissionsControllerInstance =
