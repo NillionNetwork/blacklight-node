@@ -168,7 +168,7 @@ impl L2RewardsMetrics {
             .with_description("Number of times rewards were distributed")
             .build();
         let spendable = meter
-            .f64_gauge("blacklight.keeper.l2.rewards.spendadble")
+            .f64_gauge("blacklight.keeper.l2.rewards.spendable")
             .with_description("The spendable budget for rewards")
             .build();
         let remaining = meter
