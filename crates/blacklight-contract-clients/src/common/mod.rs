@@ -10,7 +10,7 @@ pub mod event_helper;
 pub mod tx_submitter;
 
 pub async fn overestimate_gas<P: Provider, D: CallDecoder>(
-    call: &CallBuilder<&P, D>,
+    call: &CallBuilder<P, D>,
 ) -> anyhow::Result<u64> {
     // Estimate gas and add a 50% buffer
     let estimated_gas = call.estimate_gas().await.map_err(|e| {

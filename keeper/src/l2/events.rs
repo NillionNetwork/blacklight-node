@@ -6,7 +6,7 @@ use crate::{
 use alloy::{primitives::B256, rpc::types::Log, sol_types::SolEvent};
 use anyhow::Context;
 use blacklight_contract_clients::{
-    HearbeatManager::SlashingCallbackFailed,
+    HeartbeatManager::SlashingCallbackFailed,
     heartbeat_manager::{
         HeartbeatEnqueuedEvent, RewardDistributionAbandonedEvent, RewardsDistributedEvent,
         RoundFinalizedEvent, RoundStartedEvent, SlashingCallbackFailedEvent,

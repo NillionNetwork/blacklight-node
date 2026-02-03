@@ -23,7 +23,7 @@ pub use staking_operators::StakingOperatorsClient;
 // ============================================================================
 
 // Heartbeat manager events
-pub use heartbeat_manager::HearbeatManager;
+pub use heartbeat_manager::HeartbeatManager;
 
 // ProtocolConfig events
 pub use protocol_config::ProtocolConfig;

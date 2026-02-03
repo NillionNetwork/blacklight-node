@@ -1,6 +1,9 @@
 use crate::{clients::L2KeeperClient, l2::KeeperState, metrics};
 use alloy::primitives::{B256, Bytes};
-use blacklight_contract_clients::common::errors::decode_any_error;
+use blacklight_contract_clients::{
+    common::{errors::decode_any_error, tx_submitter::TransactionSubmitter},
+    heartbeat_manager::HeartbeatManagerErrors,
+};
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::Mutex;
 use tracing::{info, warn};
@@ -8,11 +11,16 @@ use tracing::{info, warn};
 pub(crate) struct RoundEscalator {
     client: Arc<L2KeeperClient>,
     state: Arc<Mutex<KeeperState>>,
+    submitter: TransactionSubmitter<HeartbeatManagerErrors>,
 }
 
 impl RoundEscalator {
     pub(crate) fn new(client: Arc<L2KeeperClient>, state: Arc<Mutex<KeeperState>>) -> Self {
-        Self { client, state }
+        Self {
+            client,
+            state,
+            submitter: TransactionSubmitter::new(Default::default()),
+        }
     }
 
     pub(crate) async fn process_escalations(&self, block_timestamp: u64) -> anyhow::Result<()> {
@@ -78,12 +86,11 @@ impl RoundEscalator {
                 .heartbeat_manager()
                 .escalateOrExpire(heartbeat_key, raw_htx.clone());
 
-            match call.send().await {
-                Ok(pending) => {
-                    let receipt = pending.get_receipt().await?;
+            match self.submitter.invoke("escalateOrExpire", call).await {
+                Ok(tx_hash) => {
                     info!(
                         heartbeat_key = ?heartbeat_key,
-                        tx_hash = ?receipt.transaction_hash,
+                        tx_hash = ?tx_hash,
                         "Escalate/expire confirmed"
                     );
                     metrics::get().l2.escalations.inc_escalations();
@@ -115,12 +122,11 @@ impl RoundEscalator {
                 .heartbeat_manager()
                 .escalateOrExpire(heartbeat_key, raw_htx.clone());
 
-            match call.send().await {
-                Ok(pending) => {
-                    let receipt = pending.get_receipt().await?;
+            match self.submitter.invoke("escalateOrExpire", call).await {
+                Ok(tx_hash) => {
                     info!(
                         heartbeat_key = ?heartbeat_key,
-                        tx_hash = ?receipt.transaction_hash,
+                        tx_hash = ?tx_hash,
                         "Escalate/expire confirmed"
                     );
                     metrics::get().l2.escalations.inc_escalations();

@@ -7,7 +7,8 @@ use alloy::primitives::{Address, U256, map::HashMap, utils::format_units};
 use anyhow::{Context, anyhow, bail};
 use blacklight_contract_clients::{
     ProtocolConfig::ProtocolConfigInstance,
-    common::{errors::decode_any_error, overestimate_gas},
+    common::{errors::decode_any_error, tx_submitter::TransactionSubmitter},
+    heartbeat_manager::HeartbeatManagerErrors,
 };
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -27,6 +28,7 @@ struct TokenContext {
 #[derive(Clone, Copy)]
 struct RewardsContext {
     token: TokenContext,
+    // These are block timestamps
     checked_at: u64,
     synced_at: u64,
     spendable: U256,
@@ -37,6 +39,7 @@ pub(crate) struct RewardsDistributor {
     client: Arc<L2KeeperClient>,
     state: Arc<Mutex<KeeperState>>,
     rewards_context: HashMap<Address, RewardsContext>,
+    submitter: TransactionSubmitter<HeartbeatManagerErrors>,
 }
 
 impl RewardsDistributor {
@@ -45,6 +48,7 @@ impl RewardsDistributor {
             client,
             state,
             rewards_context: Default::default(),
+            submitter: TransactionSubmitter::new(Default::default()).with_gas_buffer(),
         }
     }
 
@@ -75,14 +79,8 @@ impl RewardsDistributor {
             let balance = format_units(balance, token.decimals)?;
             let sync_limit = format_units(sync_limit, token.decimals)?;
             info!("Need to sync balance because balance ({balance}) > sync limit ({sync_limit})");
-            let receipt = reward_policy
-                .sync()
-                .send()
-                .await
-                .context("Failed to sync")?
-                .get_receipt()
-                .await?;
-            info!(tx_hash = ?receipt.transaction_hash, "Reward policy synced");
+            let tx_hash = self.submitter.invoke("sync", reward_policy.sync()).await?;
+            info!(tx_hash = ?tx_hash, "Reward policy synced");
         }
         Ok(())
     }
@@ -133,12 +131,10 @@ impl RewardsDistributor {
             self.client
                 .heartbeat_manager()
                 .distributeRewards(key.heartbeat_key, key.round, voters);
-        let gas_with_buffer = overestimate_gas(&call).await?;
-        match call.gas(gas_with_buffer).send().await {
-            Ok(pending) => {
-                let receipt = pending.get_receipt().await?;
+        match self.submitter.invoke("distributeRewards", call).await {
+            Ok(tx_hash) => {
                 info!(
-                    tx_hash = ?receipt.transaction_hash,
+                    tx_hash = ?tx_hash,
                     "Rewards distributed"
                 );
                 let mut state = self.state.lock().await;
@@ -164,7 +160,7 @@ impl RewardsDistributor {
             warn!("Reward policy address is zero, skipping");
             return Ok(false);
         }
-
+        let submitter = self.submitter.clone();
         let reward_policy = self.client.reward_policy(reward_address);
         let ctx = self.fetch_token_context(reward_address).await?;
         if ctx.checked_at != block_timestamp {
@@ -207,11 +203,10 @@ impl RewardsDistributor {
         ctx.synced_at = block_timestamp;
 
         info!("Reward budget unlocking, syncing policy",);
-        match reward_policy.sync().send().await {
-            Ok(pending) => {
-                let receipt = pending.get_receipt().await?;
+        match submitter.invoke("sync", reward_policy.sync()).await {
+            Ok(tx_hash) => {
                 info!(
-                    tx_hash = ?receipt.transaction_hash,
+                    tx_hash = ?tx_hash,
                     "Reward policy synced"
                 );
             }
