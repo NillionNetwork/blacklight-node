@@ -16,3 +16,4 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
 blacklight-contract-clients = { path = "../crates/blacklight-contract-clients" }
+contract-clients-common = { path = "../crates/contract-clients-common" }

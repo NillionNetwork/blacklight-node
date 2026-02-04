@@ -4,7 +4,7 @@ use crate::{
 };
 use alloy::primitives::Address;
 use anyhow::bail;
-use blacklight_contract_clients::common::errors::decode_any_error;
+use contract_clients_common::errors::decode_any_error;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{info, warn};

@@ -1,10 +1,10 @@
-use crate::common::tx_submitter::TransactionSubmitter;
 use alloy::{
     primitives::{Address, B256, U256},
     providers::Provider,
     sol,
 };
 use anyhow::Result;
+use contract_clients_common::tx_submitter::TransactionSubmitter;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -39,7 +39,8 @@ pub type IdentityMetadataEntry = MetadataEntry;
 pub struct IdentityRegistryClient<P: Provider + Clone> {
     provider: P,
     contract: IdentityRegistryUpgradeableInstance<P>,
-    submitter: TransactionSubmitter<crate::common::errors::StandardErrors::StandardErrorsErrors>,
+    submitter:
+        TransactionSubmitter<contract_clients_common::errors::StandardErrors::StandardErrorsErrors>,
 }
 
 impl<P: Provider + Clone> IdentityRegistryClient<P> {

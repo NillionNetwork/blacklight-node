@@ -1,6 +1,5 @@
 use alloy::primitives::Address;
 
-pub mod common;
 pub mod erc_8004_client;
 pub mod identity_registry;
 pub mod validation_registry;

@@ -6,10 +6,12 @@ use crate::{
 use alloy::primitives::{Address, U256, map::HashMap, utils::format_units};
 use anyhow::{Context, anyhow, bail};
 use blacklight_contract_clients::{
-    ProtocolConfig::ProtocolConfigInstance,
-    common::{errors::decode_any_error, tx_submitter::TransactionSubmitter},
-    heartbeat_manager::HeartbeatManagerErrors,
+    ProtocolConfig::ProtocolConfigInstance, heartbeat_manager::HeartbeatManagerErrors,
 };
+
+use contract_clients_common::errors::decode_any_error;
+use contract_clients_common::tx_submitter::TransactionSubmitter;
+
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{debug, info, instrument, warn};
