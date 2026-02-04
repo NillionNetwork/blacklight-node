@@ -1,4 +1,4 @@
-use crate::{erc8004::Erc8004State, metrics};
+use crate::{l2::KeeperState, metrics};
 use alloy::hex;
 use alloy::primitives::B256;
 use alloy::providers::Provider;
@@ -11,13 +11,13 @@ use tracing::{debug, error, info};
 /// Submits validation responses for finalized ERC-8004 validation rounds.
 pub struct ValidationResponder<P: Provider + Clone> {
     registry: ValidationRegistryUpgradeableInstance<P>,
-    state: Arc<Mutex<Erc8004State>>,
+    state: Arc<Mutex<KeeperState>>,
 }
 
 impl<P: Provider + Clone> ValidationResponder<P> {
     pub fn new(
         registry: ValidationRegistryUpgradeableInstance<P>,
-        state: Arc<Mutex<Erc8004State>>,
+        state: Arc<Mutex<KeeperState>>,
     ) -> Self {
         Self { registry, state }
     }
@@ -30,13 +30,14 @@ impl<P: Provider + Clone> ValidationResponder<P> {
         // Collect jobs to process outside the lock
         let jobs: Vec<_> = {
             let state = self.state.lock().await;
-            let pending_count = state.pending_validations.len();
+            let pending_count = state.erc8004.pending_validations.len();
             info!(
                 pending_count,
                 "Processing ERC-8004 responses: checking tracked validations"
             );
 
             state
+                .erc8004
                 .pending_validations
                 .iter()
                 .filter(|(_, info)| info.outcome.is_some() && !info.response_submitted)
@@ -66,7 +67,7 @@ impl<P: Provider + Clone> ValidationResponder<P> {
                 Ok(tx_hash) => {
                     // Mark as submitted
                     let mut state = self.state.lock().await;
-                    if let Some(info) = state.pending_validations.get_mut(&heartbeat_key) {
+                    if let Some(info) = state.erc8004.pending_validations.get_mut(&heartbeat_key) {
                         info.response_submitted = true;
                     }
                     metrics::get().erc8004.inc_responses_submitted();

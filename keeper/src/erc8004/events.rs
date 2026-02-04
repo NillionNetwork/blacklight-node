@@ -1,4 +1,4 @@
-use crate::{erc8004::ValidationRequestInfo, metrics};
+use crate::{erc8004::ValidationRequestInfo, l2::KeeperState, metrics};
 use alloy::{
     primitives::B256,
     providers::Provider,
@@ -12,7 +12,7 @@ use erc_8004_contract_clients::validation_registry::{
 use futures_util::{Stream, StreamExt};
 use std::{pin::pin, sync::Arc};
 use tokio::sync::Mutex;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use super::Erc8004State;
 
@@ -69,7 +69,7 @@ impl<P: Provider + Clone + 'static> Erc8004EventListener<P> {
     pub async fn spawn(
         self,
         from_block: u64,
-        state: Arc<Mutex<Erc8004State>>,
+        state: Arc<Mutex<KeeperState>>,
     ) -> anyhow::Result<()> {
         let validation_request = self.subscribe::<ValidationRequestEvent>(from_block).await?;
         tokio::spawn(Self::process_validation_requests(validation_request, state));
@@ -122,7 +122,7 @@ impl<P: Provider + Clone + 'static> Erc8004EventListener<P> {
 
     async fn process_validation_requests(
         events: impl Stream<Item = ValidationRequestEvent>,
-        state: Arc<Mutex<Erc8004State>>,
+        state: Arc<Mutex<KeeperState>>,
     ) {
         let mut events = pin!(events);
         while let Some(event) = events.next().await {
@@ -141,10 +141,13 @@ impl<P: Provider + Clone + 'static> Erc8004EventListener<P> {
             );
 
             let mut guard = state.lock().await;
-            guard.pending_validations.insert(heartbeat_key, info);
+            guard
+                .erc8004
+                .pending_validations
+                .insert(heartbeat_key, info);
             metrics::get()
                 .erc8004
-                .set_requests_tracked(guard.pending_validations.len() as u64);
+                .set_requests_tracked(guard.erc8004.pending_validations.len() as u64);
 
             info!(
                 heartbeat_key = ?heartbeat_key,
@@ -181,10 +184,24 @@ pub fn compute_heartbeat_key(
 /// Called from the L2 event processor when RoundFinalized events are received.
 pub fn on_round_finalized(state: &mut Erc8004State, heartbeat_key: B256, outcome: u8) {
     if let Some(info) = state.pending_validations.get_mut(&heartbeat_key) {
-        info.outcome = Some(outcome);
+        let response = match outcome {
+            0 => 50,  // inconclusive
+            1 => 100, // valid
+            2 => 0,   // invalid
+            other => {
+                warn!(
+                    heartbeat_key = %heartbeat_key,
+                    outcome = other,
+                    "Unexpected HeartbeatManager outcome; defaulting ERC-8004 response to 0"
+                );
+                0
+            }
+        };
+        info.outcome = Some(response);
         info!(
             heartbeat_key = %heartbeat_key,
             outcome,
+            response,
             request_hash = %info.request_hash,
             "ERC-8004 validation round finalized"
         );

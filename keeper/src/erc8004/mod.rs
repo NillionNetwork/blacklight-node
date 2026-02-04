@@ -26,7 +26,7 @@ pub struct ValidationRequestInfo {
     pub request_uri: String,
     /// The request hash (unique identifier for the validation)
     pub request_hash: B256,
-    /// The outcome from HeartbeatManager (0=invalid, 50=inconclusive, 100=valid)
+    /// The ERC-8004 validation response value (0-100), mapped from HeartbeatManager outcome.
     pub outcome: Option<u8>,
     /// Whether the validation response has been submitted
     pub response_submitted: bool,

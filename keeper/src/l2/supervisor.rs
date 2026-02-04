@@ -1,7 +1,7 @@
 use crate::{
     args::KeeperConfig,
     clients::L2KeeperClient,
-    erc8004::{Erc8004State, events::Erc8004EventListener, responder::ValidationResponder},
+    erc8004::{events::Erc8004EventListener, responder::ValidationResponder},
     l2::{
         KeeperState, escalator::RoundEscalator, events::EventListener, jailing::Jailer,
         rewards::RewardsDistributor,
@@ -17,7 +17,6 @@ use tracing::{error, info, trace};
 pub struct L2Supervisor {
     client: Arc<L2KeeperClient>,
     state: Arc<Mutex<KeeperState>>,
-    erc8004_state: Arc<Mutex<Erc8004State>>,
     jailer: Jailer,
     rewards_distributor: RewardsDistributor,
     round_escalator: RoundEscalator,
@@ -33,13 +32,11 @@ impl L2Supervisor {
         let jailer = Jailer::new(client.clone(), state.clone());
         let rewards_distributor = RewardsDistributor::new(client.clone(), state.clone());
         let round_escalator = RoundEscalator::new(client.clone(), state.clone());
-        let erc8004_state = Arc::new(Mutex::new(Erc8004State::default()));
         let erc8004_enabled =
             config.enable_erc8004 && config.l2_validation_registry_address.is_some();
         Ok(Self {
             client,
             state,
-            erc8004_state,
             jailer,
             rewards_distributor,
             round_escalator,
@@ -56,6 +53,21 @@ impl L2Supervisor {
             .context("Failed to find latest block")?;
         let from_block = latest_block.saturating_sub(config.lookback_blocks);
 
+        // Process historic ERC-8004 requests first so round outcomes can be reconciled.
+        if self.erc8004_enabled
+            && let Some(registry) = self.client.validation_registry()
+        {
+            let erc8004_listener = Erc8004EventListener::new(registry.clone());
+            erc8004_listener
+                .process_historical_events(
+                    from_block,
+                    latest_block,
+                    &mut self.state.lock().await.erc8004,
+                )
+                .await
+                .context("Failed to process historical ERC-8004 events")?;
+        }
+
         // Process historic events from current block - lookback until now
         let event_listener = EventListener::new(self.client.heartbeat_manager().clone());
         event_listener
@@ -65,34 +77,21 @@ impl L2Supervisor {
 
         // Now spawn to process any new blocks after latest_block
         event_listener
-            .spawn(
-                latest_block.saturating_add(1),
-                self.state.clone(),
-                self.erc8004_state.clone(),
-            )
+            .spawn(latest_block.saturating_add(1), self.state.clone())
             .await
             .context("Failed to spawn event listener")?;
 
         // Spawn ERC-8004 event listener if enabled
-        if self.erc8004_enabled {
-            if let Some(registry) = self.client.validation_registry() {
-                let erc8004_listener = Erc8004EventListener::new(registry.clone());
-                erc8004_listener
-                    .process_historical_events(
-                        from_block,
-                        latest_block,
-                        &mut *self.erc8004_state.lock().await,
-                    )
-                    .await
-                    .context("Failed to process historical ERC-8004 events")?;
+        if self.erc8004_enabled
+            && let Some(registry) = self.client.validation_registry()
+        {
+            let erc8004_listener = Erc8004EventListener::new(registry.clone());
+            erc8004_listener
+                .spawn(latest_block.saturating_add(1), self.state.clone())
+                .await
+                .context("Failed to spawn ERC-8004 event listener")?;
 
-                erc8004_listener
-                    .spawn(latest_block.saturating_add(1), self.erc8004_state.clone())
-                    .await
-                    .context("Failed to spawn ERC-8004 event listener")?;
-
-                info!("ERC-8004 event listener spawned");
-            }
+            info!("ERC-8004 event listener spawned");
         }
 
         tokio::spawn(self.run(config));
@@ -102,9 +101,9 @@ impl L2Supervisor {
     async fn run(mut self, config: KeeperConfig) {
         // Create ERC-8004 responder if enabled
         let erc8004_responder = if self.erc8004_enabled {
-            self.client.validation_registry().map(|registry| {
-                ValidationResponder::new(registry.clone(), self.erc8004_state.clone())
-            })
+            self.client
+                .validation_registry()
+                .map(|registry| ValidationResponder::new(registry.clone(), self.state.clone()))
         } else {
             None
         };

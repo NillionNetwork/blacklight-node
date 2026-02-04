@@ -1,6 +1,6 @@
 use crate::{
     clients::HeartbeatManagerInstance,
-    erc8004::{Erc8004State, ValidationRequestInfo, events::on_round_finalized},
+    erc8004::{ValidationRequestInfo, events::on_round_finalized},
     l2::{KeeperState, RoundKey},
     metrics,
 };
@@ -75,6 +75,7 @@ impl EventListener {
             };
             let entry = state.rounds.entry(key).or_default();
             entry.outcome = Some(event.outcome);
+            on_round_finalized(&mut state.erc8004, event.heartbeatKey, event.outcome);
         }
         for (event, _log) in rewards_done {
             let key = RoundKey {
@@ -107,7 +108,6 @@ impl EventListener {
         self,
         from_block: u64,
         state: Arc<Mutex<KeeperState>>,
-        erc8004_state: Arc<Mutex<Erc8004State>>,
     ) -> anyhow::Result<()> {
         let heartbeat_enqueued = self.subscribe(from_block).await?;
         let round_started = self.subscribe(from_block).await?;
@@ -119,15 +119,10 @@ impl EventListener {
             heartbeat_enqueued,
             state.clone(),
         ));
-        tokio::spawn(Self::process_round_started(
-            round_started,
-            state.clone(),
-            erc8004_state.clone(),
-        ));
+        tokio::spawn(Self::process_round_started(round_started, state.clone()));
         tokio::spawn(Self::process_round_finalized(
             round_finalized,
             state.clone(),
-            erc8004_state,
         ));
         tokio::spawn(Self::process_rewards_distributed(
             rewards_distributed,
@@ -206,7 +201,6 @@ impl EventListener {
     async fn process_round_started(
         events: impl Stream<Item = RoundStartedEvent>,
         state: Arc<Mutex<KeeperState>>,
-        erc8004_state: Arc<Mutex<Erc8004State>>,
     ) {
         let mut events = pin!(events);
         while let Some(event) = events.next().await {
@@ -229,14 +223,13 @@ impl EventListener {
                 members = entry.members.len(),
                 "Round started"
             );
-            drop(guard);
 
             // Detect ERC-8004 HTXs and track them with HeartbeatManager's heartbeat_key
             if let Ok(erc8004_htx) = Erc8004Htx::try_decode(&event.rawHTX) {
-                let mut erc8004_guard = erc8004_state.lock().await;
                 // Only add if not already tracked (first round)
                 if event.round == 1
-                    && !erc8004_guard
+                    && !guard
+                        .erc8004
                         .pending_validations
                         .contains_key(&event.heartbeatKey)
                 {
@@ -246,12 +239,13 @@ impl EventListener {
                         erc8004_htx.request_uri.clone(),
                         erc8004_htx.request_hash,
                     );
-                    erc8004_guard
+                    guard
+                        .erc8004
                         .pending_validations
                         .insert(event.heartbeatKey, info);
                     metrics::get()
                         .erc8004
-                        .set_requests_tracked(erc8004_guard.pending_validations.len() as u64);
+                        .set_requests_tracked(guard.erc8004.pending_validations.len() as u64);
                     info!(
                         heartbeat_key = %event.heartbeatKey,
                         validator = %erc8004_htx.validator_address,
@@ -267,7 +261,6 @@ impl EventListener {
     async fn process_round_finalized(
         events: impl Stream<Item = RoundFinalizedEvent>,
         state: Arc<Mutex<KeeperState>>,
-        erc8004_state: Arc<Mutex<Erc8004State>>,
     ) {
         let mut events = pin!(events);
         while let Some(event) = events.next().await {
@@ -284,11 +277,9 @@ impl EventListener {
                 outcome = event.outcome,
                 "Round finalized"
             );
-            drop(guard);
 
             // Notify ERC-8004 state about the round finalization
-            let mut erc8004_guard = erc8004_state.lock().await;
-            on_round_finalized(&mut erc8004_guard, event.heartbeatKey, event.outcome);
+            on_round_finalized(&mut guard.erc8004, event.heartbeatKey, event.outcome);
         }
     }
 
