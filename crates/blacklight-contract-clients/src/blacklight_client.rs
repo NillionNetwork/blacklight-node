@@ -3,20 +3,15 @@ use crate::{
     StakingOperatorsClient,
 };
 use alloy::{
-    network::{Ethereum, EthereumWallet, NetworkWallet},
-    primitives::{Address, B256, TxKind, U256},
-    providers::{DynProvider, Provider, ProviderBuilder, WsConnect},
-    rpc::types::TransactionRequest,
-    signers::local::PrivateKeySigner,
+    primitives::{Address, B256, U256},
+    providers::DynProvider,
 };
-use std::sync::Arc;
-use tokio::sync::Mutex;
+use contract_clients_common::ProviderContext;
 
 /// High-level wrapper bundling all contract clients with a shared Alloy provider.
 #[derive(Clone)]
 pub struct BlacklightClient {
-    provider: DynProvider,
-    wallet: EthereumWallet,
+    ctx: ProviderContext,
     pub manager: HeartbeatManagerClient<DynProvider>,
     pub token: NilTokenClient<DynProvider>,
     pub staking: StakingOperatorsClient<DynProvider>,
@@ -25,26 +20,26 @@ pub struct BlacklightClient {
 
 impl BlacklightClient {
     pub async fn new(config: ContractConfig, private_key: String) -> anyhow::Result<Self> {
-        let rpc_url = config.rpc_url.clone();
-        let ws_url = rpc_url
-            .replace("http://", "ws://")
-            .replace("https://", "wss://");
+        let ctx = ProviderContext::with_ws_retries(
+            &config.rpc_url,
+            &private_key,
+            Some(config.max_ws_retries),
+        )
+        .await?;
 
-        // Build WS transport with configurable retries
-        let ws = WsConnect::new(ws_url).with_max_retries(config.max_ws_retries);
-        let signer: PrivateKeySigner = private_key.parse::<PrivateKeySigner>()?;
-        let wallet = EthereumWallet::from(signer);
+        Self::from_context(ctx, config).await
+    }
 
-        // Build a provider that can sign transactions, then erase the concrete type
-        let provider: DynProvider = ProviderBuilder::new()
-            .wallet(wallet.clone())
-            .with_simple_nonce_management()
-            .with_gas_estimation()
-            .connect_ws(ws)
-            .await?
-            .erased();
-
-        let tx_lock = Arc::new(Mutex::new(()));
+    /// Create a client from an existing [`ProviderContext`].
+    ///
+    /// Use this when you want to share the same provider, wallet, and nonce
+    /// tracker across multiple clients (e.g. `BlacklightClient` and `Erc8004Client`).
+    pub async fn from_context(
+        ctx: ProviderContext,
+        config: ContractConfig,
+    ) -> anyhow::Result<Self> {
+        let provider = ctx.provider().clone();
+        let tx_lock = ctx.tx_lock();
 
         // Instantiate contract clients using the shared provider
         let manager =
@@ -54,11 +49,10 @@ impl BlacklightClient {
 
         let protocol_config_address = staking.protocol_config().await?;
         let protocol_config =
-            ProtocolConfigClient::new(provider.clone(), protocol_config_address, tx_lock.clone());
+            ProtocolConfigClient::new(provider.clone(), protocol_config_address, tx_lock);
 
         Ok(Self {
-            provider,
-            wallet,
+            ctx,
             manager,
             token,
             staking,
@@ -68,31 +62,21 @@ impl BlacklightClient {
 
     /// Get the signer address
     pub fn signer_address(&self) -> Address {
-        <EthereumWallet as NetworkWallet<Ethereum>>::default_signer_address(&self.wallet)
+        self.ctx.signer_address()
     }
 
     /// Get the balance of the wallet
     pub async fn get_balance(&self) -> anyhow::Result<U256> {
-        let address = self.signer_address();
-        Ok(self.provider.get_balance(address).await?)
+        self.ctx.get_balance().await
     }
 
     /// Get the balance of a specific address
     pub async fn get_balance_of(&self, address: Address) -> anyhow::Result<U256> {
-        Ok(self.provider.get_balance(address).await?)
+        self.ctx.get_balance_of(address).await
     }
 
     /// Send ETH to an address
     pub async fn send_eth(&self, to: Address, amount: U256) -> anyhow::Result<B256> {
-        let tx = TransactionRequest {
-            to: Some(TxKind::Call(to)),
-            value: Some(amount),
-            max_priority_fee_per_gas: Some(0),
-            ..Default::default()
-        };
-
-        let tx_hash = self.provider.send_transaction(tx).await?.watch().await?;
-
-        Ok(tx_hash)
+        self.ctx.send_eth(to, amount).await
     }
 }

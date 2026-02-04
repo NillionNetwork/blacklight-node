@@ -27,7 +27,10 @@ use crate::errors::decode_any_error;
 
 pub mod errors;
 pub mod event_helper;
+pub mod provider_context;
 pub mod tx_submitter;
+
+pub use provider_context::ProviderContext;
 
 /// Estimate gas for a contract call with a 50% buffer.
 ///

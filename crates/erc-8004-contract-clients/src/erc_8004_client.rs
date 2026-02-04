@@ -1,44 +1,34 @@
 use crate::{ContractConfig, IdentityRegistryClient, ValidationRegistryClient};
 use alloy::{
-    network::{Ethereum, EthereumWallet, NetworkWallet},
-    primitives::{Address, B256, TxKind, U256},
-    providers::{DynProvider, Provider, ProviderBuilder, WsConnect},
-    rpc::types::TransactionRequest,
-    signers::local::PrivateKeySigner,
+    primitives::{Address, B256, U256},
+    providers::DynProvider,
 };
-use std::sync::Arc;
-use tokio::sync::Mutex;
+use contract_clients_common::ProviderContext;
 
 /// High-level wrapper bundling ERC-8004 contract clients with a shared Alloy provider.
 #[derive(Clone)]
 pub struct Erc8004Client {
-    provider: DynProvider,
-    wallet: EthereumWallet,
+    ctx: ProviderContext,
     pub identity_registry: IdentityRegistryClient<DynProvider>,
     pub validation_registry: ValidationRegistryClient<DynProvider>,
 }
 
 impl Erc8004Client {
     pub async fn new(config: ContractConfig, private_key: String) -> anyhow::Result<Self> {
-        let rpc_url = config.rpc_url.clone();
-        let ws_url = rpc_url
-            .replace("http://", "ws://")
-            .replace("https://", "wss://");
+        let ctx = ProviderContext::new(&config.rpc_url, &private_key).await?;
+        Self::from_context(ctx, config).await
+    }
 
-        let ws = WsConnect::new(ws_url);
-        let signer: PrivateKeySigner = private_key.parse::<PrivateKeySigner>()?;
-        let wallet = EthereumWallet::from(signer);
-
-        // Build a provider that can sign transactions, then erase the concrete type
-        let provider: DynProvider = ProviderBuilder::new()
-            .wallet(wallet.clone())
-            .with_simple_nonce_management()
-            .with_gas_estimation()
-            .connect_ws(ws)
-            .await?
-            .erased();
-
-        let tx_lock = Arc::new(Mutex::new(()));
+    /// Create a client from an existing [`ProviderContext`].
+    ///
+    /// Use this when you want to share the same provider, wallet, and nonce
+    /// tracker across multiple clients (e.g. `BlacklightClient` and `Erc8004Client`).
+    pub async fn from_context(
+        ctx: ProviderContext,
+        config: ContractConfig,
+    ) -> anyhow::Result<Self> {
+        let provider = ctx.provider().clone();
+        let tx_lock = ctx.tx_lock();
 
         // Instantiate contract clients using the shared provider
         let identity_registry = IdentityRegistryClient::new(
@@ -49,12 +39,11 @@ impl Erc8004Client {
         let validation_registry = ValidationRegistryClient::new(
             provider.clone(),
             config.validation_registry_contract_address,
-            tx_lock.clone(),
+            tx_lock,
         );
 
         Ok(Self {
-            provider,
-            wallet,
+            ctx,
             identity_registry,
             validation_registry,
         })
@@ -62,36 +51,26 @@ impl Erc8004Client {
 
     /// Get the signer address
     pub fn signer_address(&self) -> Address {
-        <EthereumWallet as NetworkWallet<Ethereum>>::default_signer_address(&self.wallet)
+        self.ctx.signer_address()
     }
 
     /// Get the balance of the wallet
     pub async fn get_balance(&self) -> anyhow::Result<U256> {
-        let address = self.signer_address();
-        Ok(self.provider.get_balance(address).await?)
+        self.ctx.get_balance().await
     }
 
     /// Get the balance of a specific address
     pub async fn get_balance_of(&self, address: Address) -> anyhow::Result<U256> {
-        Ok(self.provider.get_balance(address).await?)
+        self.ctx.get_balance_of(address).await
     }
 
     /// Send ETH to an address
     pub async fn send_eth(&self, to: Address, amount: U256) -> anyhow::Result<B256> {
-        let tx = TransactionRequest {
-            to: Some(TxKind::Call(to)),
-            value: Some(amount),
-            max_priority_fee_per_gas: Some(0),
-            ..Default::default()
-        };
-
-        let tx_hash = self.provider.send_transaction(tx).await?.watch().await?;
-
-        Ok(tx_hash)
+        self.ctx.send_eth(to, amount).await
     }
 
     /// Get the current block number
     pub async fn get_block_number(&self) -> anyhow::Result<u64> {
-        Ok(self.provider.get_block_number().await?)
+        self.ctx.get_block_number().await
     }
 }
