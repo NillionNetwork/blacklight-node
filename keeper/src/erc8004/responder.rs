@@ -2,23 +2,19 @@ use crate::{l2::KeeperState, metrics};
 use alloy::hex;
 use alloy::primitives::B256;
 use alloy::providers::Provider;
-use anyhow::Context;
-use erc_8004_contract_clients::validation_registry::ValidationRegistryUpgradeable::ValidationRegistryUpgradeableInstance;
+use erc_8004_contract_clients::ValidationRegistryClient;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{debug, error, info};
 
 /// Submits validation responses for finalized ERC-8004 validation rounds.
 pub struct ValidationResponder<P: Provider + Clone> {
-    registry: ValidationRegistryUpgradeableInstance<P>,
+    registry: ValidationRegistryClient<P>,
     state: Arc<Mutex<KeeperState>>,
 }
 
 impl<P: Provider + Clone> ValidationResponder<P> {
-    pub fn new(
-        registry: ValidationRegistryUpgradeableInstance<P>,
-        state: Arc<Mutex<KeeperState>>,
-    ) -> Self {
+    pub fn new(registry: ValidationRegistryClient<P>, state: Arc<Mutex<KeeperState>>) -> Self {
         Self { registry, state }
     }
 
@@ -30,12 +26,6 @@ impl<P: Provider + Clone> ValidationResponder<P> {
         // Collect jobs to process outside the lock
         let jobs: Vec<_> = {
             let state = self.state.lock().await;
-            let pending_count = state.erc8004.pending_validations.len();
-            info!(
-                pending_count,
-                "Processing ERC-8004 responses: checking tracked validations"
-            );
-
             state
                 .erc8004
                 .pending_validations
@@ -45,10 +35,12 @@ impl<P: Provider + Clone> ValidationResponder<P> {
                 .collect()
         };
 
-        info!(
-            ready_count = jobs.len(),
-            "Found validations ready for response submission"
-        );
+        if !jobs.is_empty() {
+            info!(
+                ready_count = jobs.len(),
+                "ERC-8004 validations ready for response submission"
+            );
+        }
 
         if jobs.is_empty() {
             debug!(
@@ -92,32 +84,17 @@ impl<P: Provider + Clone> ValidationResponder<P> {
     }
 
     async fn submit_response(&self, request_hash: B256, outcome: u8) -> anyhow::Result<B256> {
-        let pending = self
+        let tx_hash = self
             .registry
-            .validationResponse(
+            .validation_response(
                 request_hash,
                 outcome,
                 String::new(),           // responseURI - empty
                 B256::ZERO,              // responseHash - zero
                 "heartbeat".to_string(), // tag
             )
-            .send()
-            .await
-            .map_err(|e| {
-                error!(
-                    request_hash = %request_hash,
-                    outcome,
-                    error = %e,
-                    "validationResponse transaction failed"
-                );
-                anyhow::anyhow!("Failed to send validationResponse: {e}")
-            })?;
+            .await?;
 
-        let receipt = pending
-            .get_receipt()
-            .await
-            .context("Failed to get transaction receipt")?;
-
-        Ok(receipt.transaction_hash)
+        Ok(tx_hash)
     }
 }

@@ -1,6 +1,6 @@
 use crate::{
     args::KeeperConfig,
-    clients::L2KeeperClient,
+    clients::{L2KeeperClient, ValidationRegistryInstance},
     erc8004::{events::Erc8004EventListener, responder::ValidationResponder},
     l2::{
         KeeperState, escalator::RoundEscalator, events::EventListener, jailing::Jailer,
@@ -12,7 +12,7 @@ use alloy::{eips::BlockId, providers::Provider};
 use anyhow::Context;
 use std::sync::Arc;
 use tokio::{sync::Mutex, time::interval};
-use tracing::{error, info, trace};
+use tracing::{debug, error, info};
 
 pub struct L2Supervisor {
     client: Arc<L2KeeperClient>,
@@ -57,7 +57,9 @@ impl L2Supervisor {
         if self.erc8004_enabled
             && let Some(registry) = self.client.validation_registry()
         {
-            let erc8004_listener = Erc8004EventListener::new(registry.clone());
+            let raw_registry =
+                ValidationRegistryInstance::new(registry.address(), self.client.provider());
+            let erc8004_listener = Erc8004EventListener::new(raw_registry);
             erc8004_listener
                 .process_historical_events(
                     from_block,
@@ -85,7 +87,9 @@ impl L2Supervisor {
         if self.erc8004_enabled
             && let Some(registry) = self.client.validation_registry()
         {
-            let erc8004_listener = Erc8004EventListener::new(registry.clone());
+            let raw_registry =
+                ValidationRegistryInstance::new(registry.address(), self.client.provider());
+            let erc8004_listener = Erc8004EventListener::new(raw_registry);
             erc8004_listener
                 .spawn(latest_block.saturating_add(1), self.state.clone())
                 .await
@@ -99,14 +103,19 @@ impl L2Supervisor {
     }
 
     async fn run(mut self, config: KeeperConfig) {
-        // Create ERC-8004 responder if enabled
+        // Create ERC-8004 responder if enabled (uses shared tx_lock via ValidationRegistryClient)
         let erc8004_responder = if self.erc8004_enabled {
             self.client
                 .validation_registry()
-                .map(|registry| ValidationResponder::new(registry.clone(), self.state.clone()))
+                .map(|client| ValidationResponder::new(client.clone(), self.state.clone()))
         } else {
             None
         };
+        info!(
+            erc8004_responder_created = erc8004_responder.is_some(),
+            tick_interval_ms = config.tick_interval.as_millis() as u64,
+            "L2 supervisor run loop starting"
+        );
 
         let mut ticker = interval(config.tick_interval);
         loop {
@@ -143,7 +152,7 @@ impl L2Supervisor {
 
             // Process ERC-8004 validation responses
             if let Some(ref responder) = erc8004_responder {
-                trace!("Tick: processing ERC-8004 validation responses");
+                debug!("Tick: processing ERC-8004 validation responses");
                 if let Err(e) = responder.process_responses().await {
                     error!("Failed to process ERC-8004 validation responses: {e}");
                 }
