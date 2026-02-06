@@ -1,5 +1,5 @@
 use alloy::primitives::Address;
-use anyhow::{Result, anyhow};
+use anyhow::{Result, bail};
 use blacklight_contract_clients::{BlacklightClient, ContractConfig};
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
@@ -137,7 +137,7 @@ impl<'a> Supervisor<'a> {
                             );
                         }
                         _ = shutdown_token.cancelled() => {
-                            return Err(anyhow!("Shutdown requested during initial connect"));
+                            bail!("Shutdown requested during initial connect");
                         }
                     }
                 }
