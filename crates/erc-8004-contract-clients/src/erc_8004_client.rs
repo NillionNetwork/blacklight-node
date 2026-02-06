@@ -1,32 +1,21 @@
-use crate::{
-    ContractConfig, HeartbeatManagerClient, NilTokenClient, ProtocolConfigClient,
-    StakingOperatorsClient,
-};
+use crate::{ContractConfig, IdentityRegistryClient, ValidationRegistryClient};
 use alloy::{
     primitives::{Address, B256, U256},
     providers::DynProvider,
 };
 use contract_clients_common::ProviderContext;
 
-/// High-level wrapper bundling all contract clients with a shared Alloy provider.
+/// High-level wrapper bundling ERC-8004 contract clients with a shared Alloy provider.
 #[derive(Clone)]
-pub struct BlacklightClient {
+pub struct Erc8004Client {
     ctx: ProviderContext,
-    pub manager: HeartbeatManagerClient<DynProvider>,
-    pub token: NilTokenClient<DynProvider>,
-    pub staking: StakingOperatorsClient<DynProvider>,
-    pub protocol_config: ProtocolConfigClient<DynProvider>,
+    pub identity_registry: IdentityRegistryClient<DynProvider>,
+    pub validation_registry: ValidationRegistryClient<DynProvider>,
 }
 
-impl BlacklightClient {
+impl Erc8004Client {
     pub async fn new(config: ContractConfig, private_key: String) -> anyhow::Result<Self> {
-        let ctx = ProviderContext::with_ws_retries(
-            &config.rpc_url,
-            &private_key,
-            Some(config.max_ws_retries),
-        )
-        .await?;
-
+        let ctx = ProviderContext::new(&config.rpc_url, &private_key).await?;
         Self::from_context(ctx, config).await
     }
 
@@ -42,21 +31,21 @@ impl BlacklightClient {
         let tx_lock = ctx.tx_lock();
 
         // Instantiate contract clients using the shared provider
-        let manager =
-            HeartbeatManagerClient::new(provider.clone(), config.clone(), tx_lock.clone());
-        let token = NilTokenClient::new(provider.clone(), config.clone(), tx_lock.clone());
-        let staking = StakingOperatorsClient::new(provider.clone(), config, tx_lock.clone());
-
-        let protocol_config_address = staking.protocol_config().await?;
-        let protocol_config =
-            ProtocolConfigClient::new(provider.clone(), protocol_config_address, tx_lock);
+        let identity_registry = IdentityRegistryClient::new(
+            provider.clone(),
+            config.identity_registry_contract_address,
+            tx_lock.clone(),
+        );
+        let validation_registry = ValidationRegistryClient::new(
+            provider.clone(),
+            config.validation_registry_contract_address,
+            tx_lock,
+        );
 
         Ok(Self {
             ctx,
-            manager,
-            token,
-            staking,
-            protocol_config,
+            identity_registry,
+            validation_registry,
         })
     }
 
@@ -78,5 +67,10 @@ impl BlacklightClient {
     /// Send ETH to an address
     pub async fn send_eth(&self, to: Address, amount: U256) -> anyhow::Result<B256> {
         self.ctx.send_eth(to, amount).await
+    }
+
+    /// Get the current block number
+    pub async fn get_block_number(&self) -> anyhow::Result<u64> {
+        self.ctx.get_block_number().await
     }
 }

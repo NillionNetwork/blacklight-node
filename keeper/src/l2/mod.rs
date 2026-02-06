@@ -1,3 +1,4 @@
+use crate::erc8004::Erc8004State;
 use alloy::primitives::{Address, B256, Bytes};
 use std::collections::HashMap;
 
@@ -29,4 +30,5 @@ struct RoundState {
 pub struct KeeperState {
     raw_htx_by_heartbeat: HashMap<B256, Bytes>,
     rounds: HashMap<RoundKey, RoundState>,
+    pub erc8004: Erc8004State,
 }

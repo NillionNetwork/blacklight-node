@@ -34,6 +34,14 @@ pub struct CliArgs {
     #[arg(long, env = "DISABLE_JAILING")]
     pub disable_jailing: bool,
 
+    /// L2 ValidationRegistry contract address for ERC-8004 validation responses
+    #[arg(long, env = "L2_VALIDATION_REGISTRY_ADDRESS")]
+    pub l2_validation_registry_address: Option<Address>,
+
+    /// Enable ERC-8004 keeper functionality
+    #[arg(long, env = "ENABLE_ERC8004_KEEPER", default_value_t = false)]
+    pub enable_erc8004: bool,
+
     /// L1 EmissionsController contract address
     #[arg(long, env = "L1_EMISSIONS_CONTROLLER_ADDRESS")]
     pub l1_emissions_controller_address: Address,
@@ -82,6 +90,7 @@ pub struct KeeperConfig {
     pub l1_rpc_url: String,
     pub l2_heartbeat_manager_address: Address,
     pub l2_jailing_policy_address: Option<Address>,
+    pub l2_validation_registry_address: Option<Address>,
     pub l1_emissions_controller_address: Address,
     pub l2_staking_operators_address: Address,
     pub private_key: String,
@@ -90,6 +99,7 @@ pub struct KeeperConfig {
     pub tick_interval: Duration,
     pub emissions_interval: Duration,
     pub disable_jailing: bool,
+    pub enable_erc8004: bool,
     pub otel: Option<OtelConfig>,
 }
 
@@ -104,11 +114,17 @@ impl KeeperConfig {
         let l2_staking_operators_address = args.l2_staking_operators_address;
         let l2_jailing_policy_address = args.l2_jailing_policy_address;
         let disable_jailing = args.disable_jailing;
+        let enable_erc8004 = args.enable_erc8004;
         let private_key = args.private_key;
         let l2_jailing_policy_address = if disable_jailing {
             None
         } else {
             l2_jailing_policy_address
+        };
+        let l2_validation_registry_address = if enable_erc8004 {
+            args.l2_validation_registry_address
+        } else {
+            None
         };
         let l1_bridge_value = args.l1_bridge_value_wei;
         let lookback_blocks = args.lookback_blocks;
@@ -139,6 +155,7 @@ impl KeeperConfig {
             l1_rpc_url,
             l2_heartbeat_manager_address,
             l2_jailing_policy_address,
+            l2_validation_registry_address,
             l1_emissions_controller_address,
             l2_staking_operators_address,
             private_key,
@@ -147,6 +164,7 @@ impl KeeperConfig {
             tick_interval,
             emissions_interval,
             disable_jailing,
+            enable_erc8004,
             otel,
         })
     }

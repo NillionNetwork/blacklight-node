@@ -1,5 +1,5 @@
 # Multi-stage Dockerfile for blacklight project with cross-compilation support
-# Builds all binaries: blacklight_node, nilcc_simulator, monitor, keeper
+# Builds all binaries: blacklight_node, simulator (nilcc/erc8004), monitor, keeper
 
 FROM --platform=$BUILDPLATFORM rust:1.91-slim-trixie AS builder
 
@@ -57,7 +57,7 @@ RUN mkdir -p ~/.cargo && \
 # Copy project files
 COPY Cargo.toml ./
 COPY crates ./crates
-COPY nilcc-simulator ./nilcc-simulator
+COPY simulator ./simulator
 COPY keeper ./keeper
 COPY blacklight-node ./blacklight-node
 COPY monitor ./monitor
@@ -84,7 +84,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cargo build --release --target $RUST_TARGET && \
     mkdir -p /out/bin && \
     cp target/$RUST_TARGET/release/blacklight-node /out/bin/ && \
-    cp target/$RUST_TARGET/release/nilcc-simulator /out/bin/ && \
+    cp target/$RUST_TARGET/release/simulator /out/bin/ && \
     cp target/$RUST_TARGET/release/monitor /out/bin/ && \
     cp target/$RUST_TARGET/release/keeper /out/bin/
 
@@ -112,12 +112,17 @@ COPY --from=foundry /usr/local/bin/cast /usr/local/bin/cast
 COPY --chmod=755 docker/entrypoints/derive_private_key.sh /usr/local/bin/derive_private_key.sh
 ENTRYPOINT ["/usr/local/bin/derive_private_key.sh", "/usr/local/bin/blacklight-node"]
 
-# Runtime stage for nilcc_simulator
+# Runtime stage for nilcc_simulator (HTX submission)
 FROM base_release AS nilcc_simulator
-COPY --from=builder /out/bin/nilcc-simulator /usr/local/bin/nilcc-simulator
+COPY --from=builder /out/bin/simulator /usr/local/bin/simulator
 COPY --from=builder /app/data /app/data
 ENV HTXS_PATH=/app/data/htxs.json
-ENTRYPOINT ["/usr/local/bin/nilcc-simulator"]
+ENTRYPOINT ["/usr/local/bin/simulator", "nilcc"]
+
+# Runtime stage for erc_8004_simulator (ERC-8004 validation requests)
+FROM base_release AS erc_8004_simulator
+COPY --from=builder /out/bin/simulator /usr/local/bin/simulator
+ENTRYPOINT ["/usr/local/bin/simulator", "erc8004"]
 
 # Runtime stage for monitor
 FROM base_release AS monitor

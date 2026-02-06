@@ -1,10 +1,10 @@
-use crate::common::tx_submitter::TransactionSubmitter;
 use alloy::{
     primitives::{Address, B256},
     providers::Provider,
     sol,
 };
 use anyhow::Result;
+use contract_clients_common::tx_submitter::TransactionSubmitter;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 

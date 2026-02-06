@@ -1,13 +1,11 @@
-use crate::{
-    ContractConfig,
-    common::{event_helper::listen_events, tx_submitter::TransactionSubmitter},
-};
 use alloy::{
     primitives::{Address, B256, U256},
     providers::Provider,
     sol,
 };
 use anyhow::Result;
+use contract_clients_common::event_helper::listen_events;
+use contract_clients_common::tx_submitter::TransactionSubmitter;
 use std::{convert::Infallible, sync::Arc};
 use tokio::sync::Mutex;
 
@@ -32,6 +30,8 @@ sol!(
 
 // Optional: bring the instance & events into scope
 use NilToken::NilTokenInstance;
+
+use crate::ContractConfig;
 
 /// WebSocket-based client for interacting with the NilToken ERC20 contract
 #[derive(Clone)]

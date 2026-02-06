@@ -1,7 +1,6 @@
 use alloy::primitives::Address;
 
 pub mod blacklight_client;
-pub mod common;
 pub mod heartbeat_manager;
 pub mod htx;
 pub mod nil_token;
@@ -136,7 +135,7 @@ impl ContractConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::htx::{
+    use crate::htx::json::{
         Builder, BuilderMeasurement, NilCcOperator, NillionHtx, NillionHtxV1, WorkloadId,
         WorkloadMeasurement,
     };

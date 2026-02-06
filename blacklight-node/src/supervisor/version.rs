@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use anyhow::{Result, anyhow, bail};
 use semver::Version;
 
 use blacklight_contract_clients::BlacklightClient;
@@ -121,12 +121,12 @@ pub async fn validate_node_version(client: &BlacklightClient) -> Result<()> {
                 "Node version is incompatible with protocol requirement; upgrade required"
             );
 
-            Err(anyhow!(
+            bail!(
                 "Node version {} is incompatible with required {}. Upgrade with: {}",
                 VERSION,
                 required_version,
                 upgrade_cmd
-            ))
+            );
         }
     }
 }

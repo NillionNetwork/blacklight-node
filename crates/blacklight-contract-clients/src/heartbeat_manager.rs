@@ -1,9 +1,5 @@
-use crate::common::event_helper::{BlockRange, listen_events, listen_events_filtered};
 use crate::htx::Htx;
-use crate::{
-    common::tx_submitter::TransactionSubmitter,
-    heartbeat_manager::HeartbeatManager::HeartbeatManagerInstance,
-};
+use HeartbeatManager::HeartbeatManagerInstance;
 use alloy::{
     primitives::{Address, B256, U256, keccak256},
     providers::Provider,
@@ -11,6 +7,8 @@ use alloy::{
     sol_types::SolValue,
 };
 use anyhow::{Context, Result, anyhow, bail};
+use contract_clients_common::event_helper::{BlockRange, listen_events, listen_events_filtered};
+use contract_clients_common::tx_submitter::TransactionSubmitter;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
