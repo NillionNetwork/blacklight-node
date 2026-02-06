@@ -17,7 +17,6 @@ pub(crate) fn get() -> &'static Metrics {
 pub(crate) struct Metrics {
     pub(crate) l1: L1Metrics,
     pub(crate) l2: L2Metrics,
-    pub(crate) erc8004: Erc8004Metrics,
     // A private guard to prevent this type from being constructed outside of this module.
     _private: (),
 }
@@ -26,11 +25,9 @@ impl Metrics {
     fn new(meter: &Meter) -> Self {
         let l1 = L1Metrics::new(meter);
         let l2 = L2Metrics::new(meter);
-        let erc8004 = Erc8004Metrics::new(meter);
         Self {
             l1,
             l2,
-            erc8004,
             _private: (),
         }
     }
@@ -122,6 +119,7 @@ pub(crate) struct L2Metrics {
     pub(crate) rewards: L2RewardsMetrics,
     pub(crate) escalations: L2EscalationsMetrics,
     pub(crate) eth: L2EthMetrics,
+    pub(crate) erc8004: L2Erc8004Metrics,
 }
 
 impl L2Metrics {
@@ -130,11 +128,13 @@ impl L2Metrics {
         let rewards = L2RewardsMetrics::new(meter);
         let escalations = L2EscalationsMetrics::new(meter);
         let eth = L2EthMetrics::new(meter);
+        let erc8004 = L2Erc8004Metrics::new(meter);
         Self {
             events,
             rewards,
             escalations,
             eth,
+            erc8004,
         }
     }
 }
@@ -253,35 +253,25 @@ impl L2EthMetrics {
     }
 }
 
-pub(crate) struct Erc8004Metrics {
-    events_received: Counter<u64>,
+pub(crate) struct L2Erc8004Metrics {
     requests_tracked: Gauge<u64>,
     responses_submitted: Counter<u64>,
 }
 
-impl Erc8004Metrics {
+impl L2Erc8004Metrics {
     fn new(meter: &Meter) -> Self {
-        let events_received = meter
-            .u64_counter("blacklight.keeper.erc8004.events.received")
-            .with_description("Total ERC-8004 events received")
-            .build();
         let requests_tracked = meter
-            .u64_gauge("blacklight.keeper.erc8004.requests_tracked")
+            .u64_gauge("blacklight.keeper.l2.erc8004.requests_tracked")
             .with_description("Number of ERC-8004 validation requests currently tracked")
             .build();
         let responses_submitted = meter
-            .u64_counter("blacklight.keeper.erc8004.responses_submitted")
+            .u64_counter("blacklight.keeper.l2.erc8004.responses_submitted")
             .with_description("Total ERC-8004 validation responses submitted")
             .build();
         Self {
-            events_received,
             requests_tracked,
             responses_submitted,
         }
-    }
-
-    pub(crate) fn inc_events_received(&self, name: &'static str) {
-        self.events_received.add(1, &[KeyValue::new("name", name)]);
     }
 
     pub(crate) fn set_requests_tracked(&self, count: u64) {
