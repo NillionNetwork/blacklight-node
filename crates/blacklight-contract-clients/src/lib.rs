@@ -135,7 +135,7 @@ impl ContractConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::htx::{
+    use crate::htx::json::{
         Builder, BuilderMeasurement, NilCcOperator, NillionHtx, NillionHtxV1, WorkloadId,
         WorkloadMeasurement,
     };

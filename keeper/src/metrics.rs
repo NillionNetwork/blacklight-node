@@ -119,6 +119,7 @@ pub(crate) struct L2Metrics {
     pub(crate) rewards: L2RewardsMetrics,
     pub(crate) escalations: L2EscalationsMetrics,
     pub(crate) eth: L2EthMetrics,
+    pub(crate) erc8004: L2Erc8004Metrics,
 }
 
 impl L2Metrics {
@@ -127,11 +128,13 @@ impl L2Metrics {
         let rewards = L2RewardsMetrics::new(meter);
         let escalations = L2EscalationsMetrics::new(meter);
         let eth = L2EthMetrics::new(meter);
+        let erc8004 = L2Erc8004Metrics::new(meter);
         Self {
             events,
             rewards,
             escalations,
             eth,
+            erc8004,
         }
     }
 }
@@ -247,5 +250,35 @@ impl L2EthMetrics {
 
     pub(crate) fn set_funds(&self, amount: U256) {
         self.funds.record(amount.into(), &[]);
+    }
+}
+
+pub(crate) struct L2Erc8004Metrics {
+    requests_tracked: Gauge<u64>,
+    responses_submitted: Counter<u64>,
+}
+
+impl L2Erc8004Metrics {
+    fn new(meter: &Meter) -> Self {
+        let requests_tracked = meter
+            .u64_gauge("blacklight.keeper.l2.erc8004.requests_tracked")
+            .with_description("Number of ERC-8004 validation requests currently tracked")
+            .build();
+        let responses_submitted = meter
+            .u64_counter("blacklight.keeper.l2.erc8004.responses_submitted")
+            .with_description("Total ERC-8004 validation responses submitted")
+            .build();
+        Self {
+            requests_tracked,
+            responses_submitted,
+        }
+    }
+
+    pub(crate) fn set_requests_tracked(&self, count: u64) {
+        self.requests_tracked.record(count, &[]);
+    }
+
+    pub(crate) fn inc_responses_submitted(&self) {
+        self.responses_submitted.add(1, &[]);
     }
 }

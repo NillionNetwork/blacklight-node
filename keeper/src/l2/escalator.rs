@@ -3,7 +3,7 @@ use alloy::primitives::{B256, Bytes};
 use blacklight_contract_clients::heartbeat_manager::HeartbeatManagerErrors;
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::Mutex;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use contract_clients_common::errors::decode_any_error;
 use contract_clients_common::tx_submitter::TransactionSubmitter;
@@ -16,10 +16,11 @@ pub(crate) struct RoundEscalator {
 
 impl RoundEscalator {
     pub(crate) fn new(client: Arc<L2KeeperClient>, state: Arc<Mutex<KeeperState>>) -> Self {
+        let submitter = TransactionSubmitter::new(client.tx_lock());
         Self {
             client,
             state,
-            submitter: TransactionSubmitter::new(Default::default()),
+            submitter,
         }
     }
 
@@ -72,6 +73,14 @@ impl RoundEscalator {
 
         for (heartbeat_key, round, deadline, raw_htx) in candidates {
             if block_timestamp <= deadline {
+                debug!(
+                    heartbeat_key = ?heartbeat_key,
+                    round,
+                    deadline,
+                    block_timestamp,
+                    remaining_secs = deadline - block_timestamp,
+                    "Round not yet past deadline, skipping"
+                );
                 continue;
             }
 

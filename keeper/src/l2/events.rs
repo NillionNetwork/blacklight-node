@@ -1,5 +1,6 @@
 use crate::{
     clients::HeartbeatManagerInstance,
+    erc8004::{ValidationRequestInfo, events::on_round_finalized},
     l2::{KeeperState, RoundKey},
     metrics,
 };
@@ -11,6 +12,7 @@ use blacklight_contract_clients::{
         HeartbeatEnqueuedEvent, RewardDistributionAbandonedEvent, RewardsDistributedEvent,
         RoundFinalizedEvent, RoundStartedEvent, SlashingCallbackFailedEvent,
     },
+    htx::Erc8004Htx,
 };
 use futures_util::{Stream, StreamExt};
 use std::{pin::pin, sync::Arc};
@@ -73,6 +75,7 @@ impl EventListener {
             };
             let entry = state.rounds.entry(key).or_default();
             entry.outcome = Some(event.outcome);
+            on_round_finalized(&mut state.erc8004, event.heartbeatKey, event.outcome);
         }
         for (event, _log) in rewards_done {
             let key = RoundKey {
@@ -220,6 +223,39 @@ impl EventListener {
                 members = entry.members.len(),
                 "Round started"
             );
+
+            // Detect ERC-8004 HTXs and track them with HeartbeatManager's heartbeat_key
+            if let Ok(erc8004_htx) = Erc8004Htx::try_decode(&event.rawHTX) {
+                // Only add if not already tracked (first round)
+                if event.round == 1
+                    && !guard
+                        .erc8004
+                        .pending_validations
+                        .contains_key(&event.heartbeatKey)
+                {
+                    let info = ValidationRequestInfo::new(
+                        erc8004_htx.validator_address,
+                        erc8004_htx.agent_id,
+                        erc8004_htx.request_uri.clone(),
+                        erc8004_htx.request_hash,
+                    );
+                    guard
+                        .erc8004
+                        .pending_validations
+                        .insert(event.heartbeatKey, info);
+                    metrics::get()
+                        .l2
+                        .erc8004
+                        .set_requests_tracked(guard.erc8004.pending_validations.len() as u64);
+                    info!(
+                        heartbeat_key = %event.heartbeatKey,
+                        validator = %erc8004_htx.validator_address,
+                        agent_id = %erc8004_htx.agent_id,
+                        request_hash = %erc8004_htx.request_hash,
+                        "ERC-8004 validation tracked from RoundStarted"
+                    );
+                }
+            }
         }
     }
 
@@ -242,6 +278,9 @@ impl EventListener {
                 outcome = event.outcome,
                 "Round finalized"
             );
+
+            // Notify ERC-8004 state about the round finalization
+            on_round_finalized(&mut guard.erc8004, event.heartbeatKey, event.outcome);
         }
     }
 
