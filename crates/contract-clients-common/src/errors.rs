@@ -538,13 +538,13 @@ mod tests {
         // "blacklight: unknown HTX" encoded as Error(string)
         // Selector: 08c379a0
         // Offset:   0000...0020 (32 bytes)
-        // Length:   0000...0012 (18 bytes = "blacklight: unknown HTX".len())
-        // Data:     4e696c41563a20756e6b6e6f776e20485458 + padding
+        // Length:   0000...0017 (23 bytes = "blacklight: unknown HTX".len())
+        // Data:     626c61636b6c696768743a20756e6b6e6f776e20485458 + padding
         let data = hex::decode(
             "08c379a0\
              0000000000000000000000000000000000000000000000000000000000000020\
-             0000000000000000000000000000000000000000000000000000000000000012\
-             4e696c41563a20756e6b6e6f776e204854580000000000000000000000000000",
+             0000000000000000000000000000000000000000000000000000000000000017\
+             626c61636b6c696768743a20756e6b6e6f776e20485458000000000000000000",
         )
         .unwrap();
 
@@ -601,7 +601,8 @@ mod tests {
     #[test]
     fn test_try_extract_from_string() {
         // Test with "execution reverted: 0x..." format (common from geth/anvil)
-        let error_msg = "execution reverted: 0x08c379a00000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000001a4e696c41563a204854582020616c72656164792065786973747300000000000000";
+        // "blacklight: HTX  already exists" (31 bytes = 0x1f)
+        let error_msg = "execution reverted: 0x08c379a00000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000001f626c61636b6c696768743a204854582020616c7265616479206578697374730000";
         let decoded = try_extract_from_string(error_msg);
         assert!(decoded.is_some());
         if let Some(DecodedRevert::ErrorString(msg)) = decoded {

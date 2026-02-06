@@ -3,7 +3,7 @@
 //! On-chain validation standard for agent validations.
 
 use alloy::primitives::{Address, B256, U256};
-use alloy::sol_types::{sol_data, SolType};
+use alloy::sol_types::{SolType, sol_data};
 
 /// ERC-8004 Validation HTX data parsed from ABI-encoded bytes.
 ///
@@ -38,8 +38,7 @@ impl Erc8004Htx {
         );
 
         let (validator_address, agent_id, request_uri, request_hash) =
-            Erc8004Tuple::abi_decode_params(data)
-                .map_err(|e| Erc8004DecodeError(e.to_string()))?;
+            Erc8004Tuple::abi_decode_params(data).map_err(|e| Erc8004DecodeError(e.to_string()))?;
 
         Ok(Self {
             validator_address,

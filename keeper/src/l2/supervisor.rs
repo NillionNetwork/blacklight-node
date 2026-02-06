@@ -150,7 +150,6 @@ impl L2Supervisor {
 
             self.process_rounds(block_timestamp).await;
 
-            // Process ERC-8004 validation responses
             if let Some(ref responder) = erc8004_responder {
                 debug!("Tick: processing ERC-8004 validation responses");
                 if let Err(e) = responder.process_responses().await {

@@ -186,9 +186,9 @@ pub fn compute_heartbeat_key(
 pub fn on_round_finalized(state: &mut Erc8004State, heartbeat_key: B256, outcome: u8) {
     if let Some(info) = state.pending_validations.get_mut(&heartbeat_key) {
         let response = match outcome {
-            0 => 50,  // inconclusive
             1 => 100, // valid
             2 => 0,   // invalid
+            3 => 50,  // inconclusive
             other => {
                 warn!(
                     heartbeat_key = %heartbeat_key,

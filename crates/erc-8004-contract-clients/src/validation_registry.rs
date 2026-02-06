@@ -76,24 +76,6 @@ impl<P: Provider + Clone> ValidationRegistryClient<P> {
         *self.contract.address()
     }
 
-    /// Rust stub for the Solidity `requestValidation` semantics (no snapshotId).
-    pub async fn request_validation(
-        &self,
-        validator_address: Address,
-        agent_id: U256,
-        request_uri: String,
-        request_hash: B256,
-    ) -> Result<B256> {
-        let call = self.contract.validationRequest(
-            validator_address,
-            agent_id,
-            request_uri,
-            request_hash,
-            0,
-        );
-        self.submitter.invoke("validationRequest", call).await
-    }
-
     /// Full validation request with snapshot ID (delegates to `validationRequest`).
     pub async fn validation_request(
         &self,
