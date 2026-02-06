@@ -3,7 +3,7 @@ use alloy::{
     consensus::Transaction, contract::CallBuilder, primitives::B256, providers::Provider,
     rpc::types::TransactionReceipt, sol_types::SolInterface,
 };
-use anyhow::{Result, anyhow};
+use anyhow::{Result, bail};
 use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::sync::Arc;
@@ -34,7 +34,7 @@ impl<S: SolInterface + Debug + Clone> TransactionSubmitter<S> {
         // Pre-simulate to catch reverts with proper error messages
         if let Err(e) = call.call().await {
             let e = self.decode_error(e);
-            return Err(anyhow!("{method} reverted: {e}"));
+            bail!("{method} reverted: {e}");
         }
 
         let (call, gas_limit) = match self.gas_buffer {
@@ -58,10 +58,13 @@ impl<S: SolInterface + Debug + Clone> TransactionSubmitter<S> {
 
         // Acquire lock and send
         let _guard = self.tx_lock.lock().await;
-        let pending = call.send().await.map_err(|e| {
-            let e = self.decode_error(e);
-            anyhow!("{method} failed to send: {e}")
-        })?;
+        let pending = match call.send().await {
+            Ok(pending) => pending,
+            Err(e) => {
+                let e = self.decode_error(e);
+                bail!("{method} failed to send: {e}");
+            }
+        };
 
         // Wait for receipt
         let receipt = pending.get_receipt().await?;
@@ -82,13 +85,13 @@ impl<S: SolInterface + Debug + Clone> TransactionSubmitter<S> {
             if let Some(gas_limit) = gas_limit {
                 let used = receipt.gas_used;
                 if used >= gas_limit {
-                    return Err(anyhow!(
+                    bail!(
                         "{method} ran out of gas (used {used} of {gas_limit} limit). Tx: {tx_hash:?}"
-                    ));
+                    );
                 }
             }
 
-            return Err(anyhow!("{method} reverted on-chain. Tx hash: {tx_hash:?}"));
+            bail!("{method} reverted on-chain. Tx hash: {tx_hash:?}");
         }
 
         Ok(tx_hash)

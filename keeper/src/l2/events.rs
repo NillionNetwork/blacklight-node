@@ -244,6 +244,7 @@ impl EventListener {
                         .pending_validations
                         .insert(event.heartbeatKey, info);
                     metrics::get()
+                        .l2
                         .erc8004
                         .set_requests_tracked(guard.erc8004.pending_validations.len() as u64);
                     info!(

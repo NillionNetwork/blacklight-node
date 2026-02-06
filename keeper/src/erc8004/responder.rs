@@ -62,7 +62,7 @@ impl<P: Provider + Clone> ValidationResponder<P> {
                     if let Some(info) = state.erc8004.pending_validations.get_mut(&heartbeat_key) {
                         info.response_submitted = true;
                     }
-                    metrics::get().erc8004.inc_responses_submitted();
+                    metrics::get().l2.erc8004.inc_responses_submitted();
                     info!(
                         request_hash = ?request_hash,
                         outcome,

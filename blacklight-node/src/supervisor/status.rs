@@ -1,5 +1,5 @@
 use alloy::primitives::utils::{format_ether, format_units};
-use anyhow::{Result, anyhow};
+use anyhow::{Result, bail};
 use blacklight_contract_clients::BlacklightClient;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
@@ -37,7 +37,7 @@ pub async fn check_minimum_balance(
                     "⚠️ ETH balance below minimum threshold. Initiating shutdown..."
                 );
                 shutdown_token.cancel();
-                return Err(anyhow!("Insufficient ETH balance"));
+                bail!("Insufficient ETH balance");
             }
         }
         Err(e) => {
