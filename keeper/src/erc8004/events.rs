@@ -109,7 +109,7 @@ impl<P: Provider + Clone + 'static> Erc8004EventListener<P> {
             .into_stream()
             .filter_map(async move |e| match e {
                 Ok((event, _)) => {
-                    metrics::get().erc8004.inc_events_received(event_name);
+                    metrics::get().l2.events.inc_events_received(event_name);
                     Some(event)
                 }
                 Err(e) => {
@@ -146,6 +146,7 @@ impl<P: Provider + Clone + 'static> Erc8004EventListener<P> {
                 .pending_validations
                 .insert(heartbeat_key, info);
             metrics::get()
+                .l2
                 .erc8004
                 .set_requests_tracked(guard.erc8004.pending_validations.len() as u64);
 
