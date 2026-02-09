@@ -12,8 +12,9 @@ use attestation_verification::{
 };
 use attestation_verification::{VerificationError as ExtVerificationError, VmType};
 use blacklight_contract_clients::heartbeat_manager::Verdict;
-use blacklight_contract_clients::htx::{Erc8004Htx, NillionHtx, PhalaHtx};
+use blacklight_contract_clients::htx::{Erc8004Htx, Htx, NillionHtx, PhalaHtx};
 use dcap_qvl::collateral::get_collateral_and_verify;
+use rand::RngExt;
 use reqwest::Client;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
@@ -349,8 +350,120 @@ impl HtxVerifier {
 
         Ok(())
     }
+
+    /// Create a new `RetryableVerification` with the default values for a given HTX.
+    ///
+    /// # Arguments
+    ///
+    /// * `htx` - The HTX to verify.
+    ///
+    /// # Returns
+    ///
+    /// A new `RetryableVerification` with the default values.
+    pub fn retryable_verify<'a>(&'a self, htx: &'a Htx) -> RetryableVerification<'a> {
+        RetryableVerification::new(htx, self)
+    }
 }
 
+pub struct RetryableVerification<'a> {
+    pub htx: &'a Htx,
+    pub verifier: &'a HtxVerifier,
+    pub max_attempts: u32,
+    pub backoff: std::time::Duration,
+    pub with_spread: bool,
+}
+
+impl<'a> RetryableVerification<'a> {
+    /// Create a new `RetryableVerification` with the default values.
+    pub fn new(htx: &'a Htx, verifier: &'a HtxVerifier) -> Self {
+        Self {
+            htx,
+            verifier,
+            max_attempts: 1,
+            backoff: std::time::Duration::from_secs(10),
+            with_spread: false,
+        }
+    }
+
+    /// Set the maximum number of attempts to make.
+    ///
+    /// # Arguments
+    ///
+    /// * `max_attempts` - The maximum number of attempts to make.
+    ///
+    /// # Returns
+    ///
+    /// A new `RetryableVerification` with the maximum number of attempts set.
+    pub fn with_max_attempts(mut self, max_attempts: u32) -> Self {
+        self.max_attempts = max_attempts.max(1);
+        self
+    }
+
+    /// Set the backoff time between attempts.
+    ///
+    /// # Arguments
+    ///
+    /// * `backoff` - The backoff time between attempts.
+    ///
+    /// # Returns
+    ///
+    /// A new `RetryableVerification` with the backoff time set.
+    pub fn with_backoff(mut self, backoff: std::time::Duration) -> Self {
+        self.backoff = backoff;
+        self
+    }
+
+    /// Add a random jitter to the backoff time to prevent thundering herd effect.
+    /// Helps preventing 429 Too Many Requests errors from the server by spreading out the requests.
+    ///
+    /// # Arguments
+    ///
+    /// * `spread` - Whether to add a random jitter to the backoff time.
+    ///
+    /// # Returns
+    ///
+    /// A new `RetryableVerification` with the spread enabled/disabled.
+    pub fn with_spread(mut self, spread: bool) -> Self {
+        self.with_spread = spread;
+        self
+    }
+
+    /// Execute the verification.
+    ///
+    /// # Returns
+    ///
+    /// Ok(()) if the verification succeeds, Err(VerificationError) otherwise.
+    pub async fn execute(&self) -> Result<(), VerificationError> {
+        let mut last_err = None;
+        let max_attempts = self.max_attempts.max(1);
+        for attempt in 0..max_attempts {
+            let outcome = match self.htx {
+                Htx::Nillion(htx) => self.verifier.verify_nillion_htx(htx).await,
+                Htx::Phala(htx) => self.verifier.verify_phala_htx(htx).await,
+                Htx::Erc8004(htx) => self.verifier.verify_erc8004_htx(htx).await,
+            };
+
+            match outcome {
+                Ok(()) => return Ok(()),
+                Err(e) if e.verdict() == Verdict::Inconclusive => {
+                    last_err = Some(e);
+                    if attempt + 1 < max_attempts {
+                        let delay = if self.with_spread {
+                            let spread = rand::rng().random_range(0.5..1.5);
+                            self.backoff.mul_f64(spread)
+                        } else {
+                            self.backoff
+                        };
+                        tokio::time::sleep(delay).await;
+                    }
+                    continue;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        Err(last_err.expect("max_attempts must be >= 1"))
+    }
+}
 #[derive(Default)]
 struct LockedDownloader(Mutex<()>);
 

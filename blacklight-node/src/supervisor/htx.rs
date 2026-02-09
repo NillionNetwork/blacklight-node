@@ -14,6 +14,10 @@ use crate::supervisor::status::{check_minimum_balance, print_status};
 use crate::supervisor::version::validate_node_version;
 use crate::verification::HtxVerifier;
 
+const MAX_ATTEMPTS: u32 = 3;
+const BACKOFF_TIME: std::time::Duration = std::time::Duration::from_secs(10);
+const SPREAD: bool = true;
+
 #[derive(Clone)]
 pub struct HtxProcessor {
     client: BlacklightClient,
@@ -99,25 +103,15 @@ impl HtxProcessor {
         let htx_id = event.heartbeatKey;
         // Parse the HTX data - tries JSON first (nilCC/Phala), then ABI decoding (ERC-8004)
         let verification_result = match Htx::try_parse(&event.rawHTX) {
-            Ok(htx) => match htx {
-                Htx::Nillion(htx) => {
-                    info!(htx_id = ?htx_id, "Detected nilCC HTX");
-                    self.verifier.verify_nillion_htx(&htx).await
-                }
-                Htx::Phala(htx) => {
-                    info!(htx_id = ?htx_id, "Detected Phala HTX");
-                    self.verifier.verify_phala_htx(&htx).await
-                }
-                Htx::Erc8004(htx) => {
-                    info!(
-                        htx_id = ?htx_id,
-                        agent_id = %htx.agent_id,
-                        request_uri = %htx.request_uri,
-                        "Detected ERC-8004 validation HTX"
-                    );
-                    self.verifier.verify_erc8004_htx(&htx).await
-                }
-            },
+            Ok(htx) => {
+                self.verifier
+                    .retryable_verify(&htx)
+                    .with_max_attempts(MAX_ATTEMPTS)
+                    .with_backoff(BACKOFF_TIME)
+                    .with_spread(SPREAD)
+                    .execute()
+                    .await
+            }
             Err(e) => {
                 error!(htx_id = ?htx_id, error = %e, "Failed to parse HTX data");
                 // If we parse invalid data, it could be a malicious node, so Failure and it doesn't get rewarded
