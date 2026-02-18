@@ -4,6 +4,8 @@ pub mod blacklight_client;
 pub mod heartbeat_manager;
 pub mod htx;
 pub mod nil_token;
+pub mod node_operator;
+pub mod node_operator_factory;
 pub mod protocol_config;
 pub mod staking_operators;
 
@@ -14,6 +16,8 @@ pub mod staking_operators;
 pub use blacklight_client::BlacklightClient;
 pub use heartbeat_manager::HeartbeatManagerClient;
 pub use nil_token::NilTokenClient;
+pub use node_operator::NodeOperatorClient;
+pub use node_operator_factory::NodeOperatorFactoryClient;
 pub use protocol_config::ProtocolConfigClient;
 pub use staking_operators::StakingOperatorsClient;
 
@@ -32,6 +36,12 @@ pub use staking_operators::StakingOperators;
 
 // NilToken events
 pub use nil_token::NilToken;
+
+// NodeOperator events
+pub use node_operator::NodeOperator;
+
+// NodeOperatorFactory events
+pub use node_operator_factory::NodeOperatorFactory;
 
 // ============================================================================
 // Type Aliases
