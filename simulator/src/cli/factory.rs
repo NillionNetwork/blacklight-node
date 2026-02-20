@@ -58,8 +58,14 @@ pub enum FactoryCommand {
     // ── Node management ──────────────────────────────
     /// Add a node to the factory
     AddNode { node: String },
-    /// Add multiple nodes to the factory
-    AddNodes { nodes: Vec<String> },
+    /// Add multiple nodes to the factory (inline or from file)
+    AddNodes {
+        /// Node addresses as positional args
+        nodes: Vec<String>,
+        /// Path to a file containing node addresses (one per line)
+        #[arg(long)]
+        file: Option<String>,
+    },
     /// Remove a node from the factory
     RemoveNode { node: String },
 
@@ -327,11 +333,26 @@ pub async fn run(args: FactoryArgs) -> Result<()> {
             let tx = factory.add_node(addr).await?;
             println!("tx: {tx}");
         }
-        FactoryCommand::AddNodes { nodes } => {
-            let addrs: Vec<Address> = nodes
+        FactoryCommand::AddNodes { nodes, file } => {
+            let mut all_nodes = nodes;
+            if let Some(path) = file {
+                let content = std::fs::read_to_string(&path)
+                    .with_context(|| format!("failed to read file: {path}"))?;
+                let from_file: Vec<String> = content
+                    .lines()
+                    .map(|l| l.trim().to_string())
+                    .filter(|l| !l.is_empty() && !l.starts_with('#'))
+                    .collect();
+                all_nodes.extend(from_file);
+            }
+            if all_nodes.is_empty() {
+                anyhow::bail!("no node addresses provided (use positional args or --file)");
+            }
+            let addrs: Vec<Address> = all_nodes
                 .iter()
                 .map(|n| parse_address(n))
                 .collect::<Result<_>>()?;
+            println!("Adding {} nodes ...", addrs.len());
             let tx = factory.add_nodes(addrs).await?;
             println!("tx: {tx}");
         }

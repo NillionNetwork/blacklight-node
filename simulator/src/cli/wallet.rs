@@ -1,16 +1,14 @@
 use alloy::{
-    network::EthereumWallet,
     primitives::{
         Address, U256,
         utils::{format_ether, format_units, parse_ether, parse_units},
     },
-    providers::{DynProvider, Provider, ProviderBuilder},
-    rpc::types::TransactionRequest,
-    signers::local::PrivateKeySigner,
     sol,
 };
 use anyhow::{Context, Result};
 use clap::Args;
+use contract_clients_common::ProviderContext;
+use std::path::PathBuf;
 
 sol!(
     #[sol(rpc)]
@@ -38,6 +36,24 @@ pub enum WalletCommand {
     BalanceNil { address: String },
     /// Show current wallet address and its ETH + NIL balances
     Status,
+    /// Fund ETH to multiple addresses from a file (one address per line)
+    FundEth {
+        /// Path to a file containing destination addresses (one per line)
+        #[arg(long)]
+        addresses_file: PathBuf,
+        /// Amount of ETH to send to each address (e.g. "0.1")
+        #[arg(long)]
+        amount: String,
+    },
+    /// Fund NIL to multiple addresses from a file (one address per line)
+    FundNil {
+        /// Path to a file containing destination addresses (one per line)
+        #[arg(long)]
+        addresses_file: PathBuf,
+        /// Amount of NIL to send to each address (e.g. "100")
+        #[arg(long)]
+        amount: String,
+    },
 }
 
 fn parse_address(s: &str) -> Result<Address> {
@@ -45,24 +61,20 @@ fn parse_address(s: &str) -> Result<Address> {
         .with_context(|| format!("invalid address: {s}"))
 }
 
-fn load_provider() -> Result<(DynProvider, Address)> {
+fn load_ctx() -> Result<ProviderContext> {
     let rpc_url = std::env::var("RPC_URL").context("RPC_URL not set (env or .env)")?;
     let private_key = std::env::var("PRIVATE_KEY").context("PRIVATE_KEY not set (env or .env)")?;
+    ProviderContext::new_http(&rpc_url, &private_key).context("failed to create provider context")
+}
 
-    let signer: PrivateKeySigner = private_key
-        .parse::<PrivateKeySigner>()
-        .context("invalid PRIVATE_KEY")?;
-    let address = signer.address();
-    let wallet = EthereumWallet::from(signer);
-
-    let provider: DynProvider = ProviderBuilder::new()
-        .wallet(wallet)
-        .with_simple_nonce_management()
-        .with_gas_estimation()
-        .connect_http(rpc_url.parse().context("invalid RPC_URL")?)
-        .erased();
-
-    Ok((provider, address))
+fn load_addresses(path: &PathBuf) -> Result<Vec<Address>> {
+    let content = std::fs::read_to_string(path).context("failed to read addresses file")?;
+    content
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .map(|l| parse_address(l))
+        .collect()
 }
 
 fn load_nil_token_address() -> Result<Address> {
@@ -73,15 +85,16 @@ fn load_nil_token_address() -> Result<Address> {
 }
 
 pub async fn run(args: WalletArgs) -> Result<()> {
-    let (provider, my_address) = load_provider()?;
+    let ctx = load_ctx()?;
+    let provider = ctx.provider();
+    let my_address = ctx.signer_address();
 
     match args.command {
         WalletCommand::SendEth { to, amount } => {
             let to = parse_address(&to)?;
             let amount =
                 parse_ether(&amount).with_context(|| format!("invalid ETH amount: {amount}"))?;
-            let tx = TransactionRequest::default().to(to).value(amount);
-            let tx_hash = provider.send_transaction(tx).await?.watch().await?;
+            let tx_hash = ctx.send_eth(to, amount).await?;
             println!("tx: {tx_hash}");
         }
         WalletCommand::SendNil { to, amount } => {
@@ -96,7 +109,7 @@ pub async fn run(args: WalletArgs) -> Result<()> {
         }
         WalletCommand::BalanceEth { address } => {
             let addr = parse_address(&address)?;
-            let balance = provider.get_balance(addr).await?;
+            let balance = ctx.get_balance_of(addr).await?;
             println!("{} ETH", format_ether(balance));
         }
         WalletCommand::BalanceNil { address } => {
@@ -106,11 +119,106 @@ pub async fn run(args: WalletArgs) -> Result<()> {
             let balance = erc20.balanceOf(addr).call().await?;
             println!("{} NIL", format_units(balance, 6)?);
         }
+        WalletCommand::FundEth {
+            addresses_file,
+            amount,
+        } => {
+            let amount =
+                parse_ether(&amount).with_context(|| format!("invalid ETH amount: {amount}"))?;
+
+            let addresses = load_addresses(&addresses_file)?;
+            if addresses.is_empty() {
+                println!("No addresses found in file");
+                return Ok(());
+            }
+
+            let sender_balance = ctx.get_balance().await?;
+            let total_needed = amount * U256::from(addresses.len());
+            println!("Sender:      {my_address}");
+            println!("Balance:     {} ETH", format_ether(sender_balance));
+            println!("Amount each: {} ETH", format_ether(amount));
+            println!("Recipients:  {}", addresses.len());
+            println!("Total needed: {} ETH (excluding gas)", format_ether(total_needed));
+            println!();
+
+            let mut success_count = 0u64;
+            let mut error_count = 0u64;
+
+            for (i, to) in addresses.iter().enumerate() {
+                let label = format!("[{}/{}]", i + 1, addresses.len());
+                match ctx.send_eth(*to, amount).await {
+                    Ok(tx_hash) => {
+                        println!("{label} {to} tx: {tx_hash}");
+                        success_count += 1;
+                    }
+                    Err(e) => {
+                        println!("{label} {to} ERROR: {e}");
+                        error_count += 1;
+                    }
+                }
+            }
+
+            println!();
+            println!("=== Summary ===");
+            println!("Successful: {success_count}");
+            println!("Errors:     {error_count}");
+        }
+        WalletCommand::FundNil {
+            addresses_file,
+            amount,
+        } => {
+            let amount: U256 = parse_units(&amount, 6)
+                .with_context(|| format!("invalid NIL amount: {amount}"))?
+                .into();
+
+            let addresses = load_addresses(&addresses_file)?;
+            if addresses.is_empty() {
+                println!("No addresses found in file");
+                return Ok(());
+            }
+
+            let token = load_nil_token_address()?;
+            let erc20 = IERC20::new(token, provider);
+
+            println!("Sender:      {my_address}");
+            println!("Token:       {token}");
+            println!("Amount each: {} NIL", format_units(amount, 6)?);
+            println!("Recipients:  {}", addresses.len());
+            println!();
+
+            let mut success_count = 0u64;
+            let mut error_count = 0u64;
+
+            for (i, to) in addresses.iter().enumerate() {
+                let label = format!("[{}/{}]", i + 1, addresses.len());
+                match erc20.transfer(*to, amount).send().await {
+                    Ok(pending) => match pending.watch().await {
+                        Ok(tx_hash) => {
+                            println!("{label} {to} tx: {tx_hash}");
+                            success_count += 1;
+                        }
+                        Err(e) => {
+                            println!("{label} {to} ERROR watching tx: {e}");
+                            error_count += 1;
+                        }
+                    },
+                    Err(e) => {
+                        println!("{label} {to} ERROR sending tx: {e}");
+                        error_count += 1;
+                    }
+                }
+            }
+
+            println!();
+            println!("=== Summary ===");
+            println!("Successful: {success_count}");
+            println!("Errors:     {error_count}");
+        }
         WalletCommand::Status => {
-            let eth_balance = provider.get_balance(my_address).await?;
+            let eth_balance = ctx.get_balance().await?;
             let nil_balance = match load_nil_token_address() {
                 Ok(token) => {
-                    let erc20 = IERC20::new(token, &provider);
+                    let erc20 = IERC20::new(token, provider);
                     match erc20.balanceOf(my_address).call().await {
                         Ok(b) => match format_units(b, 6) {
                             Ok(f) => format!("{f} NIL"),

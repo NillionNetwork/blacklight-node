@@ -6,6 +6,7 @@ use alloy::{
     signers::local::PrivateKeySigner,
 };
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::Mutex;
 
 /// Shared provider context that holds an Alloy provider, wallet, and transaction lock.
@@ -24,6 +25,27 @@ impl ProviderContext {
     /// Create a new provider context with a WebSocket connection.
     pub async fn new(rpc_url: &str, private_key: &str) -> anyhow::Result<Self> {
         Self::with_ws_retries(rpc_url, private_key, None).await
+    }
+
+    /// Create a new provider context with an HTTP connection.
+    pub fn new_http(rpc_url: &str, private_key: &str) -> anyhow::Result<Self> {
+        let signer: PrivateKeySigner = private_key.parse::<PrivateKeySigner>()?;
+        let wallet = EthereumWallet::from(signer);
+
+        let provider: DynProvider = ProviderBuilder::new()
+            .wallet(wallet.clone())
+            .with_simple_nonce_management()
+            .with_gas_estimation()
+            .connect_http(rpc_url.parse()?)
+            .erased();
+
+        let tx_lock = Arc::new(Mutex::new(()));
+
+        Ok(Self {
+            provider,
+            wallet,
+            tx_lock,
+        })
     }
 
     /// Create a new provider context with configurable WebSocket retry count.
@@ -95,17 +117,42 @@ impl ProviderContext {
         Ok(self.provider.get_balance(address).await?)
     }
 
-    /// Send ETH to an address.
+    /// Send ETH to an address and wait for the receipt.
     pub async fn send_eth(&self, to: Address, amount: U256) -> anyhow::Result<B256> {
+        let gas_price = self.provider.get_gas_price().await?;
+        let max_fee = std::cmp::max(gas_price, 1);
         let tx = TransactionRequest {
             to: Some(TxKind::Call(to)),
             value: Some(amount),
-            max_priority_fee_per_gas: Some(1),
+            max_fee_per_gas: Some(max_fee),
+            max_priority_fee_per_gas: Some(std::cmp::min(1, max_fee)),
             ..Default::default()
         };
 
-        let tx_hash = self.provider.send_transaction(tx).await?.watch().await?;
+        let pending = self.provider.send_transaction(tx).await?;
+        let tx_hash = *pending.tx_hash();
+        self.wait_for_receipt(tx_hash).await?;
         Ok(tx_hash)
+    }
+
+    /// Poll for a transaction receipt with a timeout.
+    async fn wait_for_receipt(&self, tx_hash: B256) -> anyhow::Result<()> {
+        let timeout = Duration::from_secs(60);
+        let poll_interval = Duration::from_millis(500);
+        let start = std::time::Instant::now();
+
+        loop {
+            if let Some(receipt) = self.provider.get_transaction_receipt(tx_hash).await? {
+                if !receipt.status() {
+                    anyhow::bail!("transaction {tx_hash} reverted");
+                }
+                return Ok(());
+            }
+            if start.elapsed() > timeout {
+                anyhow::bail!("timeout waiting for receipt of {tx_hash}");
+            }
+            tokio::time::sleep(poll_interval).await;
+        }
     }
 
     /// Get the current block number.

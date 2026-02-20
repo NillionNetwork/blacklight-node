@@ -1,3 +1,4 @@
+pub mod drain;
 pub mod factory;
 pub mod wallet;
 
@@ -16,6 +17,8 @@ pub enum CliCommand {
     Factory(factory::FactoryArgs),
     /// Send ETH/NIL and check balances
     Wallet(wallet::WalletArgs),
+    /// Drain ETH from a list of wallets back to a destination address
+    Drain(drain::DrainArgs),
 }
 
 pub async fn run(args: CliArgs) -> Result<()> {
@@ -23,5 +26,6 @@ pub async fn run(args: CliArgs) -> Result<()> {
     match args.command {
         CliCommand::Factory(args) => factory::run(args).await,
         CliCommand::Wallet(args) => wallet::run(args).await,
+        CliCommand::Drain(args) => drain::run(args).await,
     }
 }
