@@ -34,7 +34,11 @@ async fn main() -> Result<()> {
 
     // Load configuration
     let cli_args = CliArgs::parse();
-    let verifier = HtxVerifier::new(cli_args.artifact_cache.clone(), cli_args.cert_cache.clone())?;
+    let verifier = HtxVerifier::new(
+        cli_args.artifact_cache.clone(),
+        cli_args.cert_cache.clone(),
+        cli_args.cert_cache_domain.clone(),
+    )?;
     let config = NodeConfig::load(cli_args).await?;
 
     // Setup shutdown handler

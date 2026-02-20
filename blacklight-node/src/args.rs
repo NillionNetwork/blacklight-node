@@ -44,6 +44,10 @@ pub struct CliArgs {
     /// The path where AMD certificates will be cached.
     #[clap(short, long, default_value = default_cert_cache_path().into_os_string(), env = "CERT_CACHE")]
     pub cert_cache: PathBuf,
+
+    /// The domain used to fetch processor VCEK certificates from.
+    #[clap(long, default_value = "certs.nilcc.nillion.network")]
+    pub cert_cache_domain: String,
 }
 
 /// Node configuration with all required values resolved
