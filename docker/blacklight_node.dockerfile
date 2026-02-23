@@ -9,7 +9,7 @@ RUN apk add --no-cache musl-dev git pkgconf openssl-dev
 # Copy project files
 COPY Cargo.toml ./
 COPY crates ./crates
-COPY nilcc-simulator ./nilcc-simulator
+COPY simulator ./simulator
 COPY keeper ./keeper
 COPY blacklight-node ./blacklight-node
 COPY monitor ./monitor
