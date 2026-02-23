@@ -12,7 +12,7 @@ use alloy::{eips::BlockId, providers::Provider};
 use anyhow::Context;
 use std::sync::Arc;
 use tokio::{sync::Mutex, time::interval};
-use tracing::{debug, error, info};
+use tracing::{error, info};
 
 pub struct L2Supervisor {
     client: Arc<L2KeeperClient>,
@@ -121,25 +121,28 @@ impl L2Supervisor {
         loop {
             ticker.tick().await;
 
-            let block_timestamp = match self.client.provider().get_block(BlockId::latest()).await {
-                Ok(Some(block)) => {
-                    metrics::get().l2.escalations.set_block(block.header.number);
-                    block.header.timestamp
-                }
-                Ok(None) => {
-                    error!("No latest block found (is the chain working?)");
-                    continue;
-                }
-                Err(e) => {
-                    error!("Failed to fetch latest block: {e}");
-                    continue;
-                }
-            };
+            let (block, block_timestamp) =
+                match self.client.provider().get_block(BlockId::latest()).await {
+                    Ok(Some(block)) => {
+                        metrics::get().l2.escalations.set_block(block.header.number);
+                        (block.header.number, block.header.timestamp)
+                    }
+                    Ok(None) => {
+                        error!("No latest block found (is the chain working?)");
+                        continue;
+                    }
+                    Err(e) => {
+                        error!("Failed to fetch latest block: {e}");
+                        continue;
+                    }
+                };
+            info!("Processing block {block}");
 
             if let Err(e) = self.rewards_distributor.sync_state().await {
                 error!("Error syncing state: {e}");
             }
 
+            info!("Processing escalations for block {block}");
             if let Err(e) = self
                 .round_escalator
                 .process_escalations(block_timestamp)
@@ -148,10 +151,11 @@ impl L2Supervisor {
                 error!("Failed to process escalations: {e}");
             }
 
+            info!("Processing rounds for block {block}");
             self.process_rounds(block_timestamp).await;
 
             if let Some(ref responder) = erc8004_responder {
-                debug!("Tick: processing ERC-8004 validation responses");
+                info!("Processing ERC-8004 validation responses for block {block}");
                 if let Err(e) = responder.process_responses().await {
                     error!("Failed to process ERC-8004 validation responses: {e}");
                 }
@@ -176,6 +180,7 @@ impl L2Supervisor {
 
         {
             let state = self.state.lock().await;
+            info!("Keeping track of {} rounds", state.rounds.len());
             for (key, round) in state.rounds.iter() {
                 if let Some(outcome) = round.outcome {
                     if !round.rewards_done && !round.members.is_empty() {
@@ -188,10 +193,12 @@ impl L2Supervisor {
             }
         }
 
+        info!("Have {} reward jobs to process", reward_jobs.len());
         for (key, outcome, members) in reward_jobs {
             if outcome == 0 {
                 continue;
             }
+            info!("Distributing rewards for key {key:?}");
             if let Err(e) = self
                 .rewards_distributor
                 .distribute_rewards(block_timestamp, key, outcome, members)
@@ -201,6 +208,7 @@ impl L2Supervisor {
             }
         }
 
+        info!("Have {} jail jobs to process", jail_jobs.len());
         for (key, members) in jail_jobs {
             if let Err(e) = self.jailer.enforce(key, members).await {
                 error!(
