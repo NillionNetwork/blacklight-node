@@ -19,8 +19,8 @@ struct RoundKey {
 #[derive(Debug, Clone, Default)]
 struct RoundState {
     members: Vec<Address>,
-    raw_htx: Option<Bytes>,
-    deadline: Option<u64>,
+    raw_htx: Bytes,
+    deadline: u64,
     outcome: Option<u8>,
     rewards_done: bool,
     jailing_done: bool,
