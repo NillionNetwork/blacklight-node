@@ -54,7 +54,7 @@ use StakingOperators::StakingOperatorsInstance;
 #[derive(Clone)]
 pub struct StakingOperatorsClient<P: Provider + Clone> {
     contract: StakingOperatorsInstance<P>,
-    submitter: TransactionSubmitter<StakingOperators::StakingOperatorsErrors>,
+    submitter: TransactionSubmitter,
 }
 
 impl<P: Provider + Clone> StakingOperatorsClient<P> {
@@ -64,7 +64,7 @@ impl<P: Provider + Clone> StakingOperatorsClient<P> {
 
     pub fn at_address(provider: P, address: Address, tx_lock: Arc<Mutex<()>>) -> Self {
         let contract = StakingOperatorsInstance::new(address, provider.clone());
-        let submitter = TransactionSubmitter::new(tx_lock);
+        let submitter = TransactionSubmitter::new(tx_lock, crate::errors::blacklight_error_decoder);
 
         Self {
             contract,

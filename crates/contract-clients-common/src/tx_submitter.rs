@@ -1,28 +1,31 @@
+use crate::errors::{DecodedRevert, extract_revert_from_contract_error_with_custom};
 use crate::overestimate_gas;
 use alloy::{
-    consensus::Transaction, contract::CallBuilder, primitives::B256, providers::Provider,
-    rpc::types::TransactionReceipt, sol_types::SolInterface,
+    consensus::Transaction, contract::CallBuilder, primitives::{B256, Bytes}, providers::Provider,
+    rpc::types::TransactionReceipt,
 };
 use anyhow::{Result, bail};
-use std::fmt::Debug;
-use std::marker::PhantomData;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 
+/// A reusable error decoder function pointer.
+/// Takes raw ABI-encoded revert data and returns a decoded error if recognized.
+pub type ErrorDecoder = fn(&Bytes) -> Option<DecodedRevert>;
+
 #[derive(Clone)]
-pub struct TransactionSubmitter<S> {
+pub struct TransactionSubmitter {
     tx_lock: Arc<Mutex<()>>,
     gas_buffer: bool,
-    _decoder: PhantomData<S>,
+    decoder: ErrorDecoder,
 }
 
-impl<S: SolInterface + Debug + Clone> TransactionSubmitter<S> {
-    pub fn new(tx_lock: Arc<Mutex<()>>) -> Self {
+impl TransactionSubmitter {
+    pub fn new(tx_lock: Arc<Mutex<()>>, decoder: ErrorDecoder) -> Self {
         Self {
             tx_lock,
             gas_buffer: false,
-            _decoder: PhantomData,
+            decoder,
         }
     }
 
@@ -39,7 +42,7 @@ impl<S: SolInterface + Debug + Clone> TransactionSubmitter<S> {
 
         let (call, gas_limit) = match self.gas_buffer {
             true => {
-                let gas = overestimate_gas(&call).await?;
+                let gas = overestimate_gas(&call, self.decoder).await?;
                 (call.gas(gas), Some(gas))
             }
             false => (call, None),
@@ -104,10 +107,7 @@ impl<S: SolInterface + Debug + Clone> TransactionSubmitter<S> {
     }
 
     fn decode_error(&self, error: alloy::contract::Error) -> String {
-        match error.try_decode_into_interface_error::<S>() {
-            Ok(error) => format!("{error:?}"),
-            Err(error) => super::errors::decode_any_error(&error).to_string(),
-        }
+        extract_revert_from_contract_error_with_custom(&error, self.decoder).to_string()
     }
 
     async fn log_fee_details<P: Provider + Clone>(

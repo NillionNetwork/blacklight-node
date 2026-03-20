@@ -1,22 +1,19 @@
 use crate::{clients::L2KeeperClient, l2::KeeperState, metrics};
 use alloy::primitives::{B256, Bytes};
-use blacklight_contract_clients::heartbeat_manager::HeartbeatManagerErrors;
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
-
-use blacklight_contract_clients::errors::decode_blacklight_error;
 use contract_clients_common::tx_submitter::TransactionSubmitter;
 
 pub(crate) struct RoundEscalator {
     client: Arc<L2KeeperClient>,
     state: Arc<Mutex<KeeperState>>,
-    submitter: TransactionSubmitter<HeartbeatManagerErrors>,
+    submitter: TransactionSubmitter,
 }
 
 impl RoundEscalator {
     pub(crate) fn new(client: Arc<L2KeeperClient>, state: Arc<Mutex<KeeperState>>) -> Self {
-        let submitter = TransactionSubmitter::new(client.tx_lock());
+        let submitter = TransactionSubmitter::new(client.tx_lock(), blacklight_contract_clients::errors::blacklight_error_decoder);
         Self {
             client,
             state,
@@ -107,7 +104,7 @@ impl RoundEscalator {
                 Err(e) => {
                     warn!(
                         heartbeat_key = ?heartbeat_key,
-                        error = %decode_blacklight_error(&e),
+                        error = %e,
                         "Escalate/expire failed"
                     );
                 }
@@ -143,7 +140,7 @@ impl RoundEscalator {
                 Err(e) => {
                     warn!(
                         heartbeat_key = ?heartbeat_key,
-                        error = %decode_blacklight_error(&e),
+                        error = %e,
                         "Escalate/expire failed"
                     );
                 }

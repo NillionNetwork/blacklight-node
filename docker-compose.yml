@@ -2,7 +2,7 @@ services:
   # Anvil - Local Ethereum testnet
   anvil:
     image: nilanvil:latest
-    container_name: blacklight-anvil
+    container_name: anvil
     ports:
       - "8545:8545"
     networks:

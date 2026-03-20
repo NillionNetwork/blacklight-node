@@ -6,7 +6,7 @@ use alloy::{
 use anyhow::Result;
 use contract_clients_common::event_helper::listen_events;
 use contract_clients_common::tx_submitter::TransactionSubmitter;
-use std::{convert::Infallible, sync::Arc};
+use std::sync::Arc;
 use tokio::sync::Mutex;
 
 // Generate type-safe contract bindings from ABI
@@ -37,7 +37,7 @@ use crate::ContractConfig;
 #[derive(Clone)]
 pub struct NilTokenClient<P: Provider + Clone> {
     contract: NilTokenInstance<P>,
-    submitter: TransactionSubmitter<Infallible>,
+    submitter: TransactionSubmitter,
 }
 
 impl<P: Provider + Clone> NilTokenClient<P> {
@@ -45,7 +45,7 @@ impl<P: Provider + Clone> NilTokenClient<P> {
     pub fn new(provider: P, config: ContractConfig, tx_lock: Arc<Mutex<()>>) -> Self {
         let contract_address = config.token_contract_address;
         let contract = NilTokenInstance::new(contract_address, provider.clone());
-        let submitter = TransactionSubmitter::new(tx_lock);
+        let submitter = TransactionSubmitter::new(tx_lock, crate::errors::blacklight_error_decoder);
         Self {
             contract,
             submitter,

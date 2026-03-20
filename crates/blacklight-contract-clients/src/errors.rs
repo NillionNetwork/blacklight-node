@@ -156,9 +156,3 @@ pub fn blacklight_error_decoder(data: &Bytes) -> Option<DecodedRevert> {
         .map(|err| DecodedRevert::CustomError(format!("{err:?}")))
 }
 
-/// Decode any error using all known Blacklight contract errors.
-pub fn decode_blacklight_error<E: std::fmt::Display + std::fmt::Debug>(
-    error: &E,
-) -> DecodedRevert {
-    contract_clients_common::errors::decode_any_error_with_custom(error, blacklight_error_decoder)
-}

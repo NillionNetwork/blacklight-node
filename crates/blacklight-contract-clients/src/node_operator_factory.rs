@@ -4,7 +4,6 @@ use alloy::{
     sol,
 };
 use anyhow::Result;
-use crate::errors::BlacklightErrors;
 use contract_clients_common::tx_submitter::TransactionSubmitter;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -92,13 +91,13 @@ use NodeOperatorFactory::NodeOperatorFactoryInstance;
 #[derive(Clone)]
 pub struct NodeOperatorFactoryClient<P: Provider + Clone> {
     contract: NodeOperatorFactoryInstance<P>,
-    submitter: TransactionSubmitter<BlacklightErrors>,
+    submitter: TransactionSubmitter,
 }
 
 impl<P: Provider + Clone> NodeOperatorFactoryClient<P> {
     pub fn new(provider: P, address: Address, tx_lock: Arc<Mutex<()>>) -> Self {
         let contract = NodeOperatorFactoryInstance::new(address, provider);
-        let submitter = TransactionSubmitter::new(tx_lock);
+        let submitter = TransactionSubmitter::new(tx_lock, crate::errors::blacklight_error_decoder);
         Self {
             contract,
             submitter,
