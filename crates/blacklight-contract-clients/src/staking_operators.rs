@@ -42,6 +42,7 @@ sol!(
         function registerOperator(string calldata metadataURI) external override whenNotPaused;
         function deactivateOperator() external override whenNotPaused;
         function reactivateOperator() external override whenNotPaused;
+        function approveStaker(address staker) external;
         function requestUnstake(address operator, uint256 amount) external override nonReentrant whenNotPaused;
         function withdrawUnstaked(address operator) external override nonReentrant whenNotPaused;
     }
@@ -58,8 +59,11 @@ pub struct StakingOperatorsClient<P: Provider + Clone> {
 
 impl<P: Provider + Clone> StakingOperatorsClient<P> {
     pub fn new(provider: P, config: ContractConfig, tx_lock: Arc<Mutex<()>>) -> Self {
-        let contract =
-            StakingOperatorsInstance::new(config.staking_contract_address, provider.clone());
+        Self::at_address(provider, config.staking_contract_address, tx_lock)
+    }
+
+    pub fn at_address(provider: P, address: Address, tx_lock: Arc<Mutex<()>>) -> Self {
+        let contract = StakingOperatorsInstance::new(address, provider.clone());
         let submitter = TransactionSubmitter::new(tx_lock);
 
         Self {
@@ -174,5 +178,11 @@ impl<P: Provider + Clone> StakingOperatorsClient<P> {
     pub async fn deactivate_operator(&self) -> Result<B256> {
         let call = self.contract.deactivateOperator();
         self.submitter.invoke("deactivateOperator", call).await
+    }
+
+    /// Approves a staker address for this operator
+    pub async fn approve_staker(&self, staker: Address) -> Result<B256> {
+        let call = self.contract.approveStaker(staker);
+        self.submitter.invoke("approveStaker", call).await
     }
 }

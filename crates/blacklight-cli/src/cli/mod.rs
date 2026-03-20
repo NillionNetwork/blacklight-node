@@ -3,13 +3,6 @@ pub mod factory;
 pub mod wallet;
 
 use anyhow::Result;
-use clap::Args;
-
-#[derive(Args, Debug)]
-pub struct CliArgs {
-    #[command(subcommand)]
-    pub command: CliCommand,
-}
 
 #[derive(clap::Subcommand, Debug)]
 pub enum CliCommand {
@@ -21,9 +14,8 @@ pub enum CliCommand {
     Drain(drain::DrainArgs),
 }
 
-pub async fn run(args: CliArgs) -> Result<()> {
-    dotenv::from_filename("simulator.env").ok();
-    match args.command {
+pub async fn run(command: CliCommand) -> Result<()> {
+    match command {
         CliCommand::Factory(args) => factory::run(args).await,
         CliCommand::Wallet(args) => wallet::run(args).await,
         CliCommand::Drain(args) => drain::run(args).await,

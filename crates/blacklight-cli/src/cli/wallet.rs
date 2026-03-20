@@ -1,7 +1,7 @@
 use alloy::{
     primitives::{
-        Address, U256,
         utils::{format_ether, format_units, parse_ether, parse_units},
+        Address, U256,
     },
     sol,
 };
@@ -61,7 +61,7 @@ fn parse_address(s: &str) -> Result<Address> {
         .with_context(|| format!("invalid address: {s}"))
 }
 
-fn load_ctx() -> Result<ProviderContext> {
+async fn load_ctx() -> Result<ProviderContext> {
     let rpc_url = std::env::var("RPC_URL").context("RPC_URL not set (env or .env)")?;
     let private_key = std::env::var("PRIVATE_KEY").context("PRIVATE_KEY not set (env or .env)")?;
     ProviderContext::new_http(&rpc_url, &private_key).context("failed to create provider context")
@@ -73,7 +73,7 @@ fn load_addresses(path: &PathBuf) -> Result<Vec<Address>> {
         .lines()
         .map(|l| l.trim())
         .filter(|l| !l.is_empty() && !l.starts_with('#'))
-        .map(|l| parse_address(l))
+        .map(parse_address)
         .collect()
 }
 
@@ -85,7 +85,7 @@ fn load_nil_token_address() -> Result<Address> {
 }
 
 pub async fn run(args: WalletArgs) -> Result<()> {
-    let ctx = load_ctx()?;
+    let ctx = load_ctx().await?;
     let provider = ctx.provider();
     let my_address = ctx.signer_address();
 
@@ -138,7 +138,10 @@ pub async fn run(args: WalletArgs) -> Result<()> {
             println!("Balance:     {} ETH", format_ether(sender_balance));
             println!("Amount each: {} ETH", format_ether(amount));
             println!("Recipients:  {}", addresses.len());
-            println!("Total needed: {} ETH (excluding gas)", format_ether(total_needed));
+            println!(
+                "Total needed: {} ETH (excluding gas)",
+                format_ether(total_needed)
+            );
             println!();
 
             let mut success_count = 0u64;

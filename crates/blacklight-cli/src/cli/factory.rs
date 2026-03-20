@@ -1,15 +1,15 @@
 use alloy::{
     network::EthereumWallet,
     primitives::{
+        utils::{format_ether, format_units, parse_ether, parse_units},
         Address, U256,
-        utils::{format_units, parse_units},
     },
     providers::{DynProvider, Provider, ProviderBuilder},
     signers::local::PrivateKeySigner,
     sol,
 };
 use anyhow::{Context, Result};
-use blacklight_contract_clients::NodeOperatorFactoryClient;
+use blacklight_contract_clients::{NodeOperatorFactoryClient, StakingOperatorsClient};
 use clap::Args;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -37,10 +37,8 @@ pub enum FactoryCommand {
     SetStakingOperators { address: String },
     /// Set the RewardPolicy contract address
     SetRewardPolicy { address: String },
-    /// Set the staking token address
-    SetStakingToken { address: String },
-    /// Set the reward token address
-    SetRewardToken { address: String },
+    /// Set the token address
+    SetToken { address: String },
     /// Set the default mode fee in basis points (withdraw_bps restake_bps)
     SetDefaultModeFeeBps {
         withdraw_bps: String,
@@ -56,6 +54,36 @@ pub enum FactoryCommand {
     SetMinStake { amount: String },
 
     // ── Node management ──────────────────────────────
+    /// Prepare a node to run: predict operator, approve staker, send ETH, and add to factory.
+    /// The node private key is passed via CLI or read from a file; the funder/owner key comes from PRIVATE_KEY in env.
+    PrepareNode {
+        /// Node's private key (hex, e.g. 0xabc...)
+        #[arg(
+            long,
+            conflicts_with = "node_private_key_file",
+            required_unless_present = "node_private_key_file"
+        )]
+        node_private_key: Option<String>,
+        /// Path to a file containing the node's private key
+        #[arg(
+            long,
+            value_name = "PATH",
+            conflicts_with = "node_private_key",
+            required_unless_present = "node_private_key"
+        )]
+        node_private_key_file: Option<String>,
+        /// Amount of ETH to send to the node (e.g. "0.1")
+        #[arg(long)]
+        eth_amount: String,
+    },
+    /// Predict the operator address that will be deployed for a node
+    PredictOperator { node: String },
+    /// Pre-approve predicted operators for nodes (requires node private keys).
+    ApproveNodes {
+        /// Path to a file with node private keys (one hex key per line)
+        #[arg(long)]
+        file: String,
+    },
     /// Add a node to the factory
     AddNode { node: String },
     /// Add multiple nodes to the factory (inline or from file)
@@ -139,34 +167,62 @@ impl Env {
     }
 }
 
-fn build_provider(env: &Env) -> Result<DynProvider> {
-    let signer: PrivateKeySigner = env
-        .private_key
+fn build_provider(rpc_url: &str, private_key: &str) -> Result<(DynProvider, Address)> {
+    let signer: PrivateKeySigner = private_key
         .parse::<PrivateKeySigner>()
-        .context("invalid PRIVATE_KEY")?;
+        .context("invalid private key")?;
+    let signer_address = signer.address();
     let wallet = EthereumWallet::from(signer);
 
     let provider: DynProvider = ProviderBuilder::new()
         .wallet(wallet)
-        .with_simple_nonce_management()
-        .with_gas_estimation()
-        .connect_http(env.rpc_url.parse().context("invalid RPC_URL")?)
+        .connect_http(rpc_url.parse().context("invalid RPC_URL")?)
         .erased();
 
-    Ok(provider)
+    Ok((provider, signer_address))
+}
+
+fn read_private_keys_from_file(file: &str) -> Result<Vec<String>> {
+    let content =
+        std::fs::read_to_string(file).with_context(|| format!("failed to read file: {file}"))?;
+    let keys = content
+        .lines()
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .collect();
+    Ok(keys)
+}
+
+fn resolve_prepare_node_private_key(
+    node_private_key: Option<String>,
+    node_private_key_file: Option<String>,
+) -> Result<String> {
+    match (node_private_key, node_private_key_file) {
+        (Some(key), None) => Ok(key),
+        (None, Some(file)) => {
+            let keys = read_private_keys_from_file(&file)?;
+            match keys.as_slice() {
+                [] => anyhow::bail!("no private key found in file"),
+                [key] => Ok(key.clone()),
+                _ => anyhow::bail!("expected exactly one private key in file"),
+            }
+        }
+        _ => anyhow::bail!("provide exactly one of --node-private-key or --node-private-key-file"),
+    }
 }
 
 pub async fn run(args: FactoryArgs) -> Result<()> {
     let env = Env::load()?;
-    let provider = build_provider(&env)?;
+    let (provider, _my_address) = build_provider(&env.rpc_url, &env.private_key)?;
     let tx_lock = Arc::new(Mutex::new(()));
-    let factory = NodeOperatorFactoryClient::new(provider.clone(), env.factory_address, tx_lock);
+    let factory =
+        NodeOperatorFactoryClient::new(provider.clone(), env.factory_address, tx_lock.clone());
 
     match args.command {
         FactoryCommand::Status => {
-            // ── Factory config ────────────────────────────
-            println!("Factory:            {}", env.factory_address);
-            println!("RPC URL:            {}", env.rpc_url);
+            println!("=== Factory Status ===\n");
+            println!("  Factory:  {}", env.factory_address);
+            println!("  RPC URL:  {}", env.rpc_url);
 
             let has_code = provider
                 .get_code_at(env.factory_address)
@@ -175,32 +231,33 @@ pub async fn run(args: FactoryArgs) -> Result<()> {
                 .unwrap_or(false);
 
             if !has_code {
-                println!("\n(no contract deployed at factory address)");
+                println!("\n  (no contract deployed at factory address)");
                 return Ok(());
             }
+
+            println!();
 
             macro_rules! query {
                 ($label:expr, $call:expr) => {
                     match $call.await {
-                        Ok(v) => println!("{:<20}{v}", concat!($label, ":")),
-                        Err(e) => println!("{:<20}(error: {e})", concat!($label, ":")),
+                        Ok(v) => println!("  {:<20}{v}", concat!($label, ":")),
+                        Err(e) => println!("  {:<20}(error: {e})", concat!($label, ":")),
                     }
                 };
             }
             query!("StakingOperators", factory.staking_operators());
             query!("RewardPolicy", factory.reward_policy());
-            query!("StakingToken", factory.staking_token());
-            query!("RewardToken", factory.reward_token());
+            query!("Token", factory.token());
             query!("WithdrawFeeBps", factory.default_withdraw_fee_bps());
             query!("RestakeFeeBps", factory.default_restake_fee_bps());
 
             match factory.min_stake().await {
                 Ok(v) => println!(
-                    "{:<20}{} NIL",
+                    "  {:<20}{} NIL",
                     "MinStake:",
                     format_units(v, 6).unwrap_or_else(|_| format!("{v}"))
                 ),
-                Err(e) => println!("{:<20}(error: {e})", "MinStake:"),
+                Err(e) => println!("  {:<20}(error: {e})", "MinStake:"),
             }
 
             // ── Node table ───────────────────────────────
@@ -212,23 +269,23 @@ pub async fn run(args: FactoryArgs) -> Result<()> {
                 .map(|c| format!("{c}"))
                 .unwrap_or_else(|_| "?".to_string());
 
-            println!("\nNodes: {total} total, {free_count} free\n");
+            println!("\n=== Nodes ({total} total, {free_count} free) ===\n");
 
             if nodes.is_empty() {
                 println!("  (no nodes registered)");
             } else {
                 println!(
-                    "  {:<4} {:<44} {:<44} {:<44} {:<10} {:<14} {:<14} {}",
+                    "  {:<4} {:<44} {:<44} {:<44} {:<10} {:<18} {:<12} {:<12} Behavior",
                     "#",
                     "Node",
                     "Operator",
                     "User",
                     "Status",
-                    "WithdrawBps",
-                    "RestakeBps",
-                    "Behavior"
+                    "ETH Balance",
+                    "WdrawBps",
+                    "RstakeBps",
                 );
-                println!("  {}", "-".repeat(190));
+                println!("  {}", "-".repeat(200));
 
                 for (i, node) in nodes.iter().enumerate() {
                     let operator_addr = factory
@@ -241,17 +298,21 @@ pub async fn run(args: FactoryArgs) -> Result<()> {
                     let user = fmt_addr(user_addr);
                     let status = if free { "free" } else { "assigned" };
 
-                    // Fetch per-operator fee bps
-                    let (withdraw_bps, restake_bps) = if operator_addr != Address::ZERO {
+                    let eth_balance = match provider.get_balance(*node).await {
+                        Ok(b) => format!("{} ETH", format_ether(b)),
+                        Err(_) => "?".to_string(),
+                    };
+
+                    let (wb, rb) = if operator_addr != Address::ZERO {
                         factory
                             .operator_mode_fee_bps(operator_addr)
                             .await
-                            .unwrap_or((U256::ZERO, U256::ZERO))
+                            .map(|(w, r)| (format!("{w}"), format!("{r}")))
+                            .unwrap_or_else(|_| ("?".to_string(), "?".to_string()))
                     } else {
-                        (U256::ZERO, U256::ZERO)
+                        ("-".to_string(), "-".to_string())
                     };
 
-                    // Fetch reward behavior for assigned users
                     let behavior = if !free && user_addr != Address::ZERO {
                         match factory.my_reward_behavior(user_addr).await {
                             Ok(0) => "Withdraw",
@@ -264,14 +325,15 @@ pub async fn run(args: FactoryArgs) -> Result<()> {
                     };
 
                     println!(
-                        "  {:<4} {:<44} {:<44} {:<44} {:<10} {:<14} {:<14} {}",
+                        "  {:<4} {:<44} {:<44} {:<44} {:<10} {:<18} {:<12} {:<12} {}",
                         i + 1,
                         node,
                         operator,
                         user,
                         status,
-                        withdraw_bps,
-                        restake_bps,
+                        eth_balance,
+                        wb,
+                        rb,
                         behavior
                     );
                 }
@@ -289,14 +351,9 @@ pub async fn run(args: FactoryArgs) -> Result<()> {
             let tx = factory.set_reward_policy(addr).await?;
             println!("tx: {tx}");
         }
-        FactoryCommand::SetStakingToken { address } => {
+        FactoryCommand::SetToken { address } => {
             let addr = parse_address(&address)?;
-            let tx = factory.set_staking_token(addr).await?;
-            println!("tx: {tx}");
-        }
-        FactoryCommand::SetRewardToken { address } => {
-            let addr = parse_address(&address)?;
-            let tx = factory.set_reward_token(addr).await?;
+            let tx = factory.set_token(addr).await?;
             println!("tx: {tx}");
         }
         FactoryCommand::SetDefaultModeFeeBps {
@@ -328,6 +385,79 @@ pub async fn run(args: FactoryArgs) -> Result<()> {
         }
 
         // ── Node management ──────────────────────────
+        FactoryCommand::PrepareNode {
+            node_private_key,
+            node_private_key_file,
+            eth_amount,
+        } => {
+            let eth = parse_ether(&eth_amount)
+                .with_context(|| format!("invalid ETH amount: {eth_amount}"))?;
+            let node_private_key =
+                resolve_prepare_node_private_key(node_private_key, node_private_key_file)?;
+
+            // 1. Derive node address from private key
+            let (node_provider, node_addr) = build_provider(&env.rpc_url, &node_private_key)?;
+            println!("Node address:       {node_addr}");
+
+            // 2. Predict operator address
+            let predicted = factory.predict_node_operator_address(node_addr).await?;
+            println!("Predicted operator: {predicted}");
+
+            // 3. Send ETH to the node (so it can pay gas for approveStaker)
+            let ctx = contract_clients_common::ProviderContext::new(&env.rpc_url, &env.private_key)
+                .await
+                .context("failed to create provider context")?;
+            let send_tx = ctx.send_eth(node_addr, eth).await?;
+            println!(
+                "send-eth tx:        {send_tx} ({} ETH -> {node_addr})",
+                format_ether(eth)
+            );
+
+            // 4. Approve staker (signed by the node)
+            let staking_ops_addr = factory.staking_operators().await?;
+            let node_tx_lock = Arc::new(Mutex::new(()));
+            let staking_ops =
+                StakingOperatorsClient::at_address(node_provider, staking_ops_addr, node_tx_lock);
+            let approve_tx = staking_ops.approve_staker(predicted).await?;
+            println!("approve-staker tx:  {approve_tx}");
+
+            // 5. Add node to factory (from the owner wallet)
+            let add_tx = factory.add_node(node_addr).await?;
+            println!("add-node tx:        {add_tx}");
+
+            println!("\nNode {node_addr} is ready.");
+        }
+        FactoryCommand::PredictOperator { node } => {
+            let addr = parse_address(&node)?;
+            let predicted = factory.predict_node_operator_address(addr).await?;
+            println!("Node:               {addr}");
+            println!("Predicted operator: {predicted}");
+        }
+        FactoryCommand::ApproveNodes { file } => {
+            let keys = read_private_keys_from_file(&file)?;
+            if keys.is_empty() {
+                anyhow::bail!("no private keys found in file");
+            }
+
+            let staking_ops_addr = factory.staking_operators().await?;
+            println!("StakingOperators:   {staking_ops_addr}");
+            println!("Approving {} nodes ...\n", keys.len());
+
+            for key_str in &keys {
+                let (node_provider, node_addr) = build_provider(&env.rpc_url, key_str)?;
+                let predicted = factory.predict_node_operator_address(node_addr).await?;
+
+                let node_tx_lock = Arc::new(Mutex::new(()));
+                let staking_ops = StakingOperatorsClient::at_address(
+                    node_provider,
+                    staking_ops_addr,
+                    node_tx_lock,
+                );
+                let tx = staking_ops.approve_staker(predicted).await?;
+                println!("  node {node_addr} -> operator {predicted}  tx: {tx}");
+            }
+            println!("\nDone. You can now run add-node / add-nodes.");
+        }
         FactoryCommand::AddNode { node } => {
             let addr = parse_address(&node)?;
             let tx = factory.add_node(addr).await?;
@@ -382,8 +512,8 @@ pub async fn run(args: FactoryArgs) -> Result<()> {
         // ── Staking ──────────────────────────────────
         FactoryCommand::Stake { amount } => {
             let amount = parse_nil(&amount)?;
-            let staking_token = factory.staking_token().await?;
-            let erc20 = IERC20::new(staking_token, provider);
+            let staking_token = factory.token().await?;
+            let erc20 = IERC20::new(staking_token, &provider);
             let approve_tx = erc20
                 .approve(env.factory_address, amount)
                 .send()

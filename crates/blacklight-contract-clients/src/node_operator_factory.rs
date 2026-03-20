@@ -34,8 +34,7 @@ sol!(
         // Public state getters
         function stakingOperators() external view returns (address);
         function rewardPolicy() external view returns (address);
-        function stakingToken() external view returns (address);
-        function rewardToken() external view returns (address);
+        function token() external view returns (address);
         function defaultWithdrawFeeBps() external view returns (uint256);
         function defaultRestakeFeeBps() external view returns (uint256);
         function minStake() external view returns (uint256);
@@ -49,8 +48,7 @@ sol!(
         // Config setters (onlyOwner)
         function setStakingOperators(address addr) external;
         function setRewardPolicy(address addr) external;
-        function setStakingToken(address addr) external;
-        function setRewardToken(address addr) external;
+        function setToken(address addr) external;
         function setDefaultModeFeeBps(uint256 withdrawBps, uint256 restakeBps) external;
         function setOperatorModeFeeBps(address operatorAddr, uint256 withdrawBps, uint256 restakeBps) external;
         function setMinStake(uint256 newMinStake) external;
@@ -82,6 +80,7 @@ sol!(
         function nodeToOperator(address node) external view returns (address);
         function myRewardBehavior(address user) external view returns (uint8);
         function operatorModeFeeBps(address operatorAddr) external view returns (uint256 withdrawBps, uint256 restakeBps);
+        function predictNodeOperatorAddress(address node) external view returns (address);
     }
 );
 
@@ -121,12 +120,8 @@ impl<P: Provider + Clone> NodeOperatorFactoryClient<P> {
         Ok(self.contract.rewardPolicy().call().await?)
     }
 
-    pub async fn staking_token(&self) -> Result<Address> {
-        Ok(self.contract.stakingToken().call().await?)
-    }
-
-    pub async fn reward_token(&self) -> Result<Address> {
-        Ok(self.contract.rewardToken().call().await?)
+    pub async fn token(&self) -> Result<Address> {
+        Ok(self.contract.token().call().await?)
     }
 
     pub async fn default_withdraw_fee_bps(&self) -> Result<U256> {
@@ -194,6 +189,14 @@ impl<P: Provider + Clone> NodeOperatorFactoryClient<P> {
         Ok((result.withdrawBps, result.restakeBps))
     }
 
+    pub async fn predict_node_operator_address(&self, node: Address) -> Result<Address> {
+        Ok(self
+            .contract
+            .predictNodeOperatorAddress(node)
+            .call()
+            .await?)
+    }
+
     // ------------------------------------------------------------------------
     // Owner Config Functions
     // ------------------------------------------------------------------------
@@ -208,14 +211,9 @@ impl<P: Provider + Clone> NodeOperatorFactoryClient<P> {
         self.submitter.invoke("setRewardPolicy", call).await
     }
 
-    pub async fn set_staking_token(&self, addr: Address) -> Result<B256> {
-        let call = self.contract.setStakingToken(addr);
-        self.submitter.invoke("setStakingToken", call).await
-    }
-
-    pub async fn set_reward_token(&self, addr: Address) -> Result<B256> {
-        let call = self.contract.setRewardToken(addr);
-        self.submitter.invoke("setRewardToken", call).await
+    pub async fn set_token(&self, addr: Address) -> Result<B256> {
+        let call = self.contract.setToken(addr);
+        self.submitter.invoke("setToken", call).await
     }
 
     pub async fn set_default_mode_fee_bps(

@@ -2,7 +2,6 @@ use anyhow::Result;
 use clap::Parser;
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
-mod cli;
 mod common;
 mod erc8004;
 mod nilcc;
@@ -21,8 +20,6 @@ enum Command {
     Nilcc(nilcc::NilccArgs),
     /// Register agents and submit ERC-8004 validation requests
     Erc8004(erc8004::Erc8004Args),
-    /// One-shot CLI commands for interacting with contracts
-    Cli(cli::CliArgs),
 }
 
 fn init_tracing() {
@@ -40,6 +37,5 @@ async fn main() -> Result<()> {
     match cli.command {
         Command::Nilcc(args) => common::run_simulator::<nilcc::NilccSimulator>(args).await,
         Command::Erc8004(args) => common::run_simulator::<erc8004::Erc8004Simulator>(args).await,
-        Command::Cli(args) => cli::run(args).await,
     }
 }
