@@ -4,7 +4,7 @@ use crate::{
 };
 use alloy::primitives::Address;
 use anyhow::bail;
-use contract_clients_common::errors::decode_any_error;
+use blacklight_contract_clients::errors::decode_blacklight_error;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{info, warn};
@@ -39,7 +39,7 @@ impl Jailer {
             warn!(
                 heartbeat_key = ?key.heartbeat_key,
                 round = key.round,
-                error = %decode_any_error(&e),
+                error = %decode_blacklight_error(&e),
                 "Failed to record round in jailing policy"
             );
         }
@@ -64,7 +64,7 @@ impl Jailer {
                 Ok(())
             }
             Err(e) => {
-                bail!("Failed to enforce failing: {}", decode_any_error(&e))
+                bail!("Failed to enforce failing: {}", decode_blacklight_error(&e))
             }
         }
     }

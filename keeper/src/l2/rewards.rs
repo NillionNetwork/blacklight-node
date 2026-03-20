@@ -9,7 +9,7 @@ use blacklight_contract_clients::{
     ProtocolConfig::ProtocolConfigInstance, heartbeat_manager::HeartbeatManagerErrors,
 };
 
-use contract_clients_common::errors::decode_any_error;
+use blacklight_contract_clients::errors::decode_blacklight_error;
 use contract_clients_common::tx_submitter::TransactionSubmitter;
 
 use std::sync::Arc;
@@ -214,7 +214,7 @@ impl RewardsDistributor {
                 );
             }
             Err(e) => {
-                warn!("Reward policy sync failed: {}", decode_any_error(&e));
+                warn!("Reward policy sync failed: {}", decode_blacklight_error(&e));
                 return Ok(false);
             }
         }

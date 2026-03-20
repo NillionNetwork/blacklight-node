@@ -4,7 +4,7 @@ use alloy::{
     sol,
 };
 use anyhow::Result;
-use contract_clients_common::errors::AllErrorsErrors;
+use crate::errors::BlacklightErrors;
 use contract_clients_common::tx_submitter::TransactionSubmitter;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -19,10 +19,12 @@ sol!(
         error InvalidNodeOperator();
         error NoFreeNodeOperator();
         error NodeAlreadyRegistered();
-        error NodeNotRegistered();
-        error NodeCurrentlyAssigned();
         error FactoryNotConfigured();
         error InsufficientFees();
+        error FeeTooHigh();
+        error TokenMismatch();
+        error StakerNotPreapproved();
+        error StakingOperatorsQueryFailed();
 
         // Events
         event NodeOperatorCreated(address indexed node, address indexed nodeOperator);
@@ -90,7 +92,7 @@ use NodeOperatorFactory::NodeOperatorFactoryInstance;
 #[derive(Clone)]
 pub struct NodeOperatorFactoryClient<P: Provider + Clone> {
     contract: NodeOperatorFactoryInstance<P>,
-    submitter: TransactionSubmitter<AllErrorsErrors>,
+    submitter: TransactionSubmitter<BlacklightErrors>,
 }
 
 impl<P: Provider + Clone> NodeOperatorFactoryClient<P> {

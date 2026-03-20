@@ -1,6 +1,7 @@
 use alloy::primitives::Address;
 
 pub mod blacklight_client;
+pub mod errors;
 pub mod heartbeat_manager;
 pub mod htx;
 pub mod nil_token;
