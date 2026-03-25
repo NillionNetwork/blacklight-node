@@ -9,7 +9,7 @@ use alloy::{
     sol,
 };
 use anyhow::{Context, Result};
-use blacklight_contract_clients::{NodeOperatorFactoryClient, StakingOperatorsClient};
+use blacklight_contract_clients::{FactoryManagerClient, StakingOperatorsClient};
 use clap::Args;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -33,12 +33,12 @@ pub enum FactoryCommand {
     Status,
 
     // ── Owner config ──────────────────────────────────
-    /// Set the StakingOperators contract address
-    SetStakingOperators { address: String },
-    /// Set the RewardPolicy contract address
-    SetRewardPolicy { address: String },
-    /// Set the token address
-    SetToken { address: String },
+    /// Atomically update staking operators, reward policy, and token addresses
+    SetDependencies {
+        staking_operators: String,
+        reward_policy: String,
+        token: String,
+    },
     /// Set the default mode fee in basis points (withdraw_bps restake_bps)
     SetDefaultModeFeeBps {
         withdraw_bps: String,
@@ -76,6 +76,16 @@ pub enum FactoryCommand {
         #[arg(long)]
         eth_amount: String,
     },
+    /// Prepare multiple nodes from a file of private keys (one per line).
+    /// Runs the full prepare-node flow for each key: predict operator, send ETH, approve staker, add to factory.
+    PrepareNodes {
+        /// Path to a file with node private keys (one hex key per line)
+        #[arg(long)]
+        keys_file: String,
+        /// Amount of ETH to send to each node (e.g. "0.1")
+        #[arg(long)]
+        eth_amount: String,
+    },
     /// Predict the operator address that will be deployed for a node
     PredictOperator { node: String },
     /// Pre-approve predicted operators for nodes (requires node private keys).
@@ -94,8 +104,19 @@ pub enum FactoryCommand {
         #[arg(long)]
         file: Option<String>,
     },
-    /// Remove a node from the factory
-    RemoveNode { node: String },
+    /// Migrate a node operator to a new owner
+    MigrateOperator { operator: String, new_owner: String },
+    /// Sync a single operator's config with the factory
+    SyncOperatorConfig { operator: String },
+    /// Sync all operators' configs with the factory
+    SyncAllOperatorConfigs,
+    /// Rescue stranded ERC-20 tokens from a NodeOperator
+    RescueOperatorTokens {
+        operator: String,
+        rescue_token: String,
+        to: String,
+        amount: String,
+    },
 
     // ── Rewards ──────────────────────────────────────
     /// Harvest rewards for a specific operator
@@ -193,6 +214,43 @@ fn read_private_keys_from_file(file: &str) -> Result<Vec<String>> {
     Ok(keys)
 }
 
+/// Core logic shared by `PrepareNode` and `PrepareNodes`.
+async fn prepare_single_node(
+    rpc_url: &str,
+    client: &FactoryManagerClient,
+    node_private_key: &str,
+    eth: U256,
+    label: &str,
+) -> Result<()> {
+    // 1. Derive node address from private key
+    let (node_provider, node_addr) = build_provider(rpc_url, node_private_key)?;
+    println!("{label}Node address:       {node_addr}");
+
+    // 2. Predict operator address
+    let predicted = client.factory.predict_node_operator_address(node_addr).await?;
+    println!("{label}Predicted operator: {predicted}");
+
+    // 3. Send ETH to the node (shared provider — no nonce conflict)
+    let send_tx = client.send_eth(node_addr, eth).await?;
+    println!(
+        "{label}send-eth tx:        {send_tx} ({} ETH -> {node_addr})",
+        format_ether(eth)
+    );
+
+    // 4. Approve staker (signed by the node — separate wallet, separate nonce)
+    let node_tx_lock = Arc::new(Mutex::new(()));
+    let staking_ops =
+        StakingOperatorsClient::at_address(node_provider, client.staking.address(), node_tx_lock);
+    let approve_tx = staking_ops.approve_staker(predicted).await?;
+    println!("{label}approve-staker tx:  {approve_tx}");
+
+    // 5. Add node to factory (from the owner wallet)
+    let add_tx = client.factory.add_node(node_addr).await?;
+    println!("{label}add-node tx:        {add_tx}");
+
+    Ok(())
+}
+
 fn resolve_prepare_node_private_key(
     node_private_key: Option<String>,
     node_private_key_file: Option<String>,
@@ -213,10 +271,11 @@ fn resolve_prepare_node_private_key(
 
 pub async fn run(args: FactoryArgs) -> Result<()> {
     let env = Env::load()?;
-    let (provider, _my_address) = build_provider(&env.rpc_url, &env.private_key)?;
-    let tx_lock = Arc::new(Mutex::new(()));
-    let factory =
-        NodeOperatorFactoryClient::new(provider.clone(), env.factory_address, tx_lock.clone());
+    let client = FactoryManagerClient::new(&env.rpc_url, &env.private_key, env.factory_address)
+        .await
+        .context("failed to create factory manager client")?;
+    let factory = &client.factory;
+    let provider = client.ctx().provider();
 
     match args.command {
         FactoryCommand::Status => {
@@ -341,19 +400,15 @@ pub async fn run(args: FactoryArgs) -> Result<()> {
         }
 
         // ── Owner config ──────────────────────────────
-        FactoryCommand::SetStakingOperators { address } => {
-            let addr = parse_address(&address)?;
-            let tx = factory.set_staking_operators(addr).await?;
-            println!("tx: {tx}");
-        }
-        FactoryCommand::SetRewardPolicy { address } => {
-            let addr = parse_address(&address)?;
-            let tx = factory.set_reward_policy(addr).await?;
-            println!("tx: {tx}");
-        }
-        FactoryCommand::SetToken { address } => {
-            let addr = parse_address(&address)?;
-            let tx = factory.set_token(addr).await?;
+        FactoryCommand::SetDependencies {
+            staking_operators,
+            reward_policy,
+            token,
+        } => {
+            let staking_ops = parse_address(&staking_operators)?;
+            let reward = parse_address(&reward_policy)?;
+            let tok = parse_address(&token)?;
+            let tx = factory.set_dependencies(staking_ops, reward, tok).await?;
             println!("tx: {tx}");
         }
         FactoryCommand::SetDefaultModeFeeBps {
@@ -395,37 +450,42 @@ pub async fn run(args: FactoryArgs) -> Result<()> {
             let node_private_key =
                 resolve_prepare_node_private_key(node_private_key, node_private_key_file)?;
 
-            // 1. Derive node address from private key
-            let (node_provider, node_addr) = build_provider(&env.rpc_url, &node_private_key)?;
-            println!("Node address:       {node_addr}");
+            prepare_single_node(&env.rpc_url, &client, &node_private_key, eth, "").await?;
 
-            // 2. Predict operator address
-            let predicted = factory.predict_node_operator_address(node_addr).await?;
-            println!("Predicted operator: {predicted}");
+            println!("\nNode is ready.");
+        }
+        FactoryCommand::PrepareNodes {
+            keys_file,
+            eth_amount,
+        } => {
+            let eth = parse_ether(&eth_amount)
+                .with_context(|| format!("invalid ETH amount: {eth_amount}"))?;
+            let keys = read_private_keys_from_file(&keys_file)?;
+            if keys.is_empty() {
+                anyhow::bail!("no private keys found in file");
+            }
 
-            // 3. Send ETH to the node (so it can pay gas for approveStaker)
-            let ctx = contract_clients_common::ProviderContext::new(&env.rpc_url, &env.private_key)
+            println!("Preparing {} nodes ...\n", keys.len());
+
+            let mut success_count = 0u64;
+            let mut error_count = 0u64;
+
+            for (i, key_str) in keys.iter().enumerate() {
+                let label = format!("[{}/{}] ", i + 1, keys.len());
+                match prepare_single_node(&env.rpc_url, &client, key_str, eth, &label)
                 .await
-                .context("failed to create provider context")?;
-            let send_tx = ctx.send_eth(node_addr, eth).await?;
-            println!(
-                "send-eth tx:        {send_tx} ({} ETH -> {node_addr})",
-                format_ether(eth)
-            );
+                {
+                    Ok(()) => success_count += 1,
+                    Err(e) => {
+                        println!("{label}ERROR: {e}");
+                        error_count += 1;
+                    }
+                }
+            }
 
-            // 4. Approve staker (signed by the node)
-            let staking_ops_addr = factory.staking_operators().await?;
-            let node_tx_lock = Arc::new(Mutex::new(()));
-            let staking_ops =
-                StakingOperatorsClient::at_address(node_provider, staking_ops_addr, node_tx_lock);
-            let approve_tx = staking_ops.approve_staker(predicted).await?;
-            println!("approve-staker tx:  {approve_tx}");
-
-            // 5. Add node to factory (from the owner wallet)
-            let add_tx = factory.add_node(node_addr).await?;
-            println!("add-node tx:        {add_tx}");
-
-            println!("\nNode {node_addr} is ready.");
+            println!("\n=== Summary ===");
+            println!("Successful: {success_count}");
+            println!("Errors:     {error_count}");
         }
         FactoryCommand::PredictOperator { node } => {
             let addr = parse_address(&node)?;
@@ -439,7 +499,7 @@ pub async fn run(args: FactoryArgs) -> Result<()> {
                 anyhow::bail!("no private keys found in file");
             }
 
-            let staking_ops_addr = factory.staking_operators().await?;
+            let staking_ops_addr = client.staking.address();
             println!("StakingOperators:   {staking_ops_addr}");
             println!("Approving {} nodes ...\n", keys.len());
 
@@ -486,9 +546,32 @@ pub async fn run(args: FactoryArgs) -> Result<()> {
             let tx = factory.add_nodes(addrs).await?;
             println!("tx: {tx}");
         }
-        FactoryCommand::RemoveNode { node } => {
-            let addr = parse_address(&node)?;
-            let tx = factory.remove_node(addr).await?;
+        FactoryCommand::MigrateOperator { operator, new_owner } => {
+            let op = parse_address(&operator)?;
+            let owner = parse_address(&new_owner)?;
+            let tx = factory.migrate_operator(op, owner).await?;
+            println!("tx: {tx}");
+        }
+        FactoryCommand::SyncOperatorConfig { operator } => {
+            let addr = parse_address(&operator)?;
+            let tx = factory.sync_operator_config(addr).await?;
+            println!("tx: {tx}");
+        }
+        FactoryCommand::SyncAllOperatorConfigs => {
+            let tx = factory.sync_all_operator_configs().await?;
+            println!("tx: {tx}");
+        }
+        FactoryCommand::RescueOperatorTokens {
+            operator,
+            rescue_token,
+            to,
+            amount,
+        } => {
+            let op = parse_address(&operator)?;
+            let token = parse_address(&rescue_token)?;
+            let to = parse_address(&to)?;
+            let amount = parse_nil(&amount)?;
+            let tx = factory.rescue_operator_tokens(op, token, to, amount).await?;
             println!("tx: {tx}");
         }
 

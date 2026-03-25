@@ -1,6 +1,6 @@
 services:
   niluv_node:
-    image: blacklight_node:latest
+    image: ghcr.io/nillionnetwork/blacklight-node/blacklight_node:0.10.0
     restart: unless-stopped
     volumes:
       - ./blacklight_node:/app

@@ -106,9 +106,6 @@ sol! {
         error InsufficientStakeForActivation();
         error OperatorJailed();
         error NoUnbonding();
-        error PendingUnbonding();
-        error UnbondingExists();
-        error NoStake();
         error NotReady();
         error NotActive();
         error NotSnapshotter();
@@ -128,8 +125,9 @@ sol! {
         error ContractNotConfigured();
         error BelowMinimumStake();
         error FeeTooHigh();
-        error FactoryOnly();
         error InvalidUserAssignment();
+        error CannotRescueActiveToken();
+        error NodeJailed();
 
         // ── NodeOperatorFactory ──────────────────────────────────
         error NoBoundNodeOperator();

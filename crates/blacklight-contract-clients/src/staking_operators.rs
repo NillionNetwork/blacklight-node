@@ -11,6 +11,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 sol!(
+    #[derive(Debug)]
     interface IStakingOperators {
         struct Tranche { uint256 amount; uint64 releaseTime; }
     }
@@ -20,16 +21,27 @@ sol!(
     contract StakingOperators {
         error ZeroAddress();
         error ZeroAmount();
-        error PendingUnbonding();
         error DifferentStaker();
         error NotStaker();
-        error UnbondingExists();
         error InsufficientStake();
+        error InsufficientStakeForActivation();
         error OperatorJailed();
         error NoUnbonding();
         error NotReady();
-        error NoStake();
         error NotActive();
+        error NotSnapshotter();
+        error TooManyTranches();
+        error InvalidAddress();
+        error CannotReactivateWhileJailed();
+        error OperatorDoesNotExist();
+        error StakeOverflow();
+        error BatchTooLarge();
+        error InvalidUnstakeDelay();
+        error UnauthorizedStaker();
+        error StakerAlreadyBound();
+        error InvalidMaxActiveOperators();
+        error TooManyActiveOperators();
+        error InvalidProtocolConfig(address candidate);
 
         function protocolConfig() external view returns (address);
         function stakingToken() external view override returns (address);
@@ -37,7 +49,9 @@ sol!(
         function totalStaked() external view override returns (uint256);
         function unbondingStaker(address operator) external view returns (address);
         function isActiveOperator(address operator) public view override returns (bool);
+        function isJailed(address operator) external view override returns (bool);
         function getActiveOperators() external view override returns (address[] memory);
+        function getUnbondingTranches(address operator) external view returns (IStakingOperators.Tranche[] memory);
         function stakeTo(address operator, uint256 amount) external override nonReentrant whenNotPaused;
         function registerOperator(string calldata metadataURI) external override whenNotPaused;
         function deactivateOperator() external override whenNotPaused;
@@ -45,6 +59,8 @@ sol!(
         function approveStaker(address staker) external;
         function requestUnstake(address operator, uint256 amount) external override nonReentrant whenNotPaused;
         function withdrawUnstaked(address operator) external override nonReentrant whenNotPaused;
+        function pokeActive(address operator) external;
+        function pokeActiveMany(address[] calldata operators) external;
     }
 );
 
@@ -99,8 +115,20 @@ impl<P: Provider + Clone> StakingOperatorsClient<P> {
 
     /// Checks if an operator is active
     pub async fn is_active_operator(&self, operator: Address) -> Result<bool> {
-        // Solidity: function isActiveOperator(address) external view returns (bool)
         Ok(self.contract.isActiveOperator(operator).call().await?)
+    }
+
+    /// Checks if an operator is currently jailed
+    pub async fn is_jailed(&self, operator: Address) -> Result<bool> {
+        Ok(self.contract.isJailed(operator).call().await?)
+    }
+
+    /// Returns the unbonding tranches for an operator
+    pub async fn get_unbonding_tranches(
+        &self,
+        operator: Address,
+    ) -> Result<Vec<IStakingOperators::Tranche>> {
+        Ok(self.contract.getUnbondingTranches(operator).call().await?)
     }
 
     /// Returns a list of all currently active operators

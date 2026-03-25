@@ -2,6 +2,7 @@ use alloy::primitives::Address;
 
 pub mod blacklight_client;
 pub mod errors;
+pub mod factory_manager_client;
 pub mod heartbeat_manager;
 pub mod htx;
 pub mod nil_token;
@@ -15,6 +16,7 @@ pub mod staking_operators;
 // ============================================================================
 
 pub use blacklight_client::BlacklightClient;
+pub use factory_manager_client::FactoryManagerClient;
 pub use heartbeat_manager::HeartbeatManagerClient;
 pub use nil_token::NilTokenClient;
 pub use node_operator::NodeOperatorClient;

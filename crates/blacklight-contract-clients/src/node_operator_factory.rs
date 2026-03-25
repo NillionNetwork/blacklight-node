@@ -27,10 +27,13 @@ sol!(
 
         // Events
         event NodeOperatorCreated(address indexed node, address indexed nodeOperator);
-        event NodeRemoved(address indexed node, address indexed nodeOperator);
         event UserBoundToNodeOperator(address indexed user, address indexed nodeOperator);
-        event UserUnboundFromNodeOperator(address indexed user, address indexed nodeOperator);
         event FeesWithdrawn(uint256 amount, address indexed to);
+        event MinStakeUpdated(uint256 oldMinStake, uint256 newMinStake);
+        event HarvestFailed(address indexed operatorAddr, bytes reason);
+        event DependenciesUpdated(address oldStaking, address newStaking, address oldReward, address newReward, address oldToken, address newToken);
+        event DefaultModeFeeBpsUpdated(uint256 oldWithdrawBps, uint256 newWithdrawBps, uint256 oldRestakeBps, uint256 newRestakeBps);
+        event OperatorConfigSynced(address indexed operatorAddr);
 
         // Public state getters
         function stakingOperators() external view returns (address);
@@ -47,18 +50,19 @@ sol!(
         function nodeToUser(address node) external view returns (address);
 
         // Config setters (onlyOwner)
-        function setStakingOperators(address addr) external;
-        function setRewardPolicy(address addr) external;
-        function setToken(address addr) external;
+        function setDependencies(address stakingOperators_, address rewardPolicy_, address token_) external;
         function setDefaultModeFeeBps(uint256 withdrawBps, uint256 restakeBps) external;
         function setOperatorModeFeeBps(address operatorAddr, uint256 withdrawBps, uint256 restakeBps) external;
         function setMinStake(uint256 newMinStake) external;
+        function migrateOperator(address operatorAddr, address newOwner) external;
+        function syncOperatorConfig(address operatorAddr) external;
+        function syncAllOperatorConfigs() external;
+        function rescueOperatorTokens(address operatorAddr, address rescueToken, address to, uint256 amount) external;
         function withdrawFees(uint256 amount, address to) external;
 
         // Node management (onlyOwner)
         function addNode(address node) external returns (address);
         function addNodes(address[] calldata nodes) external;
-        function removeNode(address node) external;
 
         // User staking
         function stake(uint256 amount) external;
@@ -71,6 +75,7 @@ sol!(
         // Harvest rewards
         function harvestRewards(address operatorAddr) external;
         function harvestAllRewards() external;
+        function harvestAllRewards(uint256 offset, uint256 limit) external;
 
         // View functions
         function allNodes() external view returns (address[] memory);
@@ -202,19 +207,16 @@ impl<P: Provider + Clone> NodeOperatorFactoryClient<P> {
     // Owner Config Functions
     // ------------------------------------------------------------------------
 
-    pub async fn set_staking_operators(&self, addr: Address) -> Result<B256> {
-        let call = self.contract.setStakingOperators(addr);
-        self.submitter.invoke("setStakingOperators", call).await
-    }
-
-    pub async fn set_reward_policy(&self, addr: Address) -> Result<B256> {
-        let call = self.contract.setRewardPolicy(addr);
-        self.submitter.invoke("setRewardPolicy", call).await
-    }
-
-    pub async fn set_token(&self, addr: Address) -> Result<B256> {
-        let call = self.contract.setToken(addr);
-        self.submitter.invoke("setToken", call).await
+    pub async fn set_dependencies(
+        &self,
+        staking_operators: Address,
+        reward_policy: Address,
+        token: Address,
+    ) -> Result<B256> {
+        let call = self
+            .contract
+            .setDependencies(staking_operators, reward_policy, token);
+        self.submitter.invoke("setDependencies", call).await
     }
 
     pub async fn set_default_mode_fee_bps(
@@ -259,9 +261,32 @@ impl<P: Provider + Clone> NodeOperatorFactoryClient<P> {
         self.submitter.invoke("addNodes", call).await
     }
 
-    pub async fn remove_node(&self, node: Address) -> Result<B256> {
-        let call = self.contract.removeNode(node);
-        self.submitter.invoke("removeNode", call).await
+    pub async fn migrate_operator(&self, operator: Address, new_owner: Address) -> Result<B256> {
+        let call = self.contract.migrateOperator(operator, new_owner);
+        self.submitter.invoke("migrateOperator", call).await
+    }
+
+    pub async fn sync_operator_config(&self, operator: Address) -> Result<B256> {
+        let call = self.contract.syncOperatorConfig(operator);
+        self.submitter.invoke("syncOperatorConfig", call).await
+    }
+
+    pub async fn sync_all_operator_configs(&self) -> Result<B256> {
+        let call = self.contract.syncAllOperatorConfigs();
+        self.submitter.invoke("syncAllOperatorConfigs", call).await
+    }
+
+    pub async fn rescue_operator_tokens(
+        &self,
+        operator: Address,
+        rescue_token: Address,
+        to: Address,
+        amount: U256,
+    ) -> Result<B256> {
+        let call = self
+            .contract
+            .rescueOperatorTokens(operator, rescue_token, to, amount);
+        self.submitter.invoke("rescueOperatorTokens", call).await
     }
 
     // ------------------------------------------------------------------------
@@ -274,8 +299,19 @@ impl<P: Provider + Clone> NodeOperatorFactoryClient<P> {
     }
 
     pub async fn harvest_all_rewards(&self) -> Result<B256> {
-        let call = self.contract.harvestAllRewards();
+        let call = self.contract.harvestAllRewards_0();
         self.submitter.invoke("harvestAllRewards", call).await
+    }
+
+    pub async fn harvest_all_rewards_paginated(
+        &self,
+        offset: U256,
+        limit: U256,
+    ) -> Result<B256> {
+        let call = self.contract.harvestAllRewards_1(offset, limit);
+        self.submitter
+            .invoke("harvestAllRewards(paginated)", call)
+            .await
     }
 
     pub async fn withdraw_fees(&self, amount: U256, to: Address) -> Result<B256> {

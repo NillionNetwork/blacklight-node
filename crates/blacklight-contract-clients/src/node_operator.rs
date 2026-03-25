@@ -15,30 +15,36 @@ sol!(
         error ContractNotConfigured();
         error InsufficientStake();
         error BelowMinimumStake();
-        error NothingToClaim();
         error FeeTooHigh();
-        error FactoryOnly();
         error InvalidUserAssignment();
+        error TokenMismatch();
+        error CannotRescueActiveToken();
+        error NodeJailed();
 
         // Events
         event NodeAssigned(address indexed user, address indexed node);
-        event NodeReleased(address indexed user, address indexed node);
         event Staked(address indexed user, uint256 amount, address indexed node);
         event UnstakeRequested(address indexed user, uint256 amount, address indexed node);
         event UnstakedWithdrawn(address indexed user, uint256 amount, address indexed node);
         event RewardsHarvested(uint256 totalHarvested, uint256 fee);
         event RewardsClaimed(address indexed user, uint256 amount);
         event FeesCollected(uint256 amount);
+        event ModeFeeBpsUpdated(uint256 oldWithdrawBps, uint256 newWithdrawBps, uint256 oldRestakeBps, uint256 newRestakeBps);
+        event RewardBehaviorUpdated(address indexed user, uint8 oldBehavior, uint8 newBehavior);
+        event RewardsRestaked(address indexed user, uint256 amount, uint256 fee, address indexed node);
+        event StakingOperatorsUpdated(address oldAddress, address newAddress);
+        event RewardPolicyUpdated(address oldAddress, address newAddress);
+        event TokenUpdated(address oldAddress, address newAddress);
+        event MinStakeUpdated(uint256 oldMinStake, uint256 newMinStake);
+        event TokensRescued(address indexed tokenAddress, address indexed to, uint256 amount);
 
         // View functions
         function owner() external view returns (address);
         function nodeAddress() external view returns (address);
         function nodeUser() external view returns (address);
-        function routerFactory() external view returns (address);
         function stakingOperators() external view returns (address);
         function rewardPolicy() external view returns (address);
-        function stakingToken() external view returns (address);
-        function rewardToken() external view returns (address);
+        function token() external view returns (address);
         function withdrawFeeBps() external view returns (uint256);
         function restakeFeeBps() external view returns (uint256);
         function rewardBehavior() external view returns (uint8);
@@ -77,10 +83,6 @@ impl<P: Provider + Clone> NodeOperatorClient<P> {
         Ok(self.contract.nodeUser().call().await?)
     }
 
-    pub async fn router_factory(&self) -> Result<Address> {
-        Ok(self.contract.routerFactory().call().await?)
-    }
-
     pub async fn staking_operators(&self) -> Result<Address> {
         Ok(self.contract.stakingOperators().call().await?)
     }
@@ -89,12 +91,8 @@ impl<P: Provider + Clone> NodeOperatorClient<P> {
         Ok(self.contract.rewardPolicy().call().await?)
     }
 
-    pub async fn staking_token(&self) -> Result<Address> {
-        Ok(self.contract.stakingToken().call().await?)
-    }
-
-    pub async fn reward_token(&self) -> Result<Address> {
-        Ok(self.contract.rewardToken().call().await?)
+    pub async fn token(&self) -> Result<Address> {
+        Ok(self.contract.token().call().await?)
     }
 
     pub async fn withdraw_fee_bps(&self) -> Result<U256> {
