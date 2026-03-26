@@ -59,6 +59,7 @@ COPY Cargo.toml ./
 COPY crates ./crates
 COPY simulator ./simulator
 COPY keeper ./keeper
+COPY managed-node-keeper ./managed-node-keeper
 COPY blacklight-node ./blacklight-node
 COPY monitor ./monitor
 COPY data ./data
@@ -86,7 +87,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cp target/$RUST_TARGET/release/blacklight-node /out/bin/ && \
     cp target/$RUST_TARGET/release/simulator /out/bin/ && \
     cp target/$RUST_TARGET/release/monitor /out/bin/ && \
-    cp target/$RUST_TARGET/release/keeper /out/bin/
+    cp target/$RUST_TARGET/release/keeper /out/bin/ && \
+    cp target/$RUST_TARGET/release/managed-node-keeper /out/bin/
 
 
 FROM --platform=$TARGETPLATFORM debian:bookworm-slim AS base_release
@@ -133,4 +135,9 @@ ENTRYPOINT ["/usr/local/bin/monitor"]
 FROM base_release AS keeper
 COPY --from=builder /out/bin/keeper /usr/local/bin/keeper
 ENTRYPOINT ["/usr/local/bin/keeper"]
+
+# Runtime stage for managed-node-keeper
+FROM base_release AS managed_node_keeper
+COPY --from=builder /out/bin/managed-node-keeper /usr/local/bin/managed-node-keeper
+ENTRYPOINT ["/usr/local/bin/managed-node-keeper"]
 
