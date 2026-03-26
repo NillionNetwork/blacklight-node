@@ -10,6 +10,7 @@ members = [
   "crates/erc-8004-contract-clients",
   "crates/state-file",
   "keeper",
+  "managed-node-keeper",
   "monitor",
   "simulator"
 ]
