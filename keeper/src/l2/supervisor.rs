@@ -179,11 +179,17 @@ impl L2Supervisor {
         let has_jailing_policy = self.client.jailing_policy().is_some();
 
         {
-            let state = self.state.lock().await;
+            let mut state = self.state.lock().await;
             info!("Keeping track of {} rounds", state.rounds.len());
-            for (key, round) in state.rounds.iter() {
+            for (key, round) in state.rounds.iter_mut() {
                 if let Some(outcome) = round.outcome {
                     if !round.rewards_done && !round.members.is_empty() {
+                        if outcome == 0 {
+                            // Inconclusive rounds never receive rewards; mark them
+                            // as done so they don't accumulate in the queue forever.
+                            round.rewards_done = true;
+                            continue;
+                        }
                         reward_jobs.push((*key, outcome, round.members.clone()));
                     }
                     if has_jailing_policy && !round.jailing_done && !round.members.is_empty() {
@@ -195,9 +201,6 @@ impl L2Supervisor {
 
         info!("Have {} reward jobs to process", reward_jobs.len());
         for (key, outcome, members) in reward_jobs {
-            if outcome == 0 {
-                continue;
-            }
             info!("Distributing rewards for key {key:?}");
             if let Err(e) = self
                 .rewards_distributor
