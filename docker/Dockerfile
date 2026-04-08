@@ -91,7 +91,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cp target/$RUST_TARGET/release/managed-node-keeper /out/bin/
 
 
-FROM --platform=$TARGETPLATFORM debian:bookworm-slim AS base_release
+FROM --platform=$TARGETPLATFORM debian:trixie-slim AS base_release
 
 ARG TARGETPLATFORM
 

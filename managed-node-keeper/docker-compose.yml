@@ -1,0 +1,10 @@
+services:
+  managed-node-keeper:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: managed_node_keeper
+    container_name: managed-node-keeper
+    restart: unless-stopped
+    env_file:
+      - mn_keeper.env
