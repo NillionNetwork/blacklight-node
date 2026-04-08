@@ -174,30 +174,15 @@ impl L2Supervisor {
     }
 
     async fn process_rounds(&mut self, block_timestamp: u64) {
-        let mut reward_jobs = Vec::new();
-        let mut jail_jobs = Vec::new();
         let has_jailing_policy = self.client.jailing_policy().is_some();
 
-        {
-            let state = self.state.lock().await;
-            info!("Keeping track of {} rounds", state.rounds.len());
-            for (key, round) in state.rounds.iter() {
-                if let Some(outcome) = round.outcome {
-                    if !round.rewards_done && !round.members.is_empty() {
-                        reward_jobs.push((*key, outcome, round.members.clone()));
-                    }
-                    if has_jailing_policy && !round.jailing_done && !round.members.is_empty() {
-                        jail_jobs.push((*key, round.members.clone()));
-                    }
-                }
-            }
-        }
+        let (reward_jobs, jail_jobs) = {
+            let mut state = self.state.lock().await;
+            collect_round_jobs(&mut state, has_jailing_policy)
+        };
 
         info!("Have {} reward jobs to process", reward_jobs.len());
         for (key, outcome, members) in reward_jobs {
-            if outcome == 0 {
-                continue;
-            }
             info!("Distributing rewards for key {key:?}");
             if let Err(e) = self
                 .rewards_distributor
@@ -218,5 +203,114 @@ impl L2Supervisor {
                 );
             }
         }
+    }
+}
+
+fn collect_round_jobs(
+    state: &mut KeeperState,
+    has_jailing_policy: bool,
+) -> (
+    Vec<(crate::l2::RoundKey, u8, Vec<alloy::primitives::Address>)>,
+    Vec<(crate::l2::RoundKey, Vec<alloy::primitives::Address>)>,
+) {
+    let mut reward_jobs = Vec::new();
+    let mut jail_jobs = Vec::new();
+
+    info!("Keeping track of {} rounds", state.rounds.len());
+    for (key, round) in state.rounds.iter_mut() {
+        if let Some(outcome) = round.outcome {
+            if !round.rewards_done && !round.members.is_empty() {
+                if outcome == 0 {
+                    // Inconclusive rounds never receive rewards; mark them
+                    // as done so they don't accumulate in the queue forever.
+                    round.rewards_done = true;
+                } else {
+                    reward_jobs.push((*key, outcome, round.members.clone()));
+                }
+            }
+            if has_jailing_policy && !round.jailing_done && !round.members.is_empty() {
+                jail_jobs.push((*key, round.members.clone()));
+            }
+        }
+    }
+
+    (reward_jobs, jail_jobs)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::collect_round_jobs;
+    use crate::l2::{KeeperState, RoundKey, RoundState};
+    use alloy::primitives::{Address, B256, Bytes};
+
+    fn sample_round_key(round: u8) -> RoundKey {
+        RoundKey {
+            heartbeat_key: B256::repeat_byte(round),
+            round,
+        }
+    }
+
+    fn sample_member(byte: u8) -> Address {
+        Address::repeat_byte(byte)
+    }
+
+    fn round_state(outcome: u8) -> RoundState {
+        RoundState {
+            members: vec![sample_member(0x11), sample_member(0x22)],
+            raw_htx: Bytes::default(),
+            deadline: 0,
+            outcome: Some(outcome),
+            rewards_done: false,
+            jailing_done: false,
+        }
+    }
+
+    #[test]
+    fn inconclusive_rounds_are_marked_done_without_reward_job() {
+        let key = sample_round_key(1);
+        let mut state = KeeperState::default();
+        state.rounds.insert(key, round_state(0));
+
+        let (reward_jobs, jail_jobs) = collect_round_jobs(&mut state, false);
+
+        assert!(reward_jobs.is_empty());
+        assert!(jail_jobs.is_empty());
+        assert!(state.rounds.get(&key).unwrap().rewards_done);
+    }
+
+    #[test]
+    fn inconclusive_rounds_still_schedule_jailing() {
+        let key = sample_round_key(2);
+        let mut state = KeeperState::default();
+        state.rounds.insert(key, round_state(0));
+
+        let (reward_jobs, jail_jobs) = collect_round_jobs(&mut state, true);
+
+        assert!(reward_jobs.is_empty());
+        assert_eq!(
+            jail_jobs,
+            vec![(key, vec![sample_member(0x11), sample_member(0x22)])]
+        );
+        assert!(state.rounds.get(&key).unwrap().rewards_done);
+        assert!(!state.rounds.get(&key).unwrap().jailing_done);
+    }
+
+    #[test]
+    fn conclusive_rounds_schedule_rewards_and_jailing() {
+        let key = sample_round_key(3);
+        let mut state = KeeperState::default();
+        state.rounds.insert(key, round_state(1));
+
+        let (reward_jobs, jail_jobs) = collect_round_jobs(&mut state, true);
+
+        assert_eq!(
+            reward_jobs,
+            vec![(key, 1, vec![sample_member(0x11), sample_member(0x22)])]
+        );
+        assert_eq!(
+            jail_jobs,
+            vec![(key, vec![sample_member(0x11), sample_member(0x22)])]
+        );
+        assert!(!state.rounds.get(&key).unwrap().rewards_done);
     }
 }
