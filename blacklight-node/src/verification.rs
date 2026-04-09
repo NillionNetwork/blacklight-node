@@ -126,14 +126,19 @@ pub struct HtxVerifier {
 }
 
 impl HtxVerifier {
-    pub fn new(artifact_cache: PathBuf, cert_cache: PathBuf) -> anyhow::Result<Self> {
+    pub fn new(
+        artifact_cache: PathBuf,
+        cert_cache: PathBuf,
+        cert_cache_domain: String,
+    ) -> anyhow::Result<Self> {
         let report_fetcher = ReportFetcher::new(
             artifact_cache.clone(),
             ARTIFACTS_URL.to_string(),
             Box::new(LockedDownloader::default()),
         );
-        let fetcher =
-            DefaultCertificateFetcher::new(cert_cache).context("Creating certificate fetcher")?;
+        let fetcher = DefaultCertificateFetcher::new(cert_cache)
+            .context("Creating certificate fetcher")?
+            .with_processor_cert_domain(cert_cache_domain);
         let report_verifier = ReportVerifier::new(Arc::new(fetcher));
         Ok(Self {
             report_fetcher: Arc::new(report_fetcher),

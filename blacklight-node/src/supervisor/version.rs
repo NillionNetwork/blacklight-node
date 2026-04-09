@@ -243,8 +243,4 @@ mod tests {
             VersionCompatibility::Equal
         );
     }
-    #[test]
-    fn test_package_version() {
-        assert_eq!("0.9.0", env!("CARGO_PKG_VERSION"));
-    }
 }
