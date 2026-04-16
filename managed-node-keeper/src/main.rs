@@ -24,8 +24,8 @@ struct Args {
     #[arg(long, env = "L2_NODE_OPERATOR_FACTORY_ADDRESS")]
     l2_node_operator_factory_address: Address,
 
-    /// Private key for contract interactions
-    #[arg(long, env = "PRIVATE_KEY")]
+    /// Private key for contract interactions (env-only to avoid leaking in process lists)
+    #[arg(env = "PRIVATE_KEY", hide = true)]
     private_key: String,
 
     /// Harvest interval in seconds (default: 1200 = 20 mins)

@@ -139,7 +139,6 @@ services:
     deploy:
       replicas: 10 # IMPORTANT: Define the number of accounts to create in the anvil container as 1 for the deployer, 1 for the keeper,3 for the simulators, X for the nodes
     environment:
-      - RUST_LOG=debug
       - RPC_URL=http://anvil:8545
       - TOKEN_CONTRACT_ADDRESS=0x5FbDB2315678afecb367f032d93F642f64180aa3
       - STAKING_CONTRACT_ADDRESS=0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0
@@ -172,7 +171,6 @@ services:
     deploy:
       replicas: 2 # IMPORTANT: Define the number of accounts to create in the anvil container as 1 for the deployer, 1 for the keeper,3 for the simulators, X for the nodes
     environment:
-      - RUST_LOG=debug
       - RPC_URL=http://anvil:8545
       - TOKEN_CONTRACT_ADDRESS=0x5FbDB2315678afecb367f032d93F642f64180aa3
       - STAKING_CONTRACT_ADDRESS=0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0

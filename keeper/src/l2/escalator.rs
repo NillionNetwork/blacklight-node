@@ -136,6 +136,8 @@ impl RoundEscalator {
                         "Escalate/expire confirmed"
                     );
                     metrics::get().l2.escalations.inc_escalations();
+                    // Remove from fallback map to prevent duplicate escalation on next tick
+                    self.state.lock().await.raw_htx_by_heartbeat.remove(&heartbeat_key);
                 }
                 Err(e) => {
                     warn!(

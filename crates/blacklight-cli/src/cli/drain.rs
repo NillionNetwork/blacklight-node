@@ -54,7 +54,7 @@ pub async fn run(args: DrainArgs) -> Result<()> {
     for (i, key) in keys.iter().enumerate() {
         let label = format!("[{}/{}]", i + 1, keys.len());
 
-        let ctx = match ProviderContext::with_ws_retries(&args.rpc_url, key, Some(3)).await {
+        let ctx = match ProviderContext::new_http(&args.rpc_url, key) {
             Ok(ctx) => ctx,
             Err(e) => {
                 println!("{label} ERROR creating provider: {e}");
