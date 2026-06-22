@@ -34,9 +34,6 @@ impl EventListener {
         to_block: u64,
         state: &mut KeeperState,
     ) -> anyhow::Result<()> {
-        let enqueued = self
-            .query_events::<HeartbeatEnqueuedEvent>(from_block, to_block)
-            .await?;
         let rounds_started = self
             .query_events::<RoundStartedEvent>(from_block, to_block)
             .await?;
@@ -50,11 +47,6 @@ impl EventListener {
             .query_events::<RewardDistributionAbandonedEvent>(from_block, to_block)
             .await?;
 
-        for (event, _log) in enqueued {
-            state
-                .raw_htx_by_heartbeat
-                .insert(event.heartbeatKey, event.rawHTX);
-        }
         for (event, _log) in rounds_started {
             let key = RoundKey {
                 heartbeat_key: event.heartbeatKey,
@@ -62,11 +54,8 @@ impl EventListener {
             };
             let entry = state.rounds.entry(key).or_default();
             entry.members = event.members;
-            entry.raw_htx = Some(event.rawHTX.clone());
-            entry.deadline = Some(event.deadline);
-            state
-                .raw_htx_by_heartbeat
-                .insert(event.heartbeatKey, event.rawHTX);
+            entry.raw_htx = event.rawHTX.clone();
+            entry.deadline = event.deadline;
         }
         for (event, _log) in rounds_finalized {
             let key = RoundKey {
@@ -214,8 +203,8 @@ impl EventListener {
                 .insert(event.heartbeatKey, event.rawHTX.clone());
             let entry = guard.rounds.entry(key).or_default();
             entry.members = event.members.clone();
-            entry.raw_htx = Some(event.rawHTX.clone());
-            entry.deadline = Some(event.deadline);
+            entry.raw_htx = event.rawHTX;
+            entry.deadline = event.deadline;
             info!(
                 heartbeat_key = ?event.heartbeatKey,
                 round = event.round,
@@ -225,7 +214,7 @@ impl EventListener {
             );
 
             // Detect ERC-8004 HTXs and track them with HeartbeatManager's heartbeat_key
-            if let Ok(erc8004_htx) = Erc8004Htx::try_decode(&event.rawHTX) {
+            if let Ok(erc8004_htx) = Erc8004Htx::try_decode(&entry.raw_htx) {
                 // Only add if not already tracked (first round)
                 if event.round == 1
                     && !guard

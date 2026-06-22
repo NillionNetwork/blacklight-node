@@ -1,9 +1,9 @@
 use crate::{clients::L2KeeperClient, l2::KeeperState, metrics};
 use alloy::primitives::{B256, Bytes};
+use contract_clients_common::tx_submitter::TransactionSubmitter;
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::Mutex;
-use tracing::{debug, info, warn};
-use contract_clients_common::tx_submitter::TransactionSubmitter;
+use tracing::{info, warn};
 
 pub(crate) struct RoundEscalator {
     client: Arc<L2KeeperClient>,
@@ -22,27 +22,19 @@ impl RoundEscalator {
     }
 
     pub(crate) async fn process_escalations(&self, block_timestamp: u64) -> anyhow::Result<()> {
-        let (candidates, fallback_heartbeats) = {
+        let candidates = {
             let state = self.state.lock().await;
             let mut best_rounds: HashMap<B256, (u8, u64, Bytes)> = HashMap::new();
-            let mut fallback = Vec::new();
 
             for (key, round) in state.rounds.iter() {
                 if round.outcome.is_some() {
                     continue;
                 }
-                let deadline = match round.deadline {
-                    Some(value) => value,
-                    None => continue,
-                };
-                let raw_htx = round
-                    .raw_htx
-                    .clone()
-                    .or_else(|| state.raw_htx_by_heartbeat.get(&key.heartbeat_key).cloned());
-                let Some(raw_htx) = raw_htx else {
+                if block_timestamp <= round.deadline {
                     continue;
-                };
-
+                }
+                let deadline = round.deadline;
+                let raw_htx = round.raw_htx.clone();
                 let entry = best_rounds
                     .entry(key.heartbeat_key)
                     .or_insert_with(|| (key.round, deadline, raw_htx.clone()));
@@ -50,37 +42,10 @@ impl RoundEscalator {
                     *entry = (key.round, deadline, raw_htx);
                 }
             }
-
-            if best_rounds.is_empty() {
-                fallback = state
-                    .raw_htx_by_heartbeat
-                    .iter()
-                    .map(|(k, v)| (*k, v.clone()))
-                    .collect();
-            }
-
-            (
-                best_rounds
-                    .into_iter()
-                    .map(|(k, (round, deadline, raw_htx))| (k, round, deadline, raw_htx))
-                    .collect::<Vec<_>>(),
-                fallback,
-            )
+            best_rounds
         };
 
-        for (heartbeat_key, round, deadline, raw_htx) in candidates {
-            if block_timestamp <= deadline {
-                debug!(
-                    heartbeat_key = ?heartbeat_key,
-                    round,
-                    deadline,
-                    block_timestamp,
-                    remaining_secs = deadline - block_timestamp,
-                    "Round not yet past deadline, skipping"
-                );
-                continue;
-            }
-
+        for (heartbeat_key, (round, deadline, raw_htx)) in candidates {
             info!(
                 heartbeat_key = ?heartbeat_key,
                 round,
@@ -100,44 +65,6 @@ impl RoundEscalator {
                         "Escalate/expire confirmed"
                     );
                     metrics::get().l2.escalations.inc_escalations();
-                }
-                Err(e) => {
-                    warn!(
-                        heartbeat_key = ?heartbeat_key,
-                        error = %e,
-                        "Escalate/expire failed"
-                    );
-                }
-            }
-        }
-
-        for (heartbeat_key, raw_htx) in fallback_heartbeats {
-            let should_escalate = self
-                .client
-                .heartbeat_manager()
-                .isPastDeadline(heartbeat_key)
-                .call()
-                .await?;
-            if !should_escalate {
-                continue;
-            }
-
-            info!(heartbeat_key = ?heartbeat_key, "Escalating or expiring round");
-            let call = self
-                .client
-                .heartbeat_manager()
-                .escalateOrExpire(heartbeat_key, raw_htx.clone());
-
-            match self.submitter.invoke("escalateOrExpire", call).await {
-                Ok(tx_hash) => {
-                    info!(
-                        heartbeat_key = ?heartbeat_key,
-                        tx_hash = ?tx_hash,
-                        "Escalate/expire confirmed"
-                    );
-                    metrics::get().l2.escalations.inc_escalations();
-                    // Remove from fallback map to prevent duplicate escalation on next tick
-                    self.state.lock().await.raw_htx_by_heartbeat.remove(&heartbeat_key);
                 }
                 Err(e) => {
                     warn!(
