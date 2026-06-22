@@ -153,4 +153,3 @@ pub fn blacklight_error_decoder(data: &Bytes) -> Option<DecodedRevert> {
         .ok()
         .map(|err| DecodedRevert::CustomError(format!("{err:?}")))
 }
-

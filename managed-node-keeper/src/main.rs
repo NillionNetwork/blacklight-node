@@ -8,7 +8,7 @@ use tokio::signal;
 use tokio::signal::unix::SignalKind;
 use tokio::time::interval;
 use tracing::{error, info};
-use tracing_subscriber::{EnvFilter, fmt, prelude::*};
+use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 #[derive(Parser, Debug)]
 #[command(

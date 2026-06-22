@@ -1,7 +1,10 @@
 use crate::errors::{DecodedRevert, extract_revert_from_contract_error_with_custom};
 use crate::overestimate_gas;
 use alloy::{
-    consensus::Transaction, contract::CallBuilder, primitives::{B256, Bytes}, providers::Provider,
+    consensus::Transaction,
+    contract::CallBuilder,
+    primitives::{B256, Bytes},
+    providers::Provider,
     rpc::types::TransactionReceipt,
 };
 use anyhow::{Result, bail};

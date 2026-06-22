@@ -65,7 +65,10 @@ impl Jailer {
                 Ok(())
             }
             Err(e) => {
-                bail!("Failed to enforce failing: {}", extract_revert_from_contract_error_with_custom(&e, blacklight_error_decoder))
+                bail!(
+                    "Failed to enforce failing: {}",
+                    extract_revert_from_contract_error_with_custom(&e, blacklight_error_decoder)
+                )
             }
         }
     }

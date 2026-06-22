@@ -132,10 +132,9 @@ where
         }
         _ => {
             let debug_str = format!("{:?}", error);
-            try_extract_from_string(&debug_str, &custom_decoder)
-                .unwrap_or_else(|| {
-                    DecodedRevert::NoRevertData(format!("Unknown error type: {}", error))
-                })
+            try_extract_from_string(&debug_str, &custom_decoder).unwrap_or_else(|| {
+                DecodedRevert::NoRevertData(format!("Unknown error type: {}", error))
+            })
         }
     }
 }
@@ -164,10 +163,9 @@ where
         }
         _ => {
             let err_str = error.to_string();
-            try_extract_from_string(&err_str, custom_decoder)
-                .unwrap_or_else(|| {
-                    DecodedRevert::NoRevertData(format!("Transport error: {}", err_str))
-                })
+            try_extract_from_string(&err_str, custom_decoder).unwrap_or_else(|| {
+                DecodedRevert::NoRevertData(format!("Transport error: {}", err_str))
+            })
         }
     }
 }
@@ -256,7 +254,9 @@ mod tests {
         .unwrap();
 
         let decoded = decode_revert_with_custom(&Bytes::from(data), |_| None);
-        assert!(matches!(decoded, DecodedRevert::ErrorString(msg) if msg == "blacklight: unknown HTX"));
+        assert!(
+            matches!(decoded, DecodedRevert::ErrorString(msg) if msg == "blacklight: unknown HTX")
+        );
     }
 
     #[test]
@@ -273,9 +273,18 @@ mod tests {
 
     #[test]
     fn test_display() {
-        assert_eq!(format!("{}", DecodedRevert::ErrorString("test error".to_string())), "test error");
-        assert_eq!(format!("{}", DecodedRevert::Panic(1)), "Panic(1): assertion failed");
-        assert_eq!(format!("{}", DecodedRevert::CustomError("Custom error".to_string())), "Custom error");
+        assert_eq!(
+            format!("{}", DecodedRevert::ErrorString("test error".to_string())),
+            "test error"
+        );
+        assert_eq!(
+            format!("{}", DecodedRevert::Panic(1)),
+            "Panic(1): assertion failed"
+        );
+        assert_eq!(
+            format!("{}", DecodedRevert::CustomError("Custom error".to_string())),
+            "Custom error"
+        );
     }
 
     #[test]

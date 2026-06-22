@@ -13,7 +13,10 @@ pub(crate) struct RoundEscalator {
 
 impl RoundEscalator {
     pub(crate) fn new(client: Arc<L2KeeperClient>, state: Arc<Mutex<KeeperState>>) -> Self {
-        let submitter = TransactionSubmitter::new(client.tx_lock(), blacklight_contract_clients::errors::blacklight_error_decoder);
+        let submitter = TransactionSubmitter::new(
+            client.tx_lock(),
+            blacklight_contract_clients::errors::blacklight_error_decoder,
+        );
         Self {
             client,
             state,

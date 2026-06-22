@@ -303,11 +303,7 @@ impl<P: Provider + Clone> NodeOperatorFactoryClient<P> {
         self.submitter.invoke("harvestAllRewards", call).await
     }
 
-    pub async fn harvest_all_rewards_paginated(
-        &self,
-        offset: U256,
-        limit: U256,
-    ) -> Result<B256> {
+    pub async fn harvest_all_rewards_paginated(&self, offset: U256, limit: U256) -> Result<B256> {
         let call = self.contract.harvestAllRewards_1(offset, limit);
         self.submitter
             .invoke("harvestAllRewards(paginated)", call)

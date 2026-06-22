@@ -43,7 +43,11 @@ pub(crate) struct RewardsDistributor {
 
 impl RewardsDistributor {
     pub(crate) fn new(client: Arc<L2KeeperClient>, state: Arc<Mutex<KeeperState>>) -> Self {
-        let submitter = TransactionSubmitter::new(client.tx_lock(), blacklight_contract_clients::errors::blacklight_error_decoder).with_gas_buffer();
+        let submitter = TransactionSubmitter::new(
+            client.tx_lock(),
+            blacklight_contract_clients::errors::blacklight_error_decoder,
+        )
+        .with_gas_buffer();
         Self {
             client,
             state,

@@ -227,7 +227,10 @@ async fn prepare_single_node(
     println!("{label}Node address:       {node_addr}");
 
     // 2. Predict operator address
-    let predicted = client.factory.predict_node_operator_address(node_addr).await?;
+    let predicted = client
+        .factory
+        .predict_node_operator_address(node_addr)
+        .await?;
     println!("{label}Predicted operator: {predicted}");
 
     // 3. Send ETH to the node (shared provider — no nonce conflict)
@@ -472,9 +475,7 @@ pub async fn run(args: FactoryArgs) -> Result<()> {
 
             for (i, key_str) in keys.iter().enumerate() {
                 let label = format!("[{}/{}] ", i + 1, keys.len());
-                match prepare_single_node(&env.rpc_url, &client, key_str, eth, &label)
-                .await
-                {
+                match prepare_single_node(&env.rpc_url, &client, key_str, eth, &label).await {
                     Ok(()) => success_count += 1,
                     Err(e) => {
                         println!("{label}ERROR: {e}");
@@ -546,7 +547,10 @@ pub async fn run(args: FactoryArgs) -> Result<()> {
             let tx = factory.add_nodes(addrs).await?;
             println!("tx: {tx}");
         }
-        FactoryCommand::MigrateOperator { operator, new_owner } => {
+        FactoryCommand::MigrateOperator {
+            operator,
+            new_owner,
+        } => {
             let op = parse_address(&operator)?;
             let owner = parse_address(&new_owner)?;
             let tx = factory.migrate_operator(op, owner).await?;
@@ -571,7 +575,9 @@ pub async fn run(args: FactoryArgs) -> Result<()> {
             let token = parse_address(&rescue_token)?;
             let to = parse_address(&to)?;
             let amount = parse_nil(&amount)?;
-            let tx = factory.rescue_operator_tokens(op, token, to, amount).await?;
+            let tx = factory
+                .rescue_operator_tokens(op, token, to, amount)
+                .await?;
             println!("tx: {tx}");
         }
 
