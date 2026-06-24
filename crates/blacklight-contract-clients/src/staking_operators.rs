@@ -6,7 +6,6 @@ use alloy::{
 };
 use anyhow::Result;
 use contract_clients_common::tx_submitter::TransactionSubmitter;
-use futures_util::future::join_all;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -147,14 +146,24 @@ impl<P: Provider + Clone> StakingOperatorsClient<P> {
     /// Get all operators who currently have stake > 0
     /// This is the efficient way to discover staked operators without querying events
     ///
-    /// Note: This method fetches stakes for all operators in parallel for efficiency.
+    /// Note: All stakes are fetched in a single Multicall3 `eth_call` rather than
+    /// N concurrent requests. This avoids RPC rate-limiting silently dropping
+    /// operators, which previously caused only a subset to be returned.
     pub async fn get_operators_with_stake(&self) -> Result<Vec<Address>> {
         // TODO: Use all operators instead of active operators, if desired
         let all_operators = self.get_active_operators().await?;
+        if all_operators.is_empty() {
+            return Ok(Vec::new());
+        }
 
-        // Fetch all stakes in parallel instead of sequential N+1 queries
-        let stake_futures: Vec<_> = all_operators.iter().map(|op| self.stake_of(*op)).collect();
-        let stakes = join_all(stake_futures).await;
+        // Batch every stakeOf call into one multicall so a single round-trip
+        // returns all stakes. A failed individual call surfaces as Err in the
+        // results (via aggregate3) instead of being silently treated as zero.
+        let mut multicall = self.contract.provider().multicall().dynamic();
+        for op in &all_operators {
+            multicall = multicall.add_dynamic(self.contract.stakeOf(*op));
+        }
+        let stakes = multicall.aggregate3().await?;
 
         // Filter to only operators with stake > 0
         let operators_with_stake: Vec<Address> = all_operators
@@ -212,5 +221,55 @@ impl<P: Provider + Clone> StakingOperatorsClient<P> {
     pub async fn approve_staker(&self, staker: Address) -> Result<B256> {
         let call = self.contract.approveStaker(staker);
         self.submitter.invoke("approveStaker", call).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use contract_clients_common::ProviderContext;
+
+    /// Verifies the multicall-based `get_operators_with_stake` returns every
+    /// active operator that has stake, with no silent drops from RPC throttling.
+    ///
+    /// Requires a real RPC. Run with:
+    ///   TEST_RPC_URL=https://rpc.nillion.network \
+    ///   cargo test -p blacklight-contract-clients operators_with_stake_matches_active -- --ignored --nocapture
+    #[tokio::test]
+    #[ignore] // Requires a real RPC endpoint
+    async fn operators_with_stake_matches_active() -> Result<()> {
+        let rpc_url = std::env::var("TEST_RPC_URL")
+            .unwrap_or_else(|_| "https://rpc.nillion.network".to_string());
+        let staking_address = std::env::var("TEST_STAKING_ADDRESS")
+            .unwrap_or_else(|_| "0x89c1312Cedb0B0F67e4913D2076bd4a860652B69".to_string())
+            .parse::<Address>()?;
+        // Anvil account #0 key (publicly known) — only view calls are made.
+        let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+
+        let ctx = ProviderContext::new_http(&rpc_url, private_key)?;
+        let client = StakingOperatorsClient::at_address(
+            ctx.provider().clone(),
+            staking_address,
+            ctx.tx_lock(),
+        );
+
+        let active = client.get_active_operators().await?;
+        let with_stake = client.get_operators_with_stake().await?;
+        println!(
+            "active operators: {}, operators with stake>0: {}",
+            active.len(),
+            with_stake.len()
+        );
+
+        // Every active operator on this deployment is staked, so the multicall
+        // must surface all of them — not a throttled subset.
+        assert_eq!(
+            active.len(),
+            with_stake.len(),
+            "multicall dropped operators: {} active but only {} returned",
+            active.len(),
+            with_stake.len()
+        );
+        Ok(())
     }
 }
