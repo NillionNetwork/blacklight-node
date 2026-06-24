@@ -37,14 +37,14 @@ use ProtocolConfig::ProtocolConfigInstance;
 #[derive(Clone)]
 pub struct ProtocolConfigClient<P: Provider + Clone> {
     contract: ProtocolConfigInstance<P>,
-    submitter: TransactionSubmitter<ProtocolConfig::ProtocolConfigErrors>,
+    submitter: TransactionSubmitter,
 }
 
 impl<P: Provider + Clone> ProtocolConfigClient<P> {
     /// Create a new ProtocolConfigClient
     pub fn new(provider: P, contract_address: Address, tx_lock: Arc<Mutex<()>>) -> Self {
         let contract = ProtocolConfigInstance::new(contract_address, provider);
-        let submitter = TransactionSubmitter::new(tx_lock);
+        let submitter = TransactionSubmitter::new(tx_lock, crate::errors::blacklight_error_decoder);
         Self {
             contract,
             submitter,

@@ -103,7 +103,7 @@ pub type HeartbeatManagerErrors = HeartbeatManager::HeartbeatManagerErrors;
 pub struct HeartbeatManagerClient<P: Provider + Clone> {
     provider: P,
     contract: HeartbeatManagerInstance<P>,
-    submitter: TransactionSubmitter<HeartbeatManager::HeartbeatManagerErrors>,
+    submitter: TransactionSubmitter,
     block_lookback: u64,
 }
 
@@ -112,7 +112,7 @@ impl<P: Provider + Clone> HeartbeatManagerClient<P> {
     pub fn new(provider: P, config: super::ContractConfig, tx_lock: Arc<Mutex<()>>) -> Self {
         let contract =
             HeartbeatManagerInstance::new(config.manager_contract_address, provider.clone());
-        let submitter = TransactionSubmitter::new(tx_lock);
+        let submitter = TransactionSubmitter::new(tx_lock, crate::errors::blacklight_error_decoder);
         Self {
             provider,
             contract,

@@ -57,14 +57,13 @@ pub type ValidationResponseEvent = ValidationRegistryUpgradeable::ValidationResp
 #[derive(Clone)]
 pub struct ValidationRegistryClient<P: Provider + Clone> {
     contract: ValidationRegistryUpgradeableInstance<P>,
-    submitter:
-        TransactionSubmitter<contract_clients_common::errors::StandardErrors::StandardErrorsErrors>,
+    submitter: TransactionSubmitter,
 }
 
 impl<P: Provider + Clone> ValidationRegistryClient<P> {
     pub fn new(provider: P, address: Address, tx_lock: Arc<Mutex<()>>) -> Self {
         let contract = ValidationRegistryUpgradeableInstance::new(address, provider);
-        let submitter = TransactionSubmitter::new(tx_lock);
+        let submitter = TransactionSubmitter::new(tx_lock, |_| None);
         Self {
             contract,
             submitter,

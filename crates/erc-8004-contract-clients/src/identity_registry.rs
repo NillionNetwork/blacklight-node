@@ -39,14 +39,13 @@ pub type IdentityMetadataEntry = MetadataEntry;
 pub struct IdentityRegistryClient<P: Provider + Clone> {
     provider: P,
     contract: IdentityRegistryUpgradeableInstance<P>,
-    submitter:
-        TransactionSubmitter<contract_clients_common::errors::StandardErrors::StandardErrorsErrors>,
+    submitter: TransactionSubmitter,
 }
 
 impl<P: Provider + Clone> IdentityRegistryClient<P> {
     pub fn new(provider: P, address: Address, tx_lock: Arc<Mutex<()>>) -> Self {
         let contract = IdentityRegistryUpgradeableInstance::new(address, provider.clone());
-        let submitter = TransactionSubmitter::new(tx_lock);
+        let submitter = TransactionSubmitter::new(tx_lock, |_| None);
         Self {
             provider,
             contract,

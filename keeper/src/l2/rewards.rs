@@ -5,11 +5,8 @@ use crate::{
 };
 use alloy::primitives::{Address, U256, map::HashMap, utils::format_units};
 use anyhow::{Context, anyhow, bail};
-use blacklight_contract_clients::{
-    ProtocolConfig::ProtocolConfigInstance, heartbeat_manager::HeartbeatManagerErrors,
-};
+use blacklight_contract_clients::ProtocolConfig::ProtocolConfigInstance;
 
-use contract_clients_common::errors::decode_any_error;
 use contract_clients_common::tx_submitter::TransactionSubmitter;
 
 use std::sync::Arc;
@@ -41,12 +38,16 @@ pub(crate) struct RewardsDistributor {
     client: Arc<L2KeeperClient>,
     state: Arc<Mutex<KeeperState>>,
     rewards_context: HashMap<Address, RewardsContext>,
-    submitter: TransactionSubmitter<HeartbeatManagerErrors>,
+    submitter: TransactionSubmitter,
 }
 
 impl RewardsDistributor {
     pub(crate) fn new(client: Arc<L2KeeperClient>, state: Arc<Mutex<KeeperState>>) -> Self {
-        let submitter = TransactionSubmitter::new(client.tx_lock()).with_gas_buffer();
+        let submitter = TransactionSubmitter::new(
+            client.tx_lock(),
+            blacklight_contract_clients::errors::blacklight_error_decoder,
+        )
+        .with_gas_buffer();
         Self {
             client,
             state,
@@ -214,7 +215,7 @@ impl RewardsDistributor {
                 );
             }
             Err(e) => {
-                warn!("Reward policy sync failed: {}", decode_any_error(&e));
+                warn!("Reward policy sync failed: {}", e);
                 return Ok(false);
             }
         }

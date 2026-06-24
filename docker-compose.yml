@@ -1,13 +1,20 @@
 services:
   # Anvil - Local Ethereum testnet
   anvil:
-    image: ghcr.io/nillionnetwork/blacklight-contracts/anvil:sha-dfb9847
-    container_name: blacklight-anvil
+    image: nilanvil:latest
+    container_name: anvil
     ports:
       - "8545:8545"
     networks:
       - blacklight-network
-    command: ["--accounts", "15"] # Define the number of accounts to create deployer + keeper + simulator x 2 + erc-8004-simulator + node x 10 = 15
+    command:
+      [
+        "--accounts", "15"
+      ] 
+    # 15 unmanaged (0-14), 10 managed (15-24), all managed are also Anvil-funded
+    # deployer + keeper + simulator x 2 + erc-8004-simulator + node x 10 = 15
+    # --managed-offset is the offset to start the managed accounts
+    # --managed-nodes is the number of managed accounts
     healthcheck:
       test: [ "CMD-SHELL", "curl -sf -X POST -H 'Content-Type: application/json' --data '{\"jsonrpc\":\"2.0\",\"method\":\"eth_blockNumber\",\"params\":[],\"id\":1}' http://localhost:8545 || exit 1" ]
       interval: 5s
@@ -32,13 +39,13 @@ services:
       - L2_RPC_URL=http://anvil:8545
       - L1_RPC_URL=http://anvil:8545
       - PRIVATE_KEY=0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6
-      - L2_STAKING_OPERATORS_ADDRESS=0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
-      - L2_HEARTBEAT_MANAGER_ADDRESS=0x5FC8d32690cc91D4c39d9d3abcBD16989F875707
+      - L2_STAKING_OPERATORS_ADDRESS=0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0
+      - L2_HEARTBEAT_MANAGER_ADDRESS=0x0165878A594ca255338adfa4d48449f69242Eb8F
       - L2_JAILING_POLICY_ADDRESS=0x0000000000000000000000000000000000000000
       - L1_EMISSIONS_CONTROLLER_ADDRESS=0x0000000000000000000000000000000000000000
       # ERC-8004 Keeper configuration
       - ENABLE_ERC8004_KEEPER=true
-      - L2_VALIDATION_REGISTRY_ADDRESS=0x3Aa5ebB10DC797CAC828524e59A333d0A371443c
+      - L2_VALIDATION_REGISTRY_ADDRESS=0xc6e7DF5E7b4f2A278906862b61205850344D4e7d
       - RUST_LOG=info
 
   # NilCC Simulator - Submits HTXs to the contract
@@ -57,8 +64,8 @@ services:
       - PUBLIC_KEY=0x70997970C51812dc3A010C7d01b50e0d17dc79C8
       - HTXS_PATH=/app/data/htxs.json
       - TOKEN_CONTRACT_ADDRESS=0x5FbDB2315678afecb367f032d93F642f64180aa3
-      - STAKING_CONTRACT_ADDRESS=0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
-      - MANAGER_CONTRACT_ADDRESS=0x5FC8d32690cc91D4c39d9d3abcBD16989F875707
+      - STAKING_CONTRACT_ADDRESS=0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0
+      - MANAGER_CONTRACT_ADDRESS=0x0165878A594ca255338adfa4d48449f69242Eb8F
       - RUST_LOG=info
     networks:
       - blacklight-network
@@ -80,8 +87,8 @@ services:
       - PUBLIC_KEY=0xa0Ee7A142d267C1f36714E4a8F75612F20a79720
       - HTXS_PATH=/app/data/htxs.json
       - TOKEN_CONTRACT_ADDRESS=0x5FbDB2315678afecb367f032d93F642f64180aa3
-      - STAKING_CONTRACT_ADDRESS=0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
-      - MANAGER_CONTRACT_ADDRESS=0x5FC8d32690cc91D4c39d9d3abcBD16989F875707
+      - STAKING_CONTRACT_ADDRESS=0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0
+      - MANAGER_CONTRACT_ADDRESS=0x0165878A594ca255338adfa4d48449f69242Eb8F
       - RUST_LOG=info
     networks:
       - blacklight-network
@@ -100,8 +107,8 @@ services:
     environment:
       - RPC_URL=http://anvil:8545
       - PRIVATE_KEY=0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a
-      - IDENTITY_REGISTRY_CONTRACT_ADDRESS=0x959922bE3CAee4b8Cd9a407cc3ac1C251C2007B1
-      - VALIDATION_REGISTRY_CONTRACT_ADDRESS=0x3Aa5ebB10DC797CAC828524e59A333d0A371443c
+      - IDENTITY_REGISTRY_CONTRACT_ADDRESS=0x9A9f2CCfdE556A7E9Ff0848998Aa4a0CFD8863AE
+      - VALIDATION_REGISTRY_CONTRACT_ADDRESS=0xc6e7DF5E7b4f2A278906862b61205850344D4e7d
       - VALIDATOR_ADDRESS=0x90F79bf6EB2c4f870365E785982E1f101E93b906
       - AGENT_URI=https://api.nilai.nillion.network/v1/health/
       - RUST_LOG=info
@@ -132,11 +139,10 @@ services:
     deploy:
       replicas: 10 # IMPORTANT: Define the number of accounts to create in the anvil container as 1 for the deployer, 1 for the keeper,3 for the simulators, X for the nodes
     environment:
-      - RUST_LOG=debug
       - RPC_URL=http://anvil:8545
       - TOKEN_CONTRACT_ADDRESS=0x5FbDB2315678afecb367f032d93F642f64180aa3
-      - STAKING_CONTRACT_ADDRESS=0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
-      - MANAGER_CONTRACT_ADDRESS=0x5FC8d32690cc91D4c39d9d3abcBD16989F875707
+      - STAKING_CONTRACT_ADDRESS=0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0
+      - MANAGER_CONTRACT_ADDRESS=0x0165878A594ca255338adfa4d48449f69242Eb8F
       # Provide a single mnemonic and scale this service (see docker/README.md)
       - MNEMONIC=test test test test test test test test test test test junk
       # Shift indices if you want to skip accounts (e.g., keep deployer/simulators on low indices)
@@ -150,6 +156,37 @@ services:
       - blacklight-network
     restart: unless-stopped
 
+
+  # blacklight nodes
+  managed-node:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: blacklight_node_test
+    depends_on:
+      anvil:
+        condition: service_healthy
+      node-init:
+        condition: service_completed_successfully
+    deploy:
+      replicas: 2 # IMPORTANT: Define the number of accounts to create in the anvil container as 1 for the deployer, 1 for the keeper,3 for the simulators, X for the nodes
+    environment:
+      - RPC_URL=http://anvil:8545
+      - TOKEN_CONTRACT_ADDRESS=0x5FbDB2315678afecb367f032d93F642f64180aa3
+      - STAKING_CONTRACT_ADDRESS=0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0
+      - MANAGER_CONTRACT_ADDRESS=0x0165878A594ca255338adfa4d48449f69242Eb8F
+      # Provide a single mnemonic and scale this service (see docker/README.md)
+      - MNEMONIC=test test test test test test test test test test test junk
+      # Shift indices if you want to skip accounts (e.g., keep deployer/simulators on low indices)
+      - MNEMONIC_BASE_INDEX=${MNEMONIC_BASE_INDEX:-16}
+      # Shared allocation state so each scaled container gets a unique index (stable across restarts)
+      - MNEMONIC_ALLOC_ROOT=/alloc/mnemonic
+      - RUST_LOG=info
+    volumes:
+      - node-mnemonic-alloc:/alloc/mnemonic
+    networks:
+      - blacklight-network
+    restart: unless-stopped
 networks:
   blacklight-network:
     driver: bridge
