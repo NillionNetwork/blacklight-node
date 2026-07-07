@@ -23,6 +23,7 @@ set -euo pipefail
 NODES=5
 CI_MODE=0
 CI_ROUNDS=1
+HTXS_PATH=""
 ANVIL_PORT="${ANVIL_PORT:-8545}"
 NODE_REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONTRACTS_DIR="${CONTRACTS_DIR:-$NODE_REPO/../blacklight-contracts}"
@@ -33,6 +34,7 @@ while [[ $# -gt 0 ]]; do
     --nodes) NODES="$2"; shift 2 ;;
     --ci) CI_MODE=1; shift ;;
     --rounds) CI_ROUNDS="$2"; shift 2 ;;
+    --htxs) HTXS_PATH="$2"; shift 2 ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
 done
@@ -224,7 +226,7 @@ echo "==> starting simulator"
     TOKEN_CONTRACT_ADDRESS="$STAKE_TOKEN" \
     PRIVATE_KEY="$SIM_KEY" \
     RUST_LOG=info \
-    "$BIN/simulator" nilcc --htxs-path "$NODE_REPO/data/htxs.json" \
+    "$BIN/simulator" nilcc --htxs-path "${HTXS_PATH:-$NODE_REPO/data/htxs.json}" \
     > "$RUN_DIR/simulator.log" 2>&1 &
   echo $! > "$RUN_DIR/simulator.pid"
 )
