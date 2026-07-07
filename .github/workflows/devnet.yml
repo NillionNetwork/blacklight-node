@@ -1,0 +1,50 @@
+name: devnet-e2e
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  devnet:
+    name: devnet round lifecycle (I2)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout node repo
+        uses: actions/checkout@v4
+        with:
+          path: blacklight-node
+
+      - name: Checkout contracts repo
+        uses: actions/checkout@v4
+        with:
+          repository: NillionNetwork/blacklight-contracts
+          path: blacklight-contracts
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: blacklight-node
+
+      - name: Build contracts
+        working-directory: blacklight-contracts
+        run: forge build
+
+      - name: Bring up devnet and finalize one round
+        working-directory: blacklight-node
+        env:
+          CONTRACTS_DIR: ${{ github.workspace }}/blacklight-contracts
+        run: ./devnet/run.sh --nodes 5 --ci
+
+      - name: Upload run logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: devnet-logs
+          path: blacklight-node/devnet/runs/
