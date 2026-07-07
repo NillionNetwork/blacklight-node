@@ -20,6 +20,10 @@ const STATE_FILE_NODE: &str = "blacklight_node.env";
 /// Node will initiate shutdown if balance falls below this threshold
 pub const MIN_ETH_BALANCE: U256 = eth_to_wei(0.00001);
 
+/// Default low-balance WARNING threshold (N5): well above the shutdown floor so the
+/// operator can top up before votes are at risk. Overridable via --low-balance-eth.
+pub const DEFAULT_LOW_BALANCE_ETH: f64 = 0.01;
+
 /// Convert ETH to wei at compile time
 const fn eth_to_wei(eth: f64) -> U256 {
     let wei = (eth * 1_000_000_000_000_000_000.0) as u64;
@@ -45,6 +49,11 @@ pub struct CliArgs {
     /// The path where AMD certificates will be cached.
     #[clap(short, long, default_value = default_cert_cache_path().into_os_string(), env = "CERT_CACHE")]
     pub cert_cache: PathBuf,
+
+    /// ETH balance (in ETH) below which the node logs a low-balance warning after every
+    /// transaction (top-up alerting hook; the hard shutdown floor is separate)
+    #[arg(long, env = "LOW_BALANCE_ETH", default_value_t = DEFAULT_LOW_BALANCE_ETH)]
+    pub low_balance_eth: f64,
 }
 
 /// Node configuration with all required values resolved
@@ -58,6 +67,8 @@ pub struct NodeConfig {
     pub was_wallet_created: bool,
     /// Chain behaviour profile (N7); default reproduces the L2 behaviour bit-identically.
     pub profile: ChainProfile,
+    /// Low-balance warning threshold in wei (N5).
+    pub low_balance_threshold: U256,
 }
 
 impl NodeConfig {
@@ -132,6 +143,7 @@ impl NodeConfig {
             private_key,
             was_wallet_created,
             profile,
+            low_balance_threshold: eth_to_wei(cli_args.low_balance_eth),
         })
     }
 }

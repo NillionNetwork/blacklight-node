@@ -21,6 +21,7 @@ pub struct HtxProcessor {
     verified_counter: Arc<AtomicU64>,
     node_address: Address,
     shutdown_token: CancellationToken,
+    low_balance_threshold: alloy::primitives::U256,
 }
 
 impl HtxProcessor {
@@ -30,6 +31,7 @@ impl HtxProcessor {
         verified_counter: Arc<AtomicU64>,
         node_address: Address,
         shutdown_token: CancellationToken,
+        low_balance_threshold: alloy::primitives::U256,
     ) -> Self {
         Self {
             client,
@@ -37,6 +39,7 @@ impl HtxProcessor {
             verified_counter,
             node_address,
             shutdown_token,
+            low_balance_threshold,
         }
     }
 
@@ -202,7 +205,9 @@ impl HtxProcessor {
             warn!(error = %e, "Failed to fetch status information");
         }
 
-        if let Err(e) = check_minimum_balance(&client, &shutdown_token).await {
+        if let Err(e) =
+            check_minimum_balance(&client, &shutdown_token, self.low_balance_threshold).await
+        {
             warn!(error = %e, "Failed to check minimum balance is above minimum threshold");
         }
 

@@ -32,4 +32,12 @@ sol! {
         function nextEpochReadyAt() external view returns (uint256);
         function mintAndBridgeNextEpoch() external payable returns (uint256 epochId, uint256 amount);
     }
+
+    #[sol(rpc)]
+    contract EmissionsControllerL1 {
+        function mintedEpochs() external view returns (uint256);
+        function epochs() external view returns (uint256);
+        function nextEpochReadyAt() external view returns (uint256);
+        function mintNextEpoch() external returns (uint256 epochId, uint256 amount);
+    }
 }

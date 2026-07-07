@@ -46,6 +46,9 @@ sol! {
         error InvalidVoterWeightSum(uint256 got, uint256 expected);
         error RawHTXHashMismatch();
         error InvalidCommitteeMember(address member);
+        error RoundAlreadyStarted();
+        error StartRoundNotAuthorized(address caller);
+        error UnauthorizedHeartbeatSubmitter(address caller);
 
         event HeartbeatEnqueued(bytes32 indexed heartbeatKey, bytes rawHTX, address indexed submitter);
         event RoundStarted(bytes32 indexed heartbeatKey, uint8 round, bytes32 committeeRoot, uint64 snapshotId, uint64 startedAt, uint64 deadline, address[] members, bytes rawHTX);
@@ -55,7 +58,17 @@ sol! {
         event RewardDistributionAbandoned(bytes32 indexed heartbeatKey, uint8 indexed round);
         event SlashingCallbackFailed(bytes32 indexed heartbeatKey, uint8 indexed round, bytes lowLevelData);
 
-        function submitHeartbeat(bytes calldata rawHTX, uint64 snapshotId) external whenNotPaused nonReentrant returns (bytes32 heartbeatKey);
+        function submitHeartbeat(bytes calldata rawHTX) external whenNotPaused nonReentrant returns (bytes32 heartbeatKey);
+        function startRound(bytes32 heartbeatKey, bytes calldata rawHTX) external returns (address[] memory members);
+        function heartbeats(bytes32 heartbeatKey) external view returns (
+            uint8 status,
+            uint8 currentRound,
+            uint8 escalationLevel,
+            uint8 maxEscalationsSnapshot,
+            uint64 createdAt,
+            bytes32 rawHTXHash,
+            address submitter
+        );
         function submitVerdict(bytes32 heartbeatKey, uint8 verdict, bytes32[] calldata memberProof);
         function escalateOrExpire(bytes32 heartbeatKey, bytes calldata rawHTX) external;
         function isPastDeadline(bytes32 heartbeatKey) external view returns (bool);
@@ -127,6 +140,16 @@ impl<P: Provider + Clone> HeartbeatManagerClient<P> {
         self
     }
 
+    /// Route transactions through a specific fee strategy (N4/N7); the default keeps
+    /// today's L2 rule.
+    pub fn with_fee_strategy(
+        mut self,
+        fee_strategy: contract_clients_common::chain_profile::FeeStrategy,
+    ) -> Self {
+        self.submitter = self.submitter.clone().with_fee_strategy(fee_strategy);
+        self
+    }
+
     /// Get the contract address
     pub fn address(&self) -> Address {
         *self.contract.address()
@@ -159,16 +182,36 @@ impl<P: Provider + Clone> HeartbeatManagerClient<P> {
     // HTX Submission and Verification
     // ------------------------------------------------------------------------
 
-    /// Submit an HTX for verification
+    /// Submit an HTX for verification. Since the C4a startRound split, submission only
+    /// enqueues the heartbeat; the round starts when `startRound` is cranked.
     pub async fn submit_htx(&self, htx: &Htx) -> Result<B256> {
-        let snapshot_id = self.contract.provider().get_block_number().await?;
-        let snapshot_id = snapshot_id.saturating_sub(1);
         let raw_htx = alloy::primitives::Bytes::try_from(htx)?;
-        let call = self.contract.submitHeartbeat(raw_htx, snapshot_id);
+        let call = self.contract.submitHeartbeat(raw_htx);
         self.submitter
             .with_gas_buffer()
             .invoke("submitHeartbeat", call)
             .await
+    }
+
+    /// Start round 1 for an enqueued heartbeat (keeper crank; permissionless after the
+    /// configured delay).
+    pub async fn start_round(
+        &self,
+        heartbeat_key: B256,
+        raw_htx: alloy::primitives::Bytes,
+    ) -> Result<B256> {
+        let call = self.contract.startRound(heartbeat_key, raw_htx);
+        self.submitter
+            .with_gas_buffer()
+            .invoke("startRound", call)
+            .await
+    }
+
+    /// Heartbeat lifecycle snapshot: (status, currentRound). currentRound == 0 means the
+    /// heartbeat is enqueued but round 1 has not been started yet.
+    pub async fn get_heartbeat_status(&self, heartbeat_key: B256) -> Result<(u8, u8)> {
+        let hb = self.contract.heartbeats(heartbeat_key).call().await?;
+        Ok((hb.status, hb.currentRound))
     }
 
     /// Respond to an HTX assignment (called by assigned node)

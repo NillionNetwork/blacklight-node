@@ -114,7 +114,15 @@ impl<'a> Supervisor<'a> {
             config.staking_contract_address,
             config.token_contract_address,
         );
-        BlacklightClient::new(contract_config, config.private_key.clone()).await
+        // N5: votes and every other node tx route through the chain profile's fee
+        // strategy (EIP-1559 with stuck-tx replacement on L1 profiles); events use the
+        // profile's lookback. The default profile is bit-identical to the old behaviour.
+        BlacklightClient::new_with_profile(
+            contract_config,
+            config.private_key.clone(),
+            &config.profile,
+        )
+        .await
     }
 
     /// Create a client with retry/backoff. Returns Shutdown error if cancelled.
@@ -182,6 +190,7 @@ impl<'a> Supervisor<'a> {
             self.verified_counter.clone(),
             self.node_address,
             self.shutdown_token.clone(),
+            self.config.low_balance_threshold,
         )
     }
 

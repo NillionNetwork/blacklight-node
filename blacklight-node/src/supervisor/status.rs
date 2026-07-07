@@ -4,6 +4,8 @@ use blacklight_contract_clients::BlacklightClient;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
+use alloy::primitives::U256;
+
 use crate::args::MIN_ETH_BALANCE;
 
 /// Print status information (ETH balance, staked balance, verified HTXs)
@@ -22,12 +24,16 @@ pub async fn print_status(client: &BlacklightClient, verified_count: u64) -> Res
     Ok(())
 }
 
-/// Print status and check balance after HTX processing
+/// Print status and check balance after HTX processing.
+///
+/// Two thresholds (N5): below `low_balance_threshold` the node WARNS so the operator can
+/// top up before votes are at risk (a missed vote inside the response window means
+/// jailing); below the hard MIN_ETH_BALANCE floor it shuts down.
 pub async fn check_minimum_balance(
     client: &BlacklightClient,
     shutdown_token: &CancellationToken,
+    low_balance_threshold: U256,
 ) -> Result<()> {
-    // Check if balance is below minimum threshold
     match client.get_balance().await {
         Ok(balance) => {
             if balance < MIN_ETH_BALANCE {
@@ -38,6 +44,13 @@ pub async fn check_minimum_balance(
                 );
                 shutdown_token.cancel();
                 bail!("Insufficient ETH balance");
+            }
+            if balance < low_balance_threshold {
+                warn!(
+                    balance = %format_ether(balance),
+                    low_balance_threshold = %format_ether(low_balance_threshold),
+                    "🪫 LOW ETH BALANCE: top up the node wallet to keep paying vote gas"
+                );
             }
         }
         Err(e) => {

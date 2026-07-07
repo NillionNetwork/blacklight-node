@@ -6,18 +6,19 @@ mod escalator;
 mod events;
 mod jailing;
 mod rewards;
+mod starter;
 mod supervisor;
 
 pub use supervisor::L2Supervisor;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
-struct RoundKey {
+pub(crate) struct RoundKey {
     heartbeat_key: B256,
     round: u8,
 }
 
 #[derive(Debug, Clone, Default)]
-struct RoundState {
+pub(crate) struct RoundState {
     members: Vec<Address>,
     raw_htx: Bytes,
     deadline: u64,

@@ -1,4 +1,6 @@
-use crate::contracts::{EmissionsController, Erc20, JailingPolicy, RewardPolicy};
+use crate::contracts::{
+    EmissionsController, EmissionsControllerL1, Erc20, JailingPolicy, RewardPolicy,
+};
 use alloy::{
     primitives::{Address, U256},
     providers::DynProvider,
@@ -15,6 +17,8 @@ pub type StakingOperatorsInstance = StakingOperators::StakingOperatorsInstance<D
 pub type JailingPolicyInstance = JailingPolicy::JailingPolicyInstance<DynProvider>;
 pub type EmissionsControllerInstance =
     EmissionsController::EmissionsControllerInstance<DynProvider>;
+pub type EmissionsControllerL1Instance =
+    EmissionsControllerL1::EmissionsControllerL1Instance<DynProvider>;
 pub type RewardPolicyInstance = RewardPolicy::RewardPolicyInstance<DynProvider>;
 pub type ERC20Instance = Erc20::Erc20Instance<DynProvider>;
 pub type ValidationRegistryInstance =
@@ -97,6 +101,12 @@ impl L2KeeperClient {
         self.ctx.tx_lock()
     }
 
+    /// The underlying provider context (shared wallet/nonce/lock). Used by the L1
+    /// single-chain mode to serve the emissions leg from the same provider.
+    pub fn context(&self) -> ProviderContext {
+        self.ctx.clone()
+    }
+
     pub async fn get_balance(&self) -> anyhow::Result<U256> {
         self.ctx.get_balance().await
     }
@@ -115,12 +125,24 @@ impl L1EmissionsClient {
         private_key: String,
     ) -> anyhow::Result<Self> {
         let ctx = ProviderContext::new(&rpc_url, &private_key).await?;
+        Ok(Self::from_context(ctx, emissions_address))
+    }
+
+    /// Build from an existing provider context (L1 single-chain mode, N6): the emissions
+    /// leg shares the round-lifecycle leg's provider, wallet, nonce lock, and balance.
+    pub fn from_context(ctx: ProviderContext, emissions_address: Address) -> Self {
         let emissions = EmissionsControllerInstance::new(emissions_address, ctx.provider().clone());
-        Ok(Self { ctx, emissions })
+        Self { ctx, emissions }
     }
 
     pub fn emissions(&self) -> &EmissionsControllerInstance {
         &self.emissions
+    }
+
+    /// The same address viewed through the bridge-free L1 controller ABI (C1). Used in
+    /// single-chain mode where mintNextEpoch replaces mintAndBridgeNextEpoch.
+    pub fn emissions_l1(&self) -> EmissionsControllerL1Instance {
+        EmissionsControllerL1Instance::new(*self.emissions.address(), self.ctx.provider().clone())
     }
 
     pub fn provider(&self) -> DynProvider {

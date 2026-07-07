@@ -139,43 +139,70 @@ async fn main() -> Result<()> {
         )
         .await?,
     );
-    let l1_client = Arc::new(
-        L1EmissionsClient::new(
-            config.l1_rpc_url.clone(),
+    let l1_client = if config.l1_single_chain {
+        // N6 keeper merge: both legs are the same chain; share one provider, wallet,
+        // nonce lock, and balance check.
+        info!("L1 single-chain mode: emissions leg shares the round-lifecycle provider");
+        Arc::new(L1EmissionsClient::from_context(
+            l2_client.context(),
             config.l1_emissions_controller_address,
-            config.private_key.clone(),
+        ))
+    } else {
+        Arc::new(
+            L1EmissionsClient::new(
+                config.l1_rpc_url.clone(),
+                config.l1_emissions_controller_address,
+                config.private_key.clone(),
+            )
+            .await?,
         )
-        .await?,
-    );
+    };
 
     let address = l1_client.signer_address();
     info!("Checking balances for address: {address}");
 
-    let l1_balance = l1_client
-        .get_balance()
-        .await
-        .context("Failed to get L1 balance")?;
-    let l2_balance = l2_client
-        .get_balance()
-        .await
-        .context("Failed to get L2 balance")?;
-    if l2_balance < MIN_ETH_BALANCE || l1_balance < MIN_ETH_BALANCE {
-        bail!(
-            "Insufficient funds. Keeper requires at least {} ETH on both L1 and L2.",
-            alloy::primitives::utils::format_ether(MIN_ETH_BALANCE)
+    if config.l1_single_chain {
+        let balance = l2_client
+            .get_balance()
+            .await
+            .context("Failed to get balance")?;
+        if balance < MIN_ETH_BALANCE {
+            bail!(
+                "Insufficient funds. Keeper requires at least {} ETH.",
+                alloy::primitives::utils::format_ether(MIN_ETH_BALANCE)
+            );
+        }
+        info!(
+            balance = format!("{} ETH", format_ether(balance)),
+            "Keeper wallet {address} ready (single-chain)"
+        );
+    } else {
+        let l1_balance = l1_client
+            .get_balance()
+            .await
+            .context("Failed to get L1 balance")?;
+        let l2_balance = l2_client
+            .get_balance()
+            .await
+            .context("Failed to get L2 balance")?;
+        if l2_balance < MIN_ETH_BALANCE || l1_balance < MIN_ETH_BALANCE {
+            bail!(
+                "Insufficient funds. Keeper requires at least {} ETH on both L1 and L2.",
+                alloy::primitives::utils::format_ether(MIN_ETH_BALANCE)
+            );
+        }
+
+        let l1_balance = format!("{} ETH", format_ether(l1_balance));
+        let l2_balance = format!("{} ETH", format_ether(l2_balance));
+        info!(
+            l2_balance = l2_balance,
+            l1_balance = l1_balance,
+            "Keeper wallet {address} ready"
         );
     }
 
-    let l1_balance = format!("{} ETH", format_ether(l1_balance));
-    let l2_balance = format!("{} ETH", format_ether(l2_balance));
-    info!(
-        l2_balance = l2_balance,
-        l1_balance = l1_balance,
-        "Keeper wallet {address} ready"
-    );
-
     let state = Arc::new(Mutex::new(Default::default()));
-    let l1 = EmissionsSupervisor::new(config.clone(), l2_client.clone()).await?;
+    let l1 = EmissionsSupervisor::new(config.clone(), l2_client.clone(), l1_client).await?;
     let l2 = L2Supervisor::new(l2_client, state.clone(), &config).await?;
     l2.spawn(config).await?;
     l1.spawn();

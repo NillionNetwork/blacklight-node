@@ -210,6 +210,7 @@ impl L2RewardsMetrics {
 pub(crate) struct L2EscalationsMetrics {
     total: Counter<u64>,
     block: Gauge<u64>,
+    round_starts: Counter<u64>,
 }
 
 impl L2EscalationsMetrics {
@@ -222,11 +223,23 @@ impl L2EscalationsMetrics {
             .u64_gauge("blacklight.keeper.l2.escalations.block")
             .with_description("The block used for escalations")
             .build();
-        Self { total, block }
+        let round_starts = meter
+            .u64_counter("blacklight.keeper.l2.round_starts.total")
+            .with_description("Total number of startRound cranks (C4a split)")
+            .build();
+        Self {
+            total,
+            block,
+            round_starts,
+        }
     }
 
     pub(crate) fn inc_escalations(&self) {
         self.total.add(1, &[]);
+    }
+
+    pub(crate) fn inc_round_starts(&self) {
+        self.round_starts.add(1, &[]);
     }
 
     pub(crate) fn set_block(&self, block: u64) {

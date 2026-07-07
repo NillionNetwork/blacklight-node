@@ -30,6 +30,27 @@ impl BlacklightClient {
         Self::from_context(ctx, config).await
     }
 
+    /// Like [`Self::new`] but applying a chain profile (N7): the heartbeat manager's
+    /// transactions (votes included) use the profile's fee strategy and event queries use
+    /// its lookback. The default profile reproduces the pre-profile behaviour.
+    pub async fn new_with_profile(
+        config: ContractConfig,
+        private_key: String,
+        profile: &contract_clients_common::chain_profile::ChainProfile,
+    ) -> anyhow::Result<Self> {
+        let mut client = Self::new(config, private_key).await?;
+        client.ctx = client
+            .ctx
+            .clone()
+            .with_fee_strategy(profile.fee_strategy.clone());
+        client.manager = client
+            .manager
+            .clone()
+            .with_fee_strategy(profile.fee_strategy.clone())
+            .with_block_lookback(profile.lookback_blocks);
+        Ok(client)
+    }
+
     /// Create a client from an existing [`ProviderContext`].
     ///
     /// Use this when you want to share the same provider, wallet, and nonce

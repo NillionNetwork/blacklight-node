@@ -34,6 +34,9 @@ impl EventListener {
         to_block: u64,
         state: &mut KeeperState,
     ) -> anyhow::Result<()> {
+        let heartbeats_enqueued = self
+            .query_events::<HeartbeatEnqueuedEvent>(from_block, to_block)
+            .await?;
         let rounds_started = self
             .query_events::<RoundStartedEvent>(from_block, to_block)
             .await?;
@@ -47,6 +50,13 @@ impl EventListener {
             .query_events::<RewardDistributionAbandonedEvent>(from_block, to_block)
             .await?;
 
+        for (event, _log) in heartbeats_enqueued {
+            // enqueued-but-unstarted heartbeats inside the lookback window feed the
+            // startRound duty after a keeper restart
+            state
+                .raw_htx_by_heartbeat
+                .insert(event.heartbeatKey, event.rawHTX.clone());
+        }
         for (event, _log) in rounds_started {
             let key = RoundKey {
                 heartbeat_key: event.heartbeatKey,

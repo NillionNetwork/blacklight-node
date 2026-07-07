@@ -4,7 +4,7 @@ use crate::{
     erc8004::{events::Erc8004EventListener, responder::ValidationResponder},
     l2::{
         KeeperState, escalator::RoundEscalator, events::EventListener, jailing::Jailer,
-        rewards::RewardsDistributor,
+        rewards::RewardsDistributor, starter::RoundStarter,
     },
     metrics,
 };
@@ -20,6 +20,7 @@ pub struct L2Supervisor {
     jailer: Jailer,
     rewards_distributor: RewardsDistributor,
     round_escalator: RoundEscalator,
+    round_starter: RoundStarter,
     erc8004_enabled: bool,
 }
 
@@ -32,6 +33,11 @@ impl L2Supervisor {
         let jailer = Jailer::new(client.clone(), state.clone());
         let rewards_distributor = RewardsDistributor::new(client.clone(), state.clone());
         let round_escalator = RoundEscalator::new(client.clone(), state.clone());
+        let round_starter = RoundStarter::new(
+            client.clone(),
+            state.clone(),
+            config.l2_profile.fee_strategy.clone(),
+        );
         let erc8004_enabled =
             config.enable_erc8004 && config.l2_validation_registry_address.is_some();
         Ok(Self {
@@ -40,6 +46,7 @@ impl L2Supervisor {
             jailer,
             rewards_distributor,
             round_escalator,
+            round_starter,
             erc8004_enabled,
         })
     }
@@ -140,6 +147,11 @@ impl L2Supervisor {
 
             if let Err(e) = self.rewards_distributor.sync_state().await {
                 error!("Error syncing state: {e}");
+            }
+
+            info!("Processing round starts for block {block}");
+            if let Err(e) = self.round_starter.process_round_starts().await {
+                error!("Failed to process round starts: {e}");
             }
 
             info!("Processing escalations for block {block}");

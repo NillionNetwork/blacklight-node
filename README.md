@@ -62,3 +62,27 @@ For detailed logging, pass `-e RUST_LOG=DEBUG` as an extra parameter to docker, 
 ```bash
 docker run -e RUST_LOG=DEBUG -it --rm -v ./:/app/ ghcr.io/nillionnetwork/blacklight/blacklight_node:latest
 ```
+
+## Funding the node wallet (L1 deployments)
+
+On Ethereum L1 deployments (Sepolia for Phase 1), nodes submit their votes directly
+on-chain from their own wallet and pay the gas themselves — roughly 90k gas per vote
+(≈ a few dollars at mainnet prices; free test ETH on Sepolia). A node that cannot pay
+for a vote inside the response window is treated as a non-participant and can be
+jailed, so keeping the wallet funded is an operational requirement.
+
+- **Fee handling:** run L1 nodes with `FEE_STRATEGY=eip1559` (see `--help` for the
+  related `MAX_FEE_CAP_GWEI`, `FEE_BUMP_PERCENT`, `FEE_BUMP_AFTER_BLOCKS` knobs). The
+  node then estimates fees from fee history and automatically replaces stuck votes
+  with fee-bumped transactions during gas spikes. The default strategy is the L2 rule
+  and must not be used against L1.
+- **Low-balance warning:** after every processed HTX the node compares its balance to
+  `--low-balance-eth` (env `LOW_BALANCE_ETH`, default 0.01 ETH) and logs a
+  `LOW ETH BALANCE` warning below it — wire this into your log alerting. Below the
+  hard floor (0.00001 ETH) the node shuts down to avoid missing votes silently.
+- **Topping up:** send ETH to the node address printed at startup (also in
+  `blacklight_node.env`). Check the balance any time with
+  `cast balance <node-address> --rpc-url <rpc>`.
+- **Sizing:** at one vote per selected round, a 0.1 ETH balance covers roughly 1,000
+  votes at 10 gwei. Scale with your expected selection frequency (≈ rounds/day ×
+  committee-size / fleet-size).

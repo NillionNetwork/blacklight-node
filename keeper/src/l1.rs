@@ -15,20 +15,17 @@ use tokio::time::interval;
 use tracing::{debug, error, info, warn};
 
 pub struct EmissionsSupervisor {
-    l1_client: L1EmissionsClient,
+    l1_client: Arc<L1EmissionsClient>,
     l2_client: Arc<L2KeeperClient>,
     config: KeeperConfig,
 }
 
 impl EmissionsSupervisor {
-    pub async fn new(config: KeeperConfig, l2_client: Arc<L2KeeperClient>) -> Result<Self> {
-        let l1_client = L1EmissionsClient::new(
-            config.l1_rpc_url.clone(),
-            config.l1_emissions_controller_address,
-            config.private_key.clone(),
-        )
-        .await
-        .context("Failed to create L1 client")?;
+    pub async fn new(
+        config: KeeperConfig,
+        l2_client: Arc<L2KeeperClient>,
+        l1_client: Arc<L1EmissionsClient>,
+    ) -> Result<Self> {
         Ok(Self {
             l1_client,
             l2_client,
@@ -62,6 +59,27 @@ impl EmissionsSupervisor {
             debug!("Next epoch is not ready yet");
             return Ok(());
         }
+
+        if self.config.l1_single_chain {
+            // C1/N6: bridge-free EmissionsControllerL1 — the ready check above is the
+            // only gate (mint lands directly on the RewardPolicy and syncs atomically).
+            // The L2 budget-depletion throttle below only applies to the bridge path.
+            metrics::get().l1.epochs.set_blocked(false);
+            info!("Minting next emission epoch (bridge-free L1 controller)");
+            let emissions = self.l1_client.emissions_l1();
+            let call = emissions.mintNextEpoch();
+            return match call.send().await {
+                Ok(pending) => {
+                    let receipt = pending.get_receipt().await?;
+                    let tx_hash = receipt.transaction_hash;
+                    self.publish_balance_metric().await;
+                    info!("Emission minted on tx {tx_hash}");
+                    Ok(())
+                }
+                Err(e) => bail!("Failed to mint tokens: {e}"),
+            };
+        }
+
         if !self.is_l2_budget_depleted().await? {
             metrics::get().l1.epochs.set_blocked(true);
             warn!("Next epoch is ready but budget is not depleted yet");
