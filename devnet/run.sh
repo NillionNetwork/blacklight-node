@@ -73,11 +73,13 @@ KEEPER_KEY="${KEYS[2]}"; KEEPER_ADDR="${ADDRS[2]}"
 
 PIDS=()
 teardown() {
-  echo "==> tearing down"
+  local code=$?
+  echo "==> tearing down (exit $code)"
   for pid in "${PIDS[@]:-}"; do
     kill "$pid" 2>/dev/null || true
   done
   wait 2>/dev/null || true
+  exit "$code"
 }
 trap teardown EXIT
 
@@ -254,8 +256,9 @@ check_started() {
 wait_for 120 "first RoundStarted" check_started
 echo "    round started"
 
-echo "==> waiting for $CI_ROUNDS finalized round(s) (response window 60s + finalize crank)"
-wait_for 240 "$CI_ROUNDS finalized round(s)" check_finalized
+FINALIZE_TIMEOUT=$(( 180 + CI_ROUNDS * 30 ))
+echo "==> waiting for $CI_ROUNDS finalized round(s) (timeout ${FINALIZE_TIMEOUT}s)"
+wait_for "$FINALIZE_TIMEOUT" "$CI_ROUNDS finalized round(s)" check_finalized
 echo "    $(finalized_count) round(s) finalized"
 echo "==> HEALTHY: rounds are starting and finalizing"
 
