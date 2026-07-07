@@ -1,3 +1,4 @@
+use crate::chain_profile::FeeStrategy;
 use alloy::{
     network::{Ethereum, EthereumWallet, NetworkWallet},
     primitives::{Address, B256, TxKind, U256},
@@ -19,6 +20,7 @@ pub struct ProviderContext {
     provider: DynProvider,
     wallet: EthereumWallet,
     tx_lock: Arc<Mutex<()>>,
+    fee_strategy: FeeStrategy,
 }
 
 impl ProviderContext {
@@ -45,6 +47,7 @@ impl ProviderContext {
             provider,
             wallet,
             tx_lock,
+            fee_strategy: FeeStrategy::default(),
         })
     }
 
@@ -83,7 +86,20 @@ impl ProviderContext {
             provider,
             wallet,
             tx_lock,
+            fee_strategy: FeeStrategy::default(),
         })
+    }
+
+    /// Use a specific fee strategy for value transfers (N4/N7); the default keeps the
+    /// pre-profile behaviour.
+    pub fn with_fee_strategy(mut self, fee_strategy: FeeStrategy) -> Self {
+        self.fee_strategy = fee_strategy;
+        self
+    }
+
+    /// The configured fee strategy.
+    pub fn fee_strategy(&self) -> &FeeStrategy {
+        &self.fee_strategy
     }
 
     /// Reference to the underlying provider.
@@ -119,13 +135,35 @@ impl ProviderContext {
 
     /// Send ETH to an address and wait for the receipt.
     pub async fn send_eth(&self, to: Address, amount: U256) -> anyhow::Result<B256> {
-        let gas_price = self.provider.get_gas_price().await?;
-        let max_fee = std::cmp::max(gas_price, 1);
+        let (max_fee, priority_fee) = match &self.fee_strategy {
+            // pre-N4 behaviour, byte-identical
+            FeeStrategy::L2MinPriority => {
+                let gas_price = self.provider.get_gas_price().await?;
+                let max_fee = std::cmp::max(gas_price, 1);
+                (max_fee, std::cmp::min(1, max_fee))
+            }
+            FeeStrategy::Eip1559 {
+                max_fee_cap_gwei, ..
+            } => {
+                let estimate = self.provider.estimate_eip1559_fees().await?;
+                if let Some(cap_gwei) = max_fee_cap_gwei {
+                    let cap_wei = *cap_gwei as u128 * 1_000_000_000;
+                    if estimate.max_fee_per_gas > cap_wei {
+                        anyhow::bail!(
+                            "estimated max fee {} wei exceeds cap {} wei; queuing for retry",
+                            estimate.max_fee_per_gas,
+                            cap_wei
+                        );
+                    }
+                }
+                (estimate.max_fee_per_gas, estimate.max_priority_fee_per_gas)
+            }
+        };
         let tx = TransactionRequest {
             to: Some(TxKind::Call(to)),
             value: Some(amount),
             max_fee_per_gas: Some(max_fee),
-            max_priority_fee_per_gas: Some(std::cmp::min(1, max_fee)),
+            max_priority_fee_per_gas: Some(priority_fee),
             ..Default::default()
         };
 
