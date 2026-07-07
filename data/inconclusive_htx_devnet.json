@@ -1,0 +1,28 @@
+[
+  {
+    "provider": "nillion",
+    "version": "v1",
+    "workload_id": {
+      "current": "1001",
+      "previous": "1000"
+    },
+    "operator": {
+      "id": 4,
+      "name": "Latitude"
+    },
+    "builder": {
+      "id": 94323,
+      "name": "Nillion"
+    },
+    "workload_measurement": {
+      "url": "http://127.0.0.1:9/nilcc/api/v2/report",
+      "artifacts_version": "0.4.2",
+      "cpus": 4,
+      "gpus": 0,
+      "docker_compose_hash": "fcc5ba76b11c5aed2ee654b3278a7b59bf4085d7eb50d2ac2e390a174f58d607"
+    },
+    "builder_measurement": {
+      "url": "https://raw.githubusercontent.com/NillionNetwork/nilgpt/main/measurement-hash-index.json"
+    }
+  }
+]

@@ -24,6 +24,8 @@ NODES=5
 CI_MODE=0
 CI_ROUNDS=1
 HTXS_PATH=""
+DEPLOY_CONFIG="core.anvil-l1.json"
+HOOK=""
 ANVIL_PORT="${ANVIL_PORT:-8545}"
 NODE_REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONTRACTS_DIR="${CONTRACTS_DIR:-$NODE_REPO/../blacklight-contracts}"
@@ -35,6 +37,8 @@ while [[ $# -gt 0 ]]; do
     --ci) CI_MODE=1; shift ;;
     --rounds) CI_ROUNDS="$2"; shift 2 ;;
     --htxs) HTXS_PATH="$2"; shift 2 ;;
+    --config) DEPLOY_CONFIG="$2"; shift 2 ;;
+    --hook) HOOK="$2"; shift 2 ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
 done
@@ -117,12 +121,12 @@ wait_for 30 "anvil rpc" cast chain-id --rpc-url "$RPC"
 # ---------------------------------------------------------------------------
 # 3. Deploy contracts (contracts repo's script + core.anvil-l1.json)
 # ---------------------------------------------------------------------------
-echo "==> deploying contracts (core.anvil-l1.json)"
+echo "==> deploying contracts ($DEPLOY_CONFIG)"
 (
   cd "$CONTRACTS_DIR"
   PRIVATE_KEY="$DEPLOYER_KEY" WRITE_OUTPUT=true \
     forge script script/deployment/DeployBlacklightFromConfig.s.sol \
-    --sig 'run(string)' script/deployment/configs/core.anvil-l1.json \
+    --sig 'run(string)' "script/deployment/configs/$DEPLOY_CONFIG" \
     --rpc-url "$RPC" --broadcast
 ) > "$RUN_DIR/deploy.log" 2>&1
 cp "$CONTRACTS_DIR/contract_addresses.env" "$RUN_DIR/"
@@ -263,6 +267,20 @@ echo "==> waiting for $CI_ROUNDS finalized round(s) (timeout ${FINALIZE_TIMEOUT}
 wait_for "$FINALIZE_TIMEOUT" "$CI_ROUNDS finalized round(s)" check_finalized
 echo "    $(finalized_count) round(s) finalized"
 echo "==> HEALTHY: rounds are starting and finalizing"
+
+# Scenario hook (P1.M3 e2e): runs with the devnet live; its exit code is the
+# run's result. The hook sees RUN_DIR/RPC/addresses/keys via the environment.
+if [[ -n "$HOOK" ]]; then
+  echo "==> running hook: $HOOK"
+  if RUN_DIR="$RUN_DIR" RPC="$RPC" DEPLOYER_KEY="$DEPLOYER_KEY" NODES="$NODES" \
+     bash "$HOOK"; then
+    echo "==> hook: success"
+    exit 0
+  else
+    echo "==> hook: FAILED" >&2
+    exit 1
+  fi
+fi
 
 if (( CI_MODE )); then
   echo "==> CI mode: success"

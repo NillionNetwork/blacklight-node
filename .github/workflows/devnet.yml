@@ -42,6 +42,16 @@ jobs:
           CONTRACTS_DIR: ${{ github.workspace }}/blacklight-contracts
         run: ./devnet/run.sh --nodes 5 --ci
 
+      - name: Refresh the valid-HTX fixture from the live workload
+        working-directory: blacklight-node
+        run: ./devnet/refresh_valid_htx.sh
+
+      - name: P1.M3 e2e scenario suite
+        working-directory: blacklight-node
+        env:
+          CONTRACTS_DIR: ${{ github.workspace }}/blacklight-contracts
+        run: ./devnet/e2e.sh
+
       - name: Upload run logs
         if: always()
         uses: actions/upload-artifact@v4
