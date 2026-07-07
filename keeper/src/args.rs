@@ -2,6 +2,7 @@ use alloy::primitives::{Address, U256};
 use alloy::signers::local::PrivateKeySigner;
 use anyhow::Result;
 use clap::Parser;
+use contract_clients_common::chain_profile::{ChainProfile, FeeStrategy};
 use std::env;
 use std::time::Duration;
 use tracing::info;
@@ -62,6 +63,33 @@ pub struct CliArgs {
     #[arg(long, env = "LOOKBACK_BLOCKS", default_value_t = 50)]
     pub lookback_blocks: u64,
 
+    // --- Chain profiles (N7, L1 port). Defaults keep today's behaviour bit-identical. ---
+    /// Single-chain mode: the L2 and L1 legs are the same chain (L1 deployment) and share
+    /// one provider/wallet/balance-check (consumed by the WP8 keeper merge)
+    #[arg(long, env = "L1_SINGLE_CHAIN", default_value_t = false)]
+    pub l1_single_chain: bool,
+
+    /// Fee strategy for the round-lifecycle (today: L2) leg: "l2-min-priority" (default)
+    /// or "eip1559"
+    #[arg(long, env = "L2_FEE_STRATEGY")]
+    pub l2_fee_strategy: Option<String>,
+
+    /// Fee strategy for the emissions (L1) leg: "l2-min-priority" (default) or "eip1559"
+    #[arg(long, env = "L1_FEE_STRATEGY")]
+    pub l1_fee_strategy: Option<String>,
+
+    /// Max fee cap in gwei for eip1559 legs (unset = uncapped)
+    #[arg(long, env = "MAX_FEE_CAP_GWEI")]
+    pub max_fee_cap_gwei: Option<u64>,
+
+    /// Percent fee bump per stuck-tx replacement for eip1559 legs (default 15)
+    #[arg(long, env = "FEE_BUMP_PERCENT")]
+    pub fee_bump_percent: Option<u8>,
+
+    /// Blocks without a receipt before a stuck tx is re-priced for eip1559 legs (default 3)
+    #[arg(long, env = "FEE_BUMP_AFTER_BLOCKS")]
+    pub fee_bump_after_blocks: Option<u64>,
+
     /// Keeper tick interval in seconds (L2 rounds/rewards/jailing)
     #[arg(long, env = "TICK_INTERVAL_SECS", default_value_t = 5)]
     pub tick_interval_secs: u64,
@@ -101,6 +129,12 @@ pub struct KeeperConfig {
     pub disable_jailing: bool,
     pub enable_erc8004: bool,
     pub otel: Option<OtelConfig>,
+    /// Chain profile for the round-lifecycle leg (today: the L2). Default = today's rule.
+    pub l2_profile: ChainProfile,
+    /// Chain profile for the emissions leg (the L1). Default = today's rule.
+    pub l1_profile: ChainProfile,
+    /// Both legs are one chain, sharing one provider/wallet (L1 deployments; WP8).
+    pub l1_single_chain: bool,
 }
 
 impl KeeperConfig {
@@ -130,6 +164,28 @@ impl KeeperConfig {
         let lookback_blocks = args.lookback_blocks;
         let tick_interval = Duration::from_secs(args.tick_interval_secs);
         let emissions_interval = Duration::from_secs(args.emissions_interval_secs);
+
+        let l2_profile = ChainProfile {
+            fee_strategy: FeeStrategy::resolve(
+                args.l2_fee_strategy.as_deref(),
+                args.max_fee_cap_gwei,
+                args.fee_bump_percent,
+                args.fee_bump_after_blocks,
+            )?,
+            lookback_blocks,
+            ws: true,
+        };
+        let l1_profile = ChainProfile {
+            fee_strategy: FeeStrategy::resolve(
+                args.l1_fee_strategy.as_deref(),
+                args.max_fee_cap_gwei,
+                args.fee_bump_percent,
+                args.fee_bump_after_blocks,
+            )?,
+            lookback_blocks,
+            ws: true,
+        };
+        let l1_single_chain = args.l1_single_chain;
 
         let wallet: PrivateKeySigner = private_key.parse()?;
         let address = wallet.address();
@@ -166,6 +222,9 @@ impl KeeperConfig {
             disable_jailing,
             enable_erc8004,
             otel,
+            l2_profile,
+            l1_profile,
+            l1_single_chain,
         })
     }
 }

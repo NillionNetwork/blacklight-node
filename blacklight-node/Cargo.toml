@@ -23,5 +23,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
 blacklight-contract-clients = { path = "../crates/blacklight-contract-clients" }
 chain-args = { path = "../crates/chain-args" }
+contract-clients-common = { path = "../crates/contract-clients-common" }
 state-file = { path = "../crates/state-file" }
 

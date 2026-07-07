@@ -58,6 +58,7 @@ impl NilccConfig {
             manager_contract_address,
             staking_contract_address,
             token_contract_address,
+            ..
         } = ChainConfig::new(args.chain_args, &state_file)?;
 
         let private_key = args

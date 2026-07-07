@@ -16,11 +16,13 @@ use anyhow::anyhow;
 use crate::errors::extract_revert_from_contract_error_with_custom;
 use crate::tx_submitter::ErrorDecoder;
 
+pub mod chain_profile;
 pub mod errors;
 pub mod event_helper;
 pub mod provider_context;
 pub mod tx_submitter;
 
+pub use chain_profile::{ChainProfile, FeeStrategy};
 pub use provider_context::ProviderContext;
 
 /// Estimate gas for a contract call with a 50% buffer.

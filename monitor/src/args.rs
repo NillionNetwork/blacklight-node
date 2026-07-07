@@ -45,6 +45,7 @@ impl MonitorConfig {
             manager_contract_address,
             staking_contract_address,
             token_contract_address,
+            ..
         } = ChainConfig::new(cli_args.chain_args, &state_file)?;
 
         // Load private key with priority (monitor uses first Hardhat account)

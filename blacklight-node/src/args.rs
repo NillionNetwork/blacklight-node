@@ -10,6 +10,7 @@ use clap::Parser;
 use crate::wallet::{WalletStatus, display_wallet_status, generate_wallet};
 use blacklight_contract_clients::BlacklightClient;
 use chain_args::{ChainArgs, ChainConfig};
+use contract_clients_common::chain_profile::ChainProfile;
 use state_file::StateFile;
 use tracing::{error, info};
 
@@ -55,6 +56,8 @@ pub struct NodeConfig {
     pub token_contract_address: Address,
     pub private_key: String,
     pub was_wallet_created: bool,
+    /// Chain behaviour profile (N7); default reproduces the L2 behaviour bit-identically.
+    pub profile: ChainProfile,
 }
 
 impl NodeConfig {
@@ -68,6 +71,7 @@ impl NodeConfig {
             manager_contract_address,
             staking_contract_address,
             token_contract_address,
+            profile,
         } = ChainConfig::new(cli_args.chain_args, &state_file)?;
 
         // Load or generate private key
@@ -127,6 +131,7 @@ impl NodeConfig {
             token_contract_address,
             private_key,
             was_wallet_created,
+            profile,
         })
     }
 }
