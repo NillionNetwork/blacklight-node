@@ -141,6 +141,22 @@ impl RewardsDistributor {
                     tx_hash = ?tx_hash,
                     "Rewards distributed"
                 );
+                // The distribution consumes spendable budget (all of it when
+                // maxPayoutPerFinalize is 0). Refresh the cached context so the
+                // remaining jobs this tick gate on the real value instead of a
+                // stale positive one and revert in pre-simulation.
+                let reward_policy = self.client.reward_policy(info.reward);
+                if let (Ok(spendable), Ok(remaining)) = (
+                    reward_policy.spendableBudget().call().await,
+                    reward_policy.streamRemaining().call().await,
+                ) {
+                    if let Some(ctx) = self.rewards_context.get_mut(&info.reward) {
+                        ctx.spendable = spendable;
+                        ctx.remaining = remaining;
+                        metrics::get().l2.rewards.set_spendable(spendable);
+                        metrics::get().l2.rewards.set_remaining(remaining);
+                    }
+                }
                 let mut state = self.state.lock().await;
                 if let Some(round_state) = state.rounds.get_mut(&key) {
                     round_state.rewards_done = true;

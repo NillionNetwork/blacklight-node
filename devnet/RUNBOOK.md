@@ -214,6 +214,20 @@ behaviour). `kill -9` leaves registration intact (used by the jailing e2e test).
 7. **anvil rejects below-base-fee txs at submission** (no queueing like a real
    mempool) — stuck-tx tests use `--no-mining` + `anvil_dropTransaction`
    (see `crates/contract-clients-common/tests/eip1559_anvil.rs`).
+8. **Reward budget exhaustion**: with `maxPayoutPerFinalize == 0` (uncapped),
+   the FIRST `distributeRewards` after an emissions mint sweeps the entire
+   spendable budget into that one round's outstanding rewards; every later
+   conclusive round then starves ("Reward budget still unlocking, skipping")
+   until the next emissions epoch. Fixed on Sepolia 2026-07-08:
+   `setMaxPayoutPerFinalize(1e9)` (1,000 TEST/round) + a 100k TEST top-up to
+   the RewardPolicy (the keeper auto-`sync()`s any deposit > 100 TEST). If
+   rounds ever starve again, top up the same way — never fund from a node
+   wallet's claimed rewards (rewards accrue to the STAKER, i.e. the deployer).
+9. **Keeper stale reward context (fixed 2026-07-08)**: with several reward
+   jobs pending in one tick the keeper cached `spendable` across jobs; after
+   the first distribution consumed it, the remaining jobs reverted in
+   pre-simulation and logged ERRORs. `keeper/src/l2/rewards.rs` now refreshes
+   the cached context after each successful distribution.
 
 ## Measured L1 costs (Sepolia, 2026-07-07, k=5 committee)
 
