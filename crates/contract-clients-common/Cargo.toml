@@ -14,5 +14,5 @@ tracing = "0.1"
 
 [dev-dependencies]
 serde_json = "1.0"
-alloy = { version = "1.1", features = ["contract", "providers", "pubsub", "node-bindings"] }
+alloy = { version = "1.1", features = ["contract", "providers", "pubsub"] }
 tokio = { version = "1.49", features = ["macros", "rt-multi-thread", "time", "sync"] }

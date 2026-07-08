@@ -57,7 +57,7 @@ The coordinator will then, from their side (deployer wallet):
 # for each of your addresses (their commands, listed here for reference):
 cast send $STAKE_TOKEN 'approve(address,uint256)' $STAKING_OPERATORS <amount> …
 cast send $STAKING_OPERATORS 'stakeTo(address,uint256)' <your_nodeN_ADDR> 100000000000 …  # 100k TEST
-cast send <your_nodeN_ADDR> --value 0.04ether …                                            # gas money
+cast send <your_nodeN_ADDR> --value 0.04ether …                                            # gas money (target; coordinator may send less — any amount clearing the ≥~0.03 gate in the check below is fine, no top-up pending)
 ```
 
 Staking is `stakeTo` — the **staker** (deployer) stakes on behalf of your
