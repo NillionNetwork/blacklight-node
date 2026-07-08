@@ -112,7 +112,7 @@ cast send $STAKING_OPERATORS "stakeTo(address,uint256)" $nodeN_ADDR 100000000000
 
 ```bash
 cd blacklight-node && cargo build -p keeper -p blacklight-node
-set -a; source devnet/sepolia.env devnet/sepolia.wallets.env devnet/sepolia-deployment.env; set +a
+set -a; source devnet/sepolia.env; source devnet/sepolia.wallets.env; source devnet/sepolia-deployment.env; set +a
 SOAK=$PWD/devnet/runs/sepolia-soak; mkdir -p $SOAK
 
 # Keeper: L1 single-chain mode, EIP-1559 fees on both legs

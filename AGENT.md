@@ -69,7 +69,7 @@ means protocol rewards accrue to the staker, not to your node wallets.)
 ```bash
 set -a; source sepolia.env; source sepolia.wallets.env; source sepolia-deployment.env; set +a
 for n in node1 node2 node3 node4 node5; do a="${n}_ADDR"
-  echo "$n staked: $(cast call $STAKING_OPERATORS 'stakedAmount(address)(uint256)' ${!a} --rpc-url $SEPOLIA_RPC_URL)" \
+  echo "$n staked: $(cast call $STAKING_OPERATORS 'stakeOf(address)(uint256)' ${!a} --rpc-url $SEPOLIA_RPC_URL)" \
        " eth: $(cast from-wei $(cast balance ${!a} --rpc-url $SEPOLIA_RPC_URL))"
 done
 # want: staked ≥ 70000000000 (70k TEST, 6 decimals) and eth ≥ ~0.03 on each
@@ -83,7 +83,7 @@ tracks the ACTIVE set and only fills in when your nodes register on boot
 
 ```bash
 cd "$(git rev-parse --show-toplevel)"
-set -a; source devnet/sepolia.env devnet/sepolia.wallets.env devnet/sepolia-deployment.env; set +a
+set -a; source devnet/sepolia.env; source devnet/sepolia.wallets.env; source devnet/sepolia-deployment.env; set +a
 RUN=$PWD/devnet/runs/sepolia-joint; mkdir -p $RUN
 
 BEFORE=$(cast call $HEARTBEAT_MANAGER 'nodeCount()(uint256)' --rpc-url $SEPOLIA_RPC_URL)
