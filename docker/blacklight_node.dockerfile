@@ -11,6 +11,7 @@ COPY Cargo.toml ./
 COPY crates ./crates
 COPY simulator ./simulator
 COPY keeper ./keeper
+COPY managed-node-keeper ./managed-node-keeper
 COPY blacklight-node ./blacklight-node
 COPY monitor ./monitor
 
