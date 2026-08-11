@@ -6,7 +6,6 @@ on:
   workflow_dispatch:
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
 
 # Each architecture is built on a native runner (cross-building Rust under QEMU
 # is prohibitively slow), then the per-arch images are combined into a single
@@ -64,11 +63,18 @@ jobs:
             echo "version=dev-$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
           fi
 
+      - name: Resolve image name
+        run: echo "IMAGE=${REGISTRY}/${REPO,,}/${TARGET}" >> "$GITHUB_ENV"
+        env:
+          REGISTRY: ${{ env.REGISTRY }}
+          REPO: ${{ github.repository }}
+          TARGET: ${{ matrix.target }}
+
       - name: Extract metadata (labels)
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.target }}
+          images: ${{ env.IMAGE }}
 
       - name: Build and push by digest
         id: build
@@ -83,7 +89,7 @@ jobs:
           build-args: |
             BLACKLIGHT_VERSION=${{ steps.version.outputs.version }}
           provenance: false
-          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.target }},push-by-digest=true,name-canonical=true,push=true
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
 
       - name: Export digest
         run: |
@@ -130,13 +136,20 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Resolve image name
+        run: echo "IMAGE=${REGISTRY}/${REPO,,}/${TARGET}" >> "$GITHUB_ENV"
+        env:
+          REGISTRY: ${{ env.REGISTRY }}
+          REPO: ${{ github.repository }}
+          TARGET: ${{ matrix.target }}
+
       # Tags are applied here, once, to the manifest list — so no two jobs can
       # race for the same tag.
       - name: Extract metadata (tags)
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.target }}
+          images: ${{ env.IMAGE }}
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
@@ -149,7 +162,7 @@ jobs:
         run: |
           docker buildx imagetools create \
             $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
-            $(printf '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.target }}@sha256:%s ' *)
+            $(printf "${IMAGE}@sha256:%s " *)
 
       - name: Verify manifest is multi-arch
         run: |
