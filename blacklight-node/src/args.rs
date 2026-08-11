@@ -44,7 +44,30 @@ pub struct CliArgs {
     /// The path where AMD certificates will be cached.
     #[clap(short, long, default_value = default_cert_cache_path().into_os_string(), env = "CERT_CACHE")]
     pub cert_cache: PathBuf,
+
+    /// How long the RoundStarted subscription may stay silent before the node
+    /// assumes it has gone deaf and rebuilds its connection.
+    ///
+    /// The node receives every round on the network (committee membership is
+    /// filtered locally), and rounds are started on a fixed ~5 minute cadence,
+    /// so prolonged silence means the subscription is dead rather than the
+    /// network being quiet. Set to 0 to disable the watchdog entirely.
+    #[arg(long, default_value_t = DEFAULT_EVENT_IDLE_TIMEOUT_SECS, env = "EVENT_IDLE_TIMEOUT_SECS")]
+    pub event_idle_timeout_secs: u64,
 }
+
+/// Default idle timeout before the event subscription is presumed dead.
+///
+/// Roughly three missed round cadences: long enough to never trip during normal
+/// operation, short enough that at most one assignment is missed.
+pub const DEFAULT_EVENT_IDLE_TIMEOUT_SECS: u64 = 900;
+
+/// Spread of the per-node jitter applied to the idle timeout.
+///
+/// Silence is a network-wide signal, so without jitter every node would trip its
+/// watchdog in the same instant and reconnect as one herd against a single RPC —
+/// which is the failure this whole mechanism exists to recover from.
+pub const EVENT_IDLE_TIMEOUT_JITTER_SECS: u64 = 180;
 
 /// Node configuration with all required values resolved
 #[derive(Debug, Clone)]
@@ -55,6 +78,7 @@ pub struct NodeConfig {
     pub token_contract_address: Address,
     pub private_key: String,
     pub was_wallet_created: bool,
+    pub event_idle_timeout_secs: u64,
 }
 
 impl NodeConfig {
@@ -62,6 +86,7 @@ impl NodeConfig {
     /// Generates a new wallet if none exists
     /// Returns (NodeConfig, was_wallet_created)
     pub async fn load(cli_args: CliArgs) -> Result<Self> {
+        let event_idle_timeout_secs = cli_args.event_idle_timeout_secs;
         let state_file = StateFile::new(STATE_FILE_NODE);
         let ChainConfig {
             rpc_url,
@@ -127,6 +152,7 @@ impl NodeConfig {
             token_contract_address,
             private_key,
             was_wallet_created,
+            event_idle_timeout_secs,
         })
     }
 }

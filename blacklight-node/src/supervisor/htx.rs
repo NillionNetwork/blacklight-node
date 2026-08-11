@@ -78,6 +78,16 @@ impl HtxProcessor {
                             }
                         }
                         Ok(None) => {}
+                        Err(e) if source.is_expected_duplicate(&e) => {
+                            // Backlog rescans re-offer rounds this node already
+                            // voted in, because the "already responded" check
+                            // above cannot see them (get_node_vote queries round
+                            // 0, while rounds are numbered from 1). Submission
+                            // pre-simulates, so this costs no gas and sends no
+                            // transaction — logging it as an error would make
+                            // every routine reconnect look like a failure.
+                            debug!(htx_id = ?htx_id, error = %e, "Already voted in this round, skipping");
+                        }
                         Err(e) => {
                             error!(htx_id = ?htx_id, error = %e, "{}", source.process_error_message());
                         }
@@ -160,10 +170,9 @@ impl HtxProcessor {
 
                 Ok(Some(count))
             }
-            Err(e) => {
-                error!(htx_id = ?htx_id, error = %e, "Failed to respond to HTX");
-                Err(e)
-            }
+            // Logged by the caller, which knows whether this was a real-time or
+            // a backlog event and so whether the failure is worth an error.
+            Err(e) => Err(e),
         }
     }
 
@@ -248,4 +257,25 @@ impl HtxEventSource {
             Self::Backlog => "Failed to check assignment status",
         }
     }
+
+    /// Whether this failure is the harmless "we already voted" revert that a
+    /// backlog rescan is expected to produce.
+    ///
+    /// Only treated as routine for backlog events; hitting it on a real-time
+    /// event would mean something genuinely unexpected happened.
+    fn is_expected_duplicate(self, error: &anyhow::Error) -> bool {
+        if !matches!(self, Self::Backlog) {
+            return false;
+        }
+        let message = error.to_string();
+        DUPLICATE_VOTE_REVERTS
+            .iter()
+            .any(|revert| message.contains(revert))
+    }
 }
+
+/// Reverts that mean "this round no longer accepts our vote".
+///
+/// Matched on the decoded revert name, which is what the transaction submitter
+/// puts in the error message.
+const DUPLICATE_VOTE_REVERTS: [&str; 3] = ["AlreadyResponded", "NotPending", "RoundClosed"];

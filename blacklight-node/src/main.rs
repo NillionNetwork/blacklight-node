@@ -46,10 +46,10 @@ async fn main() -> Result<()> {
 
     // Create and run supervisor (handles connection, validation, and event processing)
     let supervisor = supervisor::Supervisor::new(&config, &verifier, shutdown_token).await?;
-    let client = supervisor.run().await?;
+    supervisor.run().await?;
 
     // Graceful shutdown - deactivate node
-    if let Err(e) = shutdown::deactivate_node(&client).await {
+    if let Err(e) = shutdown::deactivate_node(&config).await {
         error!(error = %e, "Failed to deactivate node gracefully");
     }
 

@@ -1,26 +1,35 @@
 use anyhow::Result;
-use blacklight_contract_clients::BlacklightClient;
+use blacklight_contract_clients::{BlacklightClient, StreamWatchdog};
 use std::sync::Arc;
 use tracing::info;
 
 use super::htx::{HtxEventSource, HtxProcessor};
 /// Listen for HTX assignment events and process them
-pub async fn run_event_listener(client: BlacklightClient, processor: HtxProcessor) -> Result<()> {
+///
+/// `watchdog` is optional so the listener can also be driven without liveness
+/// checking; when present, this returns an error once the subscription has been
+/// silent for longer than the configured idle timeout.
+pub async fn run_event_listener(
+    client: BlacklightClient,
+    processor: HtxProcessor,
+    watchdog: Option<StreamWatchdog>,
+) -> Result<()> {
     let client_for_callback = client.clone();
     let processor_for_callback = processor.clone();
 
     let manager = Arc::new(client.manager.clone());
     let node_address = processor.node_address();
-    let listen_future = manager.listen_htx_assigned_for_node(node_address, move |event| {
-        let client = client_for_callback.clone();
-        let processor = processor_for_callback.clone();
-        async move {
-            let vote_address = client.signer_address();
-            processor.spawn_processing(event, vote_address, HtxEventSource::Realtime, true);
+    let listen_future =
+        manager.listen_htx_assigned_for_node(node_address, watchdog, move |event| {
+            let client = client_for_callback.clone();
+            let processor = processor_for_callback.clone();
+            async move {
+                let vote_address = client.signer_address();
+                processor.spawn_processing(event, vote_address, HtxEventSource::Realtime, true);
 
-            Ok(())
-        }
-    });
+                Ok(())
+            }
+        });
 
     // Listen for either events or shutdown signal
     let shutdown_token = processor.shutdown_token();

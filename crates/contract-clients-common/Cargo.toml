@@ -8,5 +8,10 @@ anyhow = "1.0"
 alloy = { version = "1.1", features = ["contract", "providers", "pubsub"] }
 alloy-provider = { version = "1.1", features = ["ws"] }
 futures-util = "0.3"
-tokio = { version = "1.49", features = ["sync"] }
+# "time" is needed by the event-stream watchdog. It also arrives via alloy's
+# feature unification today, but this crate uses it directly.
+tokio = { version = "1.49", features = ["sync", "time"] }
 tracing = "0.1"
+
+[dev-dependencies]
+tokio = { version = "1.49", features = ["macros", "rt", "test-util", "time"] }

@@ -1,7 +1,9 @@
-use anyhow::Result;
-use blacklight_contract_clients::BlacklightClient;
+use anyhow::{Context, Result};
 use tokio_util::sync::CancellationToken;
 use tracing::info;
+
+use crate::args::NodeConfig;
+use crate::supervisor::Supervisor;
 
 /// Setup shutdown signal handler (Ctrl+C / SIGTERM)
 pub async fn shutdown_signal(shutdown_token: CancellationToken) {
@@ -43,9 +45,19 @@ pub async fn shutdown_signal(shutdown_token: CancellationToken) {
 }
 
 /// Deactivate node from contract on shutdown
-pub async fn deactivate_node(client: &BlacklightClient) -> Result<()> {
-    let node_address = client.signer_address();
+///
+/// Builds a fresh client rather than reusing the supervisor's. Shutdown is often
+/// reached precisely because the WebSocket connection died, and on that path the
+/// supervisor still holds the dead client — deactivation would then fail and
+/// leave the operator active on-chain, so it keeps being selected into
+/// committees it can no longer vote in.
+pub async fn deactivate_node(config: &NodeConfig) -> Result<()> {
     info!("Initiating graceful shutdown");
+
+    let client = Supervisor::create_client(config)
+        .await
+        .context("Failed to create client for deactivation")?;
+    let node_address = client.signer_address();
     info!(node_address = %node_address, "Deactivating node from contract");
 
     let tx_hash = client.staking.deactivate_operator().await?;

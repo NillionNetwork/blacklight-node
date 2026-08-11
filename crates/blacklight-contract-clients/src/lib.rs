@@ -53,6 +53,10 @@ pub use node_operator_factory::NodeOperatorFactory;
 /// Type alias for private key strings
 pub type PrivateKey = String;
 
+/// Re-exported so binaries can configure event-stream liveness without taking a
+/// direct dependency on `contract-clients-common`.
+pub use contract_clients_common::event_helper::StreamWatchdog;
+
 // ============================================================================
 // Contract Configuration
 // ============================================================================
@@ -72,6 +76,10 @@ pub struct ContractConfig {
     pub token_contract_address: Address,
     pub rpc_url: String,
     /// Maximum number of WebSocket reconnection attempts (default: u32::MAX for infinite)
+    ///
+    /// Consumers that supervise their own reconnection should bound this via
+    /// [`ContractConfig::with_max_ws_retries`], so a dead transport surfaces to
+    /// them instead of being retried forever inside alloy.
     pub max_ws_retries: u32,
 }
 

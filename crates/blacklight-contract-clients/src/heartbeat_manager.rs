@@ -7,7 +7,9 @@ use alloy::{
     sol_types::SolValue,
 };
 use anyhow::{Context, Result, anyhow, bail};
-use contract_clients_common::event_helper::{BlockRange, listen_events, listen_events_filtered};
+use contract_clients_common::event_helper::{
+    BlockRange, StreamWatchdog, listen_events, listen_events_filtered,
+};
 use contract_clients_common::tx_submitter::TransactionSubmitter;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -233,9 +235,15 @@ impl<P: Provider + Clone> HeartbeatManagerClient<P> {
     }
 
     /// Start listening for HTX assigned events for a specific node
+    ///
+    /// Committee membership is filtered client-side because `members` is not an
+    /// indexed event field. That means the subscription carries every round on
+    /// the network, so `watchdog` can watch the whole stream rather than this
+    /// node's much sparser (and stake-weighted) share of it.
     pub async fn listen_htx_assigned_for_node<F, Fut>(
         self: Arc<Self>,
         node_address: Address,
+        watchdog: Option<StreamWatchdog>,
         callback: F,
     ) -> Result<()>
     where
@@ -250,6 +258,7 @@ impl<P: Provider + Clone> HeartbeatManagerClient<P> {
         listen_events_filtered(
             subscription.into_stream(),
             "RoundStarted",
+            watchdog,
             move |event: &RoundStartedEvent| event.members.contains(&node_address),
             callback,
         )
